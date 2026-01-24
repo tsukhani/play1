@@ -17,11 +17,11 @@ def playVersion(play_env):
 
 def replaceAll(file, searchExp, replaceExp, regexp=False):
     if not regexp:
-        replaceExp = replaceExp.replace('\\', '\\\\')
-        searchExp = searchExp.replace('$', '\\$')
-        searchExp = searchExp.replace('{', '\\{')
-        searchExp = searchExp.replace('}', '\\}')
-        searchExp = searchExp.replace('.', '\\.')
+        replaceExp = replaceExp.replace('\\', r'\\')
+        searchExp = searchExp.replace('$', r'\$')
+        searchExp = searchExp.replace('{', r'\{')
+        searchExp = searchExp.replace('}', r'\}')
+        searchExp = searchExp.replace('.', r'\.')
     for line in fileinput.input(file, inplace=1):
         line = re.sub(searchExp, replaceExp, line)
         sys.stdout.write(line)
