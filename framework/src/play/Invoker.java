@@ -62,6 +62,7 @@ public class Invoker {
             invocation.waitInQueue = MonitorFactory.start("Waiting for execution");
             return virtualExecutor.submit(invocation);
         }
+        ensureExecutor();
         Monitor monitor = MonitorFactory.getMonitor("Invoker queue size", "elmts.");
         monitor.add(executor.getQueue().size());
         invocation.waitInQueue = MonitorFactory.start("Waiting for execution");
@@ -81,6 +82,7 @@ public class Invoker {
         if (usingVirtualThreads) {
             return virtualExecutor.schedule(invocation, millis, TimeUnit.MILLISECONDS);
         }
+        ensureExecutor();
         Monitor monitor = MonitorFactory.getMonitor("Invocation queue", "elmts.");
         monitor.add(executor.getQueue().size());
         return executor.schedule(invocation, millis, TimeUnit.MILLISECONDS);
@@ -386,6 +388,18 @@ public class Invoker {
         @Override
         public InvocationContext getInvocationContext() {
             return new InvocationContext(invocationType);
+        }
+    }
+
+    /**
+     * Ensure that a default executor exists for DEV mode lazy startup.
+     * In DEV mode, the first request arrives before Play.start() has called init(),
+     * so we create a minimal executor to handle that first invocation.
+     * init() will replace it with the properly configured executor.
+     */
+    private static synchronized void ensureExecutor() {
+        if (executor == null) {
+            executor = new ScheduledThreadPoolExecutor(1, new PThreadFactory("play"), new ThreadPoolExecutor.AbortPolicy());
         }
     }
 
