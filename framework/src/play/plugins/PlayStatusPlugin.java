@@ -160,10 +160,14 @@ public class PlayStatusPlugin extends PlayPlugin {
         out.println();
         out.println("Requests execution pool:");
         out.println("~~~~~~~~~~~~~~~~~~~~~~~~");
-        out.println("Pool size: " + Invoker.executor.getPoolSize());
-        out.println("Active count: " + Invoker.executor.getActiveCount());
-        out.println("Scheduled task count: " + Invoker.executor.getTaskCount());
-        out.println("Queue size: " + Invoker.executor.getQueue().size());
+        if (Invoker.usingVirtualThreads) {
+            out.println("Mode: virtual threads");
+        } else {
+            out.println("Pool size: " + Invoker.executor.getPoolSize());
+            out.println("Active count: " + Invoker.executor.getActiveCount());
+            out.println("Scheduled task count: " + Invoker.executor.getTaskCount());
+            out.println("Queue size: " + Invoker.executor.getQueue().size());
+        }
         out.println();
         try {
             out.println("Monitors:");
@@ -215,10 +219,14 @@ public class PlayStatusPlugin extends PlayPlugin {
 
         {
             JsonObject pool = new JsonObject();
-            pool.addProperty("size", Invoker.executor.getPoolSize());
-            pool.addProperty("active", Invoker.executor.getActiveCount());
-            pool.addProperty("scheduled", Invoker.executor.getTaskCount());
-            pool.addProperty("queue", Invoker.executor.getQueue().size());
+            if (Invoker.usingVirtualThreads) {
+                pool.addProperty("mode", "virtual-threads");
+            } else {
+                pool.addProperty("size", Invoker.executor.getPoolSize());
+                pool.addProperty("active", Invoker.executor.getActiveCount());
+                pool.addProperty("scheduled", Invoker.executor.getTaskCount());
+                pool.addProperty("queue", Invoker.executor.getQueue().size());
+            }
             status.add("pool", pool);
         }
 

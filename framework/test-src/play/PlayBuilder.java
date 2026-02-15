@@ -39,6 +39,7 @@ public class PlayBuilder {
         Play.classloader = new ApplicationClassloader();
         Play.plugins = Collections.unmodifiableList(new ArrayList<PlayPlugin>());
         Play.guessFrameworkPath();
+        Invoker.init();
 
     }
 

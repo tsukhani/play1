@@ -25,6 +25,8 @@ import play.i18n.Lang;
 import play.libs.F;
 import play.libs.F.Promise;
 import play.utils.PThreadFactory;
+import play.utils.VirtualThreadConfig;
+import play.utils.VirtualThreadScheduledExecutor;
 
 /**
  * Run some code in a Play! context
@@ -32,18 +34,34 @@ import play.utils.PThreadFactory;
 public class Invoker {
 
     /**
-     * Main executor for requests invocations.
+     * Main executor for requests invocations (platform thread mode).
+     * Null when virtual threads are enabled.
      */
     public static ScheduledThreadPoolExecutor executor = null;
 
     /**
+     * Virtual thread executor for requests invocations.
+     * Null when platform threads are used.
+     */
+    public static VirtualThreadScheduledExecutor virtualExecutor = null;
+
+    /**
+     * Whether the invoker is using virtual threads.
+     */
+    public static boolean usingVirtualThreads = false;
+
+    /**
      * Run the code in a new thread took from a thread pool.
-     * 
+     *
      * @param invocation
      *            The code to run
      * @return The future object, to know when the task is completed
      */
     public static Future<?> invoke(Invocation invocation) {
+        if (usingVirtualThreads) {
+            invocation.waitInQueue = MonitorFactory.start("Waiting for execution");
+            return virtualExecutor.submit(invocation);
+        }
         Monitor monitor = MonitorFactory.getMonitor("Invoker queue size", "elmts.");
         monitor.add(executor.getQueue().size());
         invocation.waitInQueue = MonitorFactory.start("Waiting for execution");
@@ -52,7 +70,7 @@ public class Invoker {
 
     /**
      * Run the code in a new thread after a delay
-     * 
+     *
      * @param invocation
      *            The code to run
      * @param millis
@@ -60,6 +78,9 @@ public class Invoker {
      * @return The future object, to know when the task is completed
      */
     public static Future<?> invoke(Invocation invocation, long millis) {
+        if (usingVirtualThreads) {
+            return virtualExecutor.schedule(invocation, millis, TimeUnit.MILLISECONDS);
+        }
         Monitor monitor = MonitorFactory.getMonitor("Invocation queue", "elmts.");
         monitor.add(executor.getQueue().size());
         return executor.schedule(invocation, millis, TimeUnit.MILLISECONDS);
@@ -93,6 +114,13 @@ public class Invoker {
     }
 
     static void resetClassloaders() {
+        if (usingVirtualThreads) {
+            // Virtual threads cannot be enumerated with Thread.enumerate().
+            // Each virtual thread sets its context classloader at the start of an invocation
+            // (in Invocation.init() and Invocation.before()), so stale classloaders are
+            // naturally replaced on the next invocation.
+            return;
+        }
         Thread[] executorThreads = new Thread[executor.getPoolSize()];
         Thread.enumerate(executorThreads);
         for (Thread thread : executorThreads) {
@@ -362,12 +390,21 @@ public class Invoker {
     }
 
     /**
-     * Init executor at load time.
+     * Initialize the invoker executor. Must be called after configuration is loaded.
      */
-    static {
-        int core = Integer.parseInt(Play.configuration.getProperty("play.pool",
-                Play.mode == Mode.DEV ? "1" : ((Runtime.getRuntime().availableProcessors() + 1) + "")));
-        executor = new ScheduledThreadPoolExecutor(core, new PThreadFactory("play"), new ThreadPoolExecutor.AbortPolicy());
+    public static void init() {
+        if (VirtualThreadConfig.isInvokerEnabled()) {
+            usingVirtualThreads = true;
+            virtualExecutor = new VirtualThreadScheduledExecutor("play");
+            executor = null;
+            Logger.info("Invoker using virtual threads");
+        } else {
+            usingVirtualThreads = false;
+            virtualExecutor = null;
+            int core = Integer.parseInt(Play.configuration.getProperty("play.pool",
+                    Play.mode == Mode.DEV ? "1" : ((Runtime.getRuntime().availableProcessors() + 1) + "")));
+            executor = new ScheduledThreadPoolExecutor(core, new PThreadFactory("play"), new ThreadPoolExecutor.AbortPolicy());
+        }
     }
 
     /**
@@ -423,7 +460,13 @@ public class Invoker {
         public static <V> void waitFor(Future<V> task, final Invocation invocation) {
             if (task instanceof Promise) {
                 Promise<V> smartFuture = (Promise<V>) task;
-                smartFuture.onRedeem(result -> executor.submit(invocation));
+                smartFuture.onRedeem(result -> {
+                    if (usingVirtualThreads) {
+                        virtualExecutor.submit(invocation);
+                    } else {
+                        executor.submit(invocation);
+                    }
+                });
             } else {
                 synchronized (WaitForTasksCompletion.class) {
                     if (instance == null) {
@@ -443,7 +486,12 @@ public class Invoker {
                     if (!queue.isEmpty()) {
                         for (Future<?> task : new HashSet<>(queue.keySet())) {
                             if (task.isDone()) {
-                                executor.submit(queue.remove(task));
+                                Invocation invocation = queue.remove(task);
+                                if (usingVirtualThreads) {
+                                    virtualExecutor.submit(invocation);
+                                } else {
+                                    executor.submit(invocation);
+                                }
                             }
                         }
                     }

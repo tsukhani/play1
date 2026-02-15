@@ -2,7 +2,7 @@ package play.jobs;
 
 import java.util.Date;
 import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutorService;
+
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -32,7 +32,7 @@ public class Job<V> extends Invoker.Invocation implements Callable<V> {
 
     public static final String invocationType = "Job";
 
-    protected ExecutorService executor;
+    protected Object executor;
     protected long lastRun = 0;
     protected boolean wasError = false;
     protected Throwable lastException = null;
@@ -77,7 +77,11 @@ public class Job<V> extends Invoker.Invocation implements Callable<V> {
      */
     public Promise<V> now() {
         Promise<V> smartFuture = new Promise<>();
-        JobsPlugin.executor.submit(getJobCallingCallable(smartFuture));
+        if (JobsPlugin.usingVirtualThreads) {
+            JobsPlugin.virtualExecutor.submit(getJobCallingCallable(smartFuture));
+        } else {
+            JobsPlugin.executor.submit(getJobCallingCallable(smartFuture));
+        }
         return smartFuture;
     }
 
@@ -123,7 +127,11 @@ public class Job<V> extends Invoker.Invocation implements Callable<V> {
      */
     public Promise<V> in(int seconds) {
         Promise<V> smartFuture = new Promise<>();
-        JobsPlugin.executor.schedule(getJobCallingCallable(smartFuture), seconds, TimeUnit.SECONDS);
+        if (JobsPlugin.usingVirtualThreads) {
+            JobsPlugin.virtualExecutor.schedule(getJobCallingCallable(smartFuture), seconds, TimeUnit.SECONDS);
+        } else {
+            JobsPlugin.executor.schedule(getJobCallingCallable(smartFuture), seconds, TimeUnit.SECONDS);
+        }
         return smartFuture;
     }
 
@@ -161,7 +169,11 @@ public class Job<V> extends Invoker.Invocation implements Callable<V> {
      *            time in seconds
      */
     public void every(int seconds) {
-        JobsPlugin.executor.scheduleWithFixedDelay(this, seconds, seconds, TimeUnit.SECONDS);
+        if (JobsPlugin.usingVirtualThreads) {
+            JobsPlugin.virtualExecutor.scheduleWithFixedDelay(this, seconds, seconds, TimeUnit.SECONDS);
+        } else {
+            JobsPlugin.executor.scheduleWithFixedDelay(this, seconds, seconds, TimeUnit.SECONDS);
+        }
         JobsPlugin.scheduledJobs.add(this);
     }
 
@@ -256,7 +268,7 @@ public class Job<V> extends Invoker.Invocation implements Callable<V> {
     @Override
     public void _finally() {
         super._finally();
-        if (executor == JobsPlugin.executor) {
+        if (executor == JobsPlugin.executor || executor == JobsPlugin.virtualExecutor) {
             JobsPlugin.scheduleForCRON(this);
         }
     }

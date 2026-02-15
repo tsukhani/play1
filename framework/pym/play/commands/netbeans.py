@@ -41,7 +41,7 @@ def execute(**kargs):
     mr = ""
     for dir in os.listdir(app.path):
         if os.path.isdir(os.path.join(app.path, dir)) and dir not in ['app', 'conf', 'test', 'test-result', 'public', 'tmp', 'logs', 'nbproject', 'lib']:
-            if not re.search("\.[svn|git|hg|scc|vssscc]", dir):
+            if not re.search(r"\.[svn|git|hg|scc|vssscc]", dir):
                 mr = '<source-folder style="tree"><label>%s</label><location>%s</location></source-folder>' % (dir, dir)
     replaceAll(os.path.join(nbproject, 'project.xml'), r'%MORE%', mr)
     print("~ OK, the application is ready for netbeans")

@@ -547,6 +547,9 @@ public class Play {
             // Cache
             Cache.init();
 
+            // Invoker
+            Invoker.init();
+
             // Plugins
             try {
                 pluginCollection.onApplicationStart();

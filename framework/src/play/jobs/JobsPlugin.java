@@ -12,6 +12,8 @@ import play.libs.Time;
 import play.mvc.Http.Request;
 import play.utils.Java;
 import play.utils.PThreadFactory;
+import play.utils.VirtualThreadConfig;
+import play.utils.VirtualThreadScheduledExecutor;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -25,6 +27,8 @@ import java.util.concurrent.*;
 public class JobsPlugin extends PlayPlugin {
 
     public static ScheduledThreadPoolExecutor executor;
+    public static VirtualThreadScheduledExecutor virtualExecutor;
+    public static boolean usingVirtualThreads = false;
     public static final List<Job<?>> scheduledJobs = new ArrayList<>();
     private static final ThreadLocal<List<Callable<?>>> afterInvocationActions = new ThreadLocal<>();
 
@@ -32,7 +36,7 @@ public class JobsPlugin extends PlayPlugin {
     public String getStatus() {
         StringWriter sw = new StringWriter();
         PrintWriter out = new PrintWriter(sw);
-        if (executor == null) {
+        if (executor == null && virtualExecutor == null) {
             out.println("Jobs execution pool:");
             out.println("~~~~~~~~~~~~~~~~~~~");
             out.println("(not yet started)");
@@ -40,10 +44,14 @@ public class JobsPlugin extends PlayPlugin {
         }
         out.println("Jobs execution pool:");
         out.println("~~~~~~~~~~~~~~~~~~~");
-        out.println("Pool size: " + executor.getPoolSize());
-        out.println("Active count: " + executor.getActiveCount());
-        out.println("Scheduled task count: " + executor.getTaskCount());
-        out.println("Queue size: " + executor.getQueue().size());
+        if (usingVirtualThreads) {
+            out.println("Mode: virtual threads");
+        } else {
+            out.println("Pool size: " + executor.getPoolSize());
+            out.println("Active count: " + executor.getActiveCount());
+            out.println("Scheduled task count: " + executor.getTaskCount());
+            out.println("Queue size: " + executor.getQueue().size());
+        }
         SimpleDateFormat df = new SimpleDateFormat("MM/dd/yyyy HH:mm:ss");
         if (!scheduledJobs.isEmpty()) {
             out.println();
@@ -81,7 +89,7 @@ public class JobsPlugin extends PlayPlugin {
                 out.println();
             }
         }
-        if (!executor.getQueue().isEmpty()) {
+        if (!usingVirtualThreads && !executor.getQueue().isEmpty()) {
             out.println();
             out.println("Waiting jobs:");
             out.println("~~~~~~~~~~~~~~~~~~~~~~~~~~~");
@@ -134,7 +142,11 @@ public class JobsPlugin extends PlayPlugin {
                         // start running job now in the background
                         @SuppressWarnings("unchecked")
                         Callable<Job<?>> callable = (Callable<Job<?>>) job;
-                        executor.submit(callable);
+                        if (usingVirtualThreads) {
+                            virtualExecutor.submit(callable);
+                        } else {
+                            executor.submit(callable);
+                        }
                     } catch (InstantiationException | IllegalAccessException ex) {
                         throw new UnexpectedException("Cannot instantiate Job " + clazz.getName(), ex);
                     }
@@ -160,7 +172,11 @@ public class JobsPlugin extends PlayPlugin {
                     }
                     value = Expression.evaluate(value, value).toString();
                     if (!"never".equalsIgnoreCase(value)) {
-                        executor.scheduleWithFixedDelay(job, Time.parseDuration(value), Time.parseDuration(value), TimeUnit.SECONDS);
+                        if (usingVirtualThreads) {
+                            virtualExecutor.scheduleWithFixedDelay(job, Time.parseDuration(value), Time.parseDuration(value), TimeUnit.SECONDS);
+                        } else {
+                            executor.scheduleWithFixedDelay(job, Time.parseDuration(value), Time.parseDuration(value), TimeUnit.SECONDS);
+                        }
                     }
                 } catch (InstantiationException | IllegalAccessException ex) {
                     throw new UnexpectedException("Cannot instantiate Job " + clazz.getName(), ex);
@@ -180,8 +196,17 @@ public class JobsPlugin extends PlayPlugin {
 
     @Override
     public void onApplicationStart() {
-        int core = Integer.parseInt(Play.configuration.getProperty("play.jobs.pool", "10"));
-        executor = new ScheduledThreadPoolExecutor(core, new PThreadFactory("jobs"), new ThreadPoolExecutor.AbortPolicy());
+        if (VirtualThreadConfig.isJobsEnabled()) {
+            usingVirtualThreads = true;
+            virtualExecutor = new VirtualThreadScheduledExecutor("jobs");
+            executor = null;
+            Logger.info("Jobs using virtual threads");
+        } else {
+            usingVirtualThreads = false;
+            virtualExecutor = null;
+            int core = Integer.parseInt(Play.configuration.getProperty("play.jobs.pool", "10"));
+            executor = new ScheduledThreadPoolExecutor(core, new PThreadFactory("jobs"), new ThreadPoolExecutor.AbortPolicy());
+        }
         scheduledJobs.clear();
     }
 
@@ -216,8 +241,13 @@ public class JobsPlugin extends PlayPlugin {
                 nextDate = cronExp.getNextValidTimeAfter(nextInvalid);
             }
             job.nextPlannedExecution = nextDate;
-            executor.schedule((Callable<V>) job, nextDate.getTime() - now.getTime(), TimeUnit.MILLISECONDS);
-            job.executor = executor;
+            if (usingVirtualThreads) {
+                virtualExecutor.schedule((Callable<V>) job, nextDate.getTime() - now.getTime(), TimeUnit.MILLISECONDS);
+                job.executor = virtualExecutor;
+            } else {
+                executor.schedule((Callable<V>) job, nextDate.getTime() - now.getTime(), TimeUnit.MILLISECONDS);
+                job.executor = executor;
+            }
         } catch (Exception ex) {
             throw new UnexpectedException(ex);
         }
@@ -251,8 +281,12 @@ public class JobsPlugin extends PlayPlugin {
             }
         }
 
-        executor.shutdownNow();
-        executor.getQueue().clear();
+        if (usingVirtualThreads) {
+            virtualExecutor.shutdownNow();
+        } else {
+            executor.shutdownNow();
+            executor.getQueue().clear();
+        }
     }
 
     @Override
@@ -265,7 +299,11 @@ public class JobsPlugin extends PlayPlugin {
         List<Callable<?>> currentActions = afterInvocationActions.get();
         afterInvocationActions.remove();
         for (Callable<?> callable : currentActions) {
-            executor.submit(callable);
+            if (usingVirtualThreads) {
+                virtualExecutor.submit(callable);
+            } else {
+                executor.submit(callable);
+            }
         }
     }
 

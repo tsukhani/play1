@@ -44,7 +44,7 @@ def isParentOf(path1, path2):
         sep = os.sep
         if sep == '\\':
             sep = '\\\\'
-        ptn = '^\.\.(' + sep + '\.\.)*$'
+        ptn = r'^\.\.(' + sep + r'\.\.)*$'
         return re.match(ptn, relpath) != None
     except:
         return False
@@ -255,7 +255,7 @@ def get_java_version():
     java_version = sp.communicate()
     java_version = str(java_version)
     
-    result = re.search('version "([a-zA-Z0-9\.\-_]{1,})"', java_version)
+    result = re.search(r'version "([a-zA-Z0-9\.\-_]{1,})"', java_version)
     
     if result:
         return result.group(1)

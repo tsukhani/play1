@@ -23,6 +23,7 @@ import play.libs.mail.AbstractMailSystemFactory;
 import play.libs.mail.MailSystem;
 import play.libs.mail.test.LegacyMockMailSystem;
 import play.utils.Utils.Maps;
+import play.utils.VirtualThreadConfig;
 
 /**
  * Mail utils
@@ -193,7 +194,7 @@ public class Mail {
      */
     public static Future<Boolean> sendMessage(final Email msg) {
         if (asynchronousSend) {
-            return executor.submit(() -> {
+            return getExecutor().submit(() -> {
                 try {
                     msg.setSentDate(new Date());
                     msg.send();
@@ -243,7 +244,35 @@ public class Mail {
         }
     }
 
-    static final ExecutorService executor = Executors.newCachedThreadPool();
+    static volatile ExecutorService executor;
+
+    static ExecutorService getExecutor() {
+        if (executor == null) {
+            synchronized (Mail.class) {
+                if (executor == null) {
+                    if (VirtualThreadConfig.isMailEnabled()) {
+                        executor = Executors.newVirtualThreadPerTaskExecutor();
+                        Logger.info("Mail using virtual threads");
+                    } else {
+                        executor = Executors.newCachedThreadPool();
+                    }
+                }
+            }
+        }
+        return executor;
+    }
+
+    /**
+     * Reset the executor. Called during application restart to pick up configuration changes.
+     */
+    public static void resetExecutor() {
+        synchronized (Mail.class) {
+            if (executor != null) {
+                executor.shutdownNow();
+                executor = null;
+            }
+        }
+    }
 
     public static class SMTPAuthenticator extends Authenticator {
 
