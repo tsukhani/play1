@@ -323,7 +323,26 @@ class PlayApplication(object):
                 jpda_bind = self.jpda_port
             java_args.append('-Xrunjdwp:transport=dt_socket,address=%s,server=y,suspend=n' % jpda_bind)
             java_args.append('-Dplay.debug=yes')
-        
+
+        java_agent = self.readConf('javaagent.path')
+        if java_agent != '':
+            java_args.append('-javaagent:%s' % java_agent)
+
+        java_agentlib = self.readConf('agentlib')
+        if java_agentlib != '':
+            java_args.append('-agentlib:%s' % java_agentlib)
+
+        jmx_port = self.readConf('jmx.port')
+        jmx_hostname = self.readConf('jmx.hostname')
+        if jmx_port != '' and jmx_hostname != '':
+            java_args.append('-Dcom.sun.management.jmxremote')
+            java_args.append('-Dcom.sun.management.jmxremote.port=%s' % jmx_port)
+            java_args.append('-Dcom.sun.management.jmxremote.ssl=false')
+            java_args.append('-Dcom.sun.management.jmxremote.authenticate=false')
+            java_args.append('-Dcom.sun.management.jmxremote.local.only=false')
+            java_args.append('-Dcom.sun.management.jmxremote.host=%s' % jmx_hostname)
+            java_args.append('-Djava.rmi.server.hostname=%s' % jmx_hostname)
+
         java_cmd = [java_path(), '-javaagent:%s' % self.agent_path()] + java_args + ['-classpath', cp_args, '-Dapplication.path=%s' % self.path, '-Dplay.id=%s' % self.play_env["id"], className] + args
         return java_cmd
 
