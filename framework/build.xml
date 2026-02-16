@@ -2,7 +2,7 @@
 
 <project name="play! framework" default="jar" basedir="." xmlns:if="ant:if" xmlns:unless="ant:unless">
 
-    <property name="baseversion" value="1.11.2" />
+    <property name="baseversion" value="1.11.3" />
     <property name="build-release" value="21" />
 
     <path id="project.classpath">
