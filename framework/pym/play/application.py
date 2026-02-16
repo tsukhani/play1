@@ -316,12 +316,11 @@ class PlayApplication(object):
 
         if application_mode == 'dev':
             self.check_jpda()
-            java_args.append('-Xdebug')
             if self.jpda_address:
                 jpda_bind = self.jpda_address + ':' + self.jpda_port
             else:
                 jpda_bind = self.jpda_port
-            java_args.append('-Xrunjdwp:transport=dt_socket,address=%s,server=y,suspend=n' % jpda_bind)
+            java_args.append('-agentlib:jdwp=transport=dt_socket,address=%s,server=y,suspend=n' % jpda_bind)
             java_args.append('-Dplay.debug=yes')
 
         java_agent = self.readConf('javaagent.path')
