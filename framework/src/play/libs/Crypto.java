@@ -2,12 +2,14 @@ package play.libs;
 
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
 
 import javax.crypto.Cipher;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
 import org.apache.commons.codec.binary.Base64;
+import org.bouncycastle.crypto.generators.OpenBSDBCrypt;
 
 import play.Play;
 import play.exceptions.UnexpectedException;
@@ -38,8 +40,13 @@ public class Crypto {
 
     /**
      * Set-up MD5 as the default hashing algorithm
+     * @deprecated MD5 is not suitable for password hashing. Use {@link #hashPassword(String)} instead.
      */
+    @Deprecated
     private static final HashType DEFAULT_HASH_TYPE = HashType.MD5;
+
+    private static final int BCRYPT_DEFAULT_COST = 12;
+    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
     static final char[] HEX_CHARS = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f' };
 
@@ -92,24 +99,28 @@ public class Crypto {
 
     /**
      * Create a password hash using the default hashing algorithm
-     * 
+     *
      * @param input
      *            The password
      * @return The password hash
+     * @deprecated MD5 is not suitable for password hashing. Use {@link #hashPassword(String)} instead.
      */
+    @Deprecated
     public static String passwordHash(String input) {
         return passwordHash(input, DEFAULT_HASH_TYPE);
     }
 
     /**
      * Create a password hash using specific hashing algorithm
-     * 
+     *
      * @param input
      *            The password
      * @param hashType
      *            The hashing algorithm
      * @return The password hash
+     * @deprecated Simple message digests are not suitable for password hashing. Use {@link #hashPassword(String)} instead.
      */
+    @Deprecated
     public static String passwordHash(String input, HashType hashType) {
         try {
             MessageDigest m = MessageDigest.getInstance(hashType.toString());
@@ -118,6 +129,50 @@ public class Crypto {
         } catch (NoSuchAlgorithmException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    /**
+     * Hash a password using bcrypt with a default cost factor of 12.
+     * This is the recommended method for password hashing.
+     *
+     * @param password The plaintext password
+     * @return The bcrypt hash string (starting with "$2y$")
+     */
+    public static String hashPassword(String password) {
+        return hashPassword(password, BCRYPT_DEFAULT_COST);
+    }
+
+    /**
+     * Hash a password using bcrypt with the specified cost factor.
+     *
+     * @param password The plaintext password
+     * @param cost The bcrypt cost factor (4-31, recommended: 10-14)
+     * @return The bcrypt hash string (starting with "$2y$")
+     */
+    public static String hashPassword(String password, int cost) {
+        byte[] salt = new byte[16];
+        SECURE_RANDOM.nextBytes(salt);
+        return OpenBSDBCrypt.generate(password.toCharArray(), salt, cost);
+    }
+
+    /**
+     * Verify a password against a hash. Auto-detects bcrypt hashes (starting with "$2")
+     * and falls back to legacy MD5 comparison for backward compatibility.
+     *
+     * @param password The plaintext password to check
+     * @param hash The stored hash to check against
+     * @return true if the password matches the hash
+     */
+    public static boolean checkPassword(String password, String hash) {
+        if (hash == null || password == null) {
+            return false;
+        }
+        if (hash.startsWith("$2")) {
+            // bcrypt hash
+            return OpenBSDBCrypt.checkPassword(hash, password.toCharArray());
+        }
+        // Legacy: compare against MD5 hash for backward compatibility
+        return passwordHash(password, HashType.MD5).equals(hash);
     }
 
     /**
