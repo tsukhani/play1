@@ -19,6 +19,9 @@ framework/play-*.jar
 framework/docs
 samples-and-tests/*/test-result/
 
+# MCP server config (contains credentials)
+.mcp.json
+
 # IDE and editors
 *~
 .idea
