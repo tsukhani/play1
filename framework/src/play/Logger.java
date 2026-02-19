@@ -697,6 +697,18 @@ public class Logger {
                 log4jPath = Play.configuration.getProperty("application.log.path", "/log4j.properties");
                 log4jConf = Logger.class.getResource(log4jPath);
             }
+            // If using built-in config and JSON format is requested, switch to JSON config
+            if (!isCustomConfig() && "json".equalsIgnoreCase(
+                    Play.configuration.getProperty("application.log.format", "text"))) {
+                URL jsonConf = Logger.class.getResource("/log4j-json.properties");
+                if (jsonConf != null) {
+                    log4jConf = jsonConf;
+                }
+            }
+        }
+
+        private boolean isCustomConfig() {
+            return Play.configuration.getProperty("application.log.path") != null;
         }
 
         public URL getLog4jConf() {
