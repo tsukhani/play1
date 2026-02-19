@@ -386,6 +386,9 @@ public class ServletWrapper extends HttpServlet implements ServletContextListene
                         if (cookie.domain != null) {
                             c.setDomain(cookie.domain);
                         }
+                        if (cookie.sameSite != null && !cookie.sameSite.isEmpty()) {
+                            c.setAttribute("SameSite", cookie.sameSite);
+                        }
                         response.addCookie(c);
                     }
                 }
@@ -464,6 +467,9 @@ public class ServletWrapper extends HttpServlet implements ServletContextListene
             }
             if (cookie.maxAge != null) {
                 c.setMaxAge(cookie.maxAge);
+            }
+            if (cookie.sameSite != null && !cookie.sameSite.isEmpty()) {
+                c.setAttribute("SameSite", cookie.sameSite);
             }
             servletResponse.addCookie(c);
         }

@@ -161,6 +161,11 @@ public class Http {
          * See http://www.owasp.org/index.php/HttpOnly
          */
         public boolean httpOnly = false;
+        /**
+         * SameSite attribute (Strict, Lax, or None).
+         * When set to "None", the Secure flag must also be true (per spec).
+         */
+        public String sameSite;
     }
 
     /**
@@ -746,12 +751,17 @@ public class Http {
         }
 
         public void setCookie(String name, String value, String domain, String path, Integer maxAge, boolean secure, boolean httpOnly) {
+            setCookie(name, value, domain, path, maxAge, secure, httpOnly, null);
+        }
+
+        public void setCookie(String name, String value, String domain, String path, Integer maxAge, boolean secure, boolean httpOnly, String sameSite) {
             path = Play.ctxPath + path;
             if (cookies.containsKey(name) && cookies.get(name).path.equals(path)
                     && ((cookies.get(name).domain == null && domain == null) || (cookies.get(name).domain.equals(domain)))) {
                 cookies.get(name).value = value;
                 cookies.get(name).maxAge = maxAge;
                 cookies.get(name).secure = secure;
+                cookies.get(name).sameSite = sameSite;
             } else {
                 Cookie cookie = new Cookie();
                 cookie.name = name;
@@ -759,6 +769,7 @@ public class Http {
                 cookie.path = path;
                 cookie.secure = secure;
                 cookie.httpOnly = httpOnly;
+                cookie.sameSite = sameSite;
                 if (domain != null) {
                     cookie.domain = domain;
                 } else {
@@ -766,6 +777,10 @@ public class Http {
                 }
                 if (maxAge != null) {
                     cookie.maxAge = maxAge;
+                }
+                // SameSite=None requires Secure flag per spec
+                if ("None".equalsIgnoreCase(sameSite)) {
+                    cookie.secure = true;
                 }
                 cookies.put(name, cookie);
             }
