@@ -18,7 +18,7 @@ require:    &allDependencies
     - cglib -> cglib 3.3.0
     - com.google.code.gson -> gson 2.13.1
     - com.jamonapi -> jamon 2.82
-    - com.ning -> async-http-client 1.9.40
+
     - commons-beanutils 1.11.0
     - commons-codec 1.18.0
     - org.apache.commons -> commons-email2-core 2.0.0-M1

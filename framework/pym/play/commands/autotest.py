@@ -91,6 +91,7 @@ def autotest(app, args):
     if os.path.exists(test_result):
         shutil.rmtree(test_result)
     sout = open(os.path.join(app.log_path(), 'system.out'), 'w')
+    app.play_env['disable_jpda'] = True
     java_cmd = app.java_cmd(args)
     try:
         play_process = subprocess.Popen(java_cmd, env=os.environ, stdout=sout)
@@ -129,7 +130,7 @@ def autotest(app, args):
     cp_args = ':'.join(fpcp)
     if os.name == 'nt':
         cp_args = ';'.join(fpcp)
-    java_cmd = [java_path()] + add_options + ['-Djava.util.logging.config.file=logging.properties', '-classpath', cp_args, '-Dapplication.url=%s://localhost:%s' % (protocol, http_port), '-DheadlessBrowser=%s' % (headless_browser), 'play.modules.testrunner.FirePhoque']
+    java_cmd = [java_path(), '--enable-native-access=ALL-UNNAMED'] + add_options + ['-Djava.util.logging.config.file=logging.properties', '-classpath', cp_args, '-Dapplication.url=%s://localhost:%s' % (protocol, http_port), '-DheadlessBrowser=%s' % (headless_browser), 'play.modules.testrunner.FirePhoque']
     if protocol == 'https':
         java_cmd.insert(-1, '-Djavax.net.ssl.trustStore=' + app.readConf('keystore.file'))
     try:

@@ -420,14 +420,24 @@ public class Play {
             }
         }
         propsFromFile = newConfiguration;
-        // Resolve ${..}
+        // Resolve ${..} and ${..:default}
         pattern = Pattern.compile("\\$\\{([^}]+)}");
         for (Object key : propsFromFile.keySet()) {
             String value = propsFromFile.getProperty(key.toString());
             Matcher matcher = pattern.matcher(value);
             StringBuilder newValue = new StringBuilder(100);
             while (matcher.find()) {
-                String jp = matcher.group(1);
+                String placeholder = matcher.group(1);
+                // Support ${VAR:default} syntax
+                String jp;
+                String defaultValue = null;
+                int colonIdx = placeholder.indexOf(':');
+                if (colonIdx >= 0) {
+                    jp = placeholder.substring(0, colonIdx);
+                    defaultValue = placeholder.substring(colonIdx + 1);
+                } else {
+                    jp = placeholder;
+                }
                 String r;
                 if (jp.equals("application.path")) {
                     r = Play.applicationPath.getAbsolutePath();
@@ -437,6 +447,9 @@ public class Play {
                     r = System.getProperty(jp);
                     if (r == null) {
                         r = System.getenv(jp);
+                    }
+                    if (r == null) {
+                        r = defaultValue;
                     }
                     if (r == null) {
                         Logger.warn("Cannot replace %s in configuration (%s=%s)", jp, key, value);
