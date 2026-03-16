@@ -1,11 +1,5 @@
 package play.test;
 
-import com.ning.http.client.FluentCaseInsensitiveStringsMap;
-import com.ning.http.client.multipart.FilePart;
-import com.ning.http.client.multipart.MultipartBody;
-import com.ning.http.client.multipart.MultipartUtils;
-import com.ning.http.client.multipart.Part;
-import com.ning.http.client.multipart.StringPart;
 import org.junit.jupiter.api.BeforeEach;
 import play.Invoker;
 import play.Invoker.InvocationContext;
@@ -21,14 +15,14 @@ import play.mvc.Router.ActionDefinition;
 import play.mvc.Scope.RenderArgs;
 import play.mvc.results.RenderStatic;
 
+import play.libs.ws.MultipartFormData;
+
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
-import java.io.IOException;
 import java.io.InputStream;
 import java.io.UnsupportedEncodingException;
 import java.net.MalformedURLException;
-import java.nio.channels.Channels;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -201,43 +195,21 @@ public abstract class FunctionalTest extends BaseTest {
     }
 
     public static Response POST(Request request, Object url, Map<String, String> parameters, Map<String, File> files) {
-        List<Part> parts = new ArrayList<>();
+        MultipartFormData multipart = new MultipartFormData();
 
-        for (String key : parameters.keySet()) {
-            StringPart stringPart = new StringPart(key, parameters.get(key), request.contentType, Charset.forName(request.encoding));
-            parts.add(stringPart);
+        for (Map.Entry<String, String> entry : parameters.entrySet()) {
+            multipart.addField(entry.getKey(), entry.getValue(), Charset.forName(request.encoding));
         }
 
         for (Map.Entry<String, File> entry : files.entrySet()) {
             File file = entry.getValue();
             if (file != null) {
-                Part filePart = new FilePart(entry.getKey(), entry.getValue());
-                parts.add(filePart);
+                multipart.addFile(entry.getKey(), file);
             }
         }
 
-        MultipartBody requestEntity;
-        /*
-         * ^1 MultipartBody::read is not working (if parts.isEmpty() == true) byte[] array = null;
-         **/
-        _ByteArrayOutputStream baos;
-        try {
-            requestEntity = MultipartUtils.newMultipartBody(parts, new FluentCaseInsensitiveStringsMap());
-            request.headers.put("content-type", new Http.Header("content-type", requestEntity.getContentType()));
-            long contentLength = requestEntity.getContentLength();
-            if (contentLength < Integer.MIN_VALUE || contentLength > Integer.MAX_VALUE) {
-                throw new IllegalArgumentException(contentLength + " cannot be cast to int without changing its value.");
-            }
-            // array = new byte[(int) contentLength]; // ^1
-            // requestEntity.read(ByteBuffer.wrap(array)); // ^1
-            baos = new _ByteArrayOutputStream((int) contentLength);
-            requestEntity.transferTo(0, Channels.newChannel(baos));
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-        // InputStream body = new ByteArrayInputStream(array != null ? array :
-        // new byte[0]); // ^1
-        InputStream body = new ByteArrayInputStream(baos.getByteArray());
+        request.headers.put("content-type", new Http.Header("content-type", multipart.getContentType()));
+        InputStream body = new ByteArrayInputStream(multipart.toByteArray());
         return POST(request, url, MULTIPART_FORM_DATA, body);
     }
 
@@ -636,16 +608,6 @@ public abstract class FunctionalTest extends BaseTest {
             return actionDefinition.url;
         }
 
-    }
-
-    public static final class _ByteArrayOutputStream extends ByteArrayOutputStream {
-        public _ByteArrayOutputStream(int size) {
-            super(size);
-        }
-
-        public byte[] getByteArray() {
-            return this.buf;
-        }
     }
 
 }
