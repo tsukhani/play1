@@ -314,7 +314,7 @@ class PlayApplication(object):
             
         java_args.append('-Dfile.encoding=utf-8')
 
-        if application_mode == 'dev':
+        if application_mode == 'dev' and not self.play_env.get('disable_jpda'):
             self.check_jpda()
             if self.jpda_address:
                 jpda_bind = self.jpda_address + ':' + self.jpda_port

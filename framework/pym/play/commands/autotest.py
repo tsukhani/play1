@@ -91,6 +91,7 @@ def autotest(app, args):
     if os.path.exists(test_result):
         shutil.rmtree(test_result)
     sout = open(os.path.join(app.log_path(), 'system.out'), 'w')
+    app.play_env['disable_jpda'] = True
     java_cmd = app.java_cmd(args)
     try:
         play_process = subprocess.Popen(java_cmd, env=os.environ, stdout=sout)
