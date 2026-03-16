@@ -19,6 +19,9 @@ framework/play-*.jar
 framework/docs
 samples-and-tests/*/test-result/
 
+bitbucket.log
+.mcp.json
+
 # IDE and editors
 *~
 .idea
