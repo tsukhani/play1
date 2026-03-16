@@ -342,7 +342,7 @@ class PlayApplication(object):
             java_args.append('-Dcom.sun.management.jmxremote.host=%s' % jmx_hostname)
             java_args.append('-Djava.rmi.server.hostname=%s' % jmx_hostname)
 
-        java_cmd = [java_path(), '-javaagent:%s' % self.agent_path()] + java_args + ['-classpath', cp_args, '-Dapplication.path=%s' % self.path, '-Dplay.id=%s' % self.play_env["id"], className] + args
+        java_cmd = [java_path(), '--enable-native-access=ALL-UNNAMED', '-javaagent:%s' % self.agent_path()] + java_args + ['-classpath', cp_args, '-Dapplication.path=%s' % self.path, '-Dplay.id=%s' % self.play_env["id"], className] + args
         return java_cmd
 
     # ~~~~~~~~~~~~~~~~~~~~~~ MISC
