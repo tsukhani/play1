@@ -214,7 +214,7 @@ public class JPAPlugin extends PlayPlugin {
         properties.putAll(dbConfig.getProperties());
         properties.put("jakarta.persistence.transaction", "RESOURCE_LOCAL");
         properties.put("jakarta.persistence.provider", "org.hibernate.jpa.HibernatePersistenceProvider");
-        String dialect = getDefaultDialect(dbConfig, dbConfig.getProperty("db.driver"));
+        String dialect = dbConfig.getProperty("jpa.dialect");
         if (dialect != null) {
             properties.put("hibernate.dialect", dialect);
         }
@@ -227,20 +227,22 @@ public class JPAPlugin extends PlayPlugin {
         return properties;
     }
 
+    /**
+     * @deprecated Hibernate 7.x auto-detects dialect from the JDBC connection.
+     *             Use jpa.dialect in application.conf to override if needed.
+     */
+    @Deprecated
     public static String getDefaultDialect(String driver) {
-        return getDefaultDialect(new Configuration("default"), driver);
+        return new Configuration("default").getProperty("jpa.dialect");
     }
 
+    /**
+     * @deprecated Hibernate 7.x auto-detects dialect from the JDBC connection.
+     *             Use jpa.dialect in application.conf to override if needed.
+     */
+    @Deprecated
     public static String getDefaultDialect(Configuration dbConfig, String driver) {
-        // If explicitly configured, use it
-        String dialect = dbConfig.getProperty("jpa.dialect");
-        if (dialect != null) {
-            return dialect;
-        }
-        // Otherwise let Hibernate auto-detect the dialect from the JDBC connection.
-        // Hibernate 7.x handles all major databases natively and warns if dialect
-        // is set explicitly.
-        return null;
+        return dbConfig.getProperty("jpa.dialect");
     }
 
     @Override

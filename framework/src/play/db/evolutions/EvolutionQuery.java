@@ -18,7 +18,7 @@ import play.Play;
 import play.db.Configuration;
 import play.db.DB;
 import play.db.SQLSplitter;
-import play.db.jpa.JPAPlugin;
+
 import play.exceptions.UnexpectedException;
 
 
@@ -251,39 +251,37 @@ public class EvolutionQuery{
     }
 
     private static synchronized boolean isOracleDialectInUse(String dbName) {
-        boolean isOracle = false;
+        // Check explicit jpa.dialect first
         Configuration dbConfig = new Configuration(dbName);
-        String jpaDialect = JPAPlugin.getDefaultDialect(dbConfig.getProperty("db.driver")); 
+        String jpaDialect = dbConfig.getProperty("jpa.dialect");
         if (jpaDialect != null) {
             try {
                 Class<?> dialectClass = Play.classloader.loadClass(jpaDialect);
-
-                // Oracle 8i dialect is the base class for oracle dialects (at least for now)
-                isOracle = org.hibernate.dialect.OracleDialect.class.isAssignableFrom(dialectClass);
+                return org.hibernate.dialect.OracleDialect.class.isAssignableFrom(dialectClass);
             } catch (ClassNotFoundException e) {
-                // swallow
                 Logger.warn("jpa.dialect class %s not found", jpaDialect);
             }
         }
-        return isOracle;
+        // Fall back to JDBC driver detection
+        String driver = dbConfig.getProperty("db.driver");
+        return "oracle.jdbc.OracleDriver".equals(driver);
     }
-    
+
     private static boolean isMySqlDialectInUse(String dbName) {
-        boolean isMySQl = false;
+        // Check explicit jpa.dialect first
         Configuration dbConfig = new Configuration(dbName);
-        String jpaDialect = JPAPlugin.getDefaultDialect(dbConfig.getProperty("db.driver"));
+        String jpaDialect = dbConfig.getProperty("jpa.dialect");
         if (jpaDialect != null) {
             try {
                 Class<?> dialectClass = Play.classloader.loadClass(jpaDialect);
-
-                // MySQLDialect is the base class for MySQL dialects
-                isMySQl = org.hibernate.dialect.MySQLDialect.class.isAssignableFrom(dialectClass);
+                return org.hibernate.dialect.MySQLDialect.class.isAssignableFrom(dialectClass);
             } catch (ClassNotFoundException e) {
-                // swallow
                 Logger.warn("jpa.dialect class %s not found", jpaDialect);
             }
         }
-        return isMySQl;
+        // Fall back to JDBC driver detection
+        String driver = dbConfig.getProperty("db.driver");
+        return "com.mysql.cj.jdbc.Driver".equals(driver) || "com.mysql.jdbc.Driver".equals(driver);
     }
 
 }
