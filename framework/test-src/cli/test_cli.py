@@ -196,5 +196,87 @@ class TestPlayDist(unittest.TestCase):
         self.assertFalse(any('.nuxt' in n for n in names))
 
 
+class TestPlayDistGitIgnore(unittest.TestCase):
+    """Tests that play dist honors .gitignore when inside a git repo."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix='play-cli-test-dist-git-')
+        self.app_path = os.path.join(self.tmpdir, 'gitapp')
+        run_play(['new', self.app_path, '--name=GitApp'])
+        # Initialize a git repo so dist uses the git-aware path
+        subprocess.run(['git', 'init'], cwd=self.app_path, capture_output=True)
+        subprocess.run(['git', 'add', '.'], cwd=self.app_path, capture_output=True)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_excludes_gitignored_files(self):
+        import zipfile
+        # Create a file and then gitignore it
+        with open(os.path.join(self.app_path, 'secret.env'), 'w') as f:
+            f.write('PASSWORD=hunter2')
+        with open(os.path.join(self.app_path, '.gitignore'), 'a') as f:
+            f.write('\nsecret.env\n')
+
+        result = run_play(['dist', self.app_path])
+        self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
+        self.assertIn('gitignore', result.stdout.lower())
+
+        zip_path = os.path.join(self.app_path, 'dist', 'gitapp.zip')
+        with zipfile.ZipFile(zip_path) as zf:
+            names = zf.namelist()
+        self.assertFalse(any('secret.env' in n for n in names))
+
+    def test_excludes_gitignored_directories(self):
+        import zipfile
+        # Create node_modules and gitignore it
+        os.makedirs(os.path.join(self.app_path, 'node_modules', 'pkg'))
+        with open(os.path.join(self.app_path, 'node_modules', 'pkg', 'index.js'), 'w') as f:
+            f.write('module.exports = {}')
+        with open(os.path.join(self.app_path, '.gitignore'), 'a') as f:
+            f.write('\nnode_modules/\n')
+
+        run_play(['dist', self.app_path])
+
+        zip_path = os.path.join(self.app_path, 'dist', 'gitapp.zip')
+        with zipfile.ZipFile(zip_path) as zf:
+            names = zf.namelist()
+        self.assertFalse(any('node_modules' in n for n in names))
+
+    def test_honors_subdirectory_gitignore(self):
+        import zipfile
+        # Create frontend with its own .gitignore
+        frontend = os.path.join(self.app_path, 'frontend')
+        os.makedirs(os.path.join(frontend, 'src'))
+        os.makedirs(os.path.join(frontend, 'build-output'))
+        with open(os.path.join(frontend, 'src', 'App.vue'), 'w') as f:
+            f.write('<template></template>')
+        with open(os.path.join(frontend, 'build-output', 'bundle.js'), 'w') as f:
+            f.write('console.log("built")')
+        with open(os.path.join(frontend, '.gitignore'), 'w') as f:
+            f.write('build-output/\n')
+        # Stage the non-ignored files so git ls-files picks them up
+        subprocess.run(['git', 'add', 'frontend/src', 'frontend/.gitignore'],
+                       cwd=self.app_path, capture_output=True)
+
+        run_play(['dist', self.app_path])
+
+        zip_path = os.path.join(self.app_path, 'dist', 'gitapp.zip')
+        with zipfile.ZipFile(zip_path) as zf:
+            names = zf.namelist()
+        self.assertTrue(any('frontend/src/App.vue' in n for n in names))
+        self.assertFalse(any('build-output' in n for n in names))
+
+    def test_includes_tracked_files(self):
+        import zipfile
+        run_play(['dist', self.app_path])
+
+        zip_path = os.path.join(self.app_path, 'dist', 'gitapp.zip')
+        with zipfile.ZipFile(zip_path) as zf:
+            names = zf.namelist()
+        self.assertTrue(any('conf/application.conf' in n for n in names))
+        self.assertTrue(any('conf/routes' in n for n in names))
+
+
 if __name__ == '__main__':
     unittest.main()

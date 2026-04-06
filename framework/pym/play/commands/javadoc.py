@@ -57,7 +57,7 @@ def execute(**kargs):
 
 def defineJavadocOptions(app, outdir, args):
     f = open(os.path.join(outdir , 'javadocOptions'), 'w')
-    f.write(' '.join(['-classpath', app.cp_args(), '-d', outdir, '-encoding', 'UTF-8', '-charset', 'UTF-8']))
+    f.write(' '.join(['-classpath', app.cp_args(), '-d', outdir, '-encoding', 'UTF-8', '-charset', 'UTF-8', '--enable-preview', '--source', '25']))
    
     # Add some default options
     if args.count('-doctitle') == 0:
