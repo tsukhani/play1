@@ -3,105 +3,131 @@
     <head>
         <title>Play! - Tests runner</title>
         <meta http-equiv="Content-Type" content="text/html; charset=${_response_encoding}"/>
-        <script src="@{'/public/test-runner/javascripts/jquery-1.10.0.min.js'}" type="text/javascript" charset="${_response_encoding}"></script>
-        <script src="@{'/public/test-runner/javascripts/jquery.scrollTo.min.js'}" type="text/javascript" charset="${_response_encoding}"></script>  
         <link href="@{'/public/test-runner/stylesheets/screen.css'}" type="text/css" rel="stylesheet"  />
 
         <script type="text/javascript">
-            $(function() {
-	
-		var title = window.top.document.title;
-                
-                $('#loading').ajaxStart(function() {
-                    $(this).show();
-                }).ajaxStop(function() {
-                    $(this).hide();
-                });
-                
+            document.addEventListener('DOMContentLoaded', function() {
+
+                var title = window.top.document.title;
+                var loading = document.getElementById('loading');
+                var activeRequests = 0;
+
+                function showLoading() { activeRequests++; loading.style.display = ''; }
+                function hideLoading() { activeRequests--; if (activeRequests <= 0) { activeRequests = 0; loading.style.display = 'none'; } }
+
+                function ajax(url, opts) {
+                    opts = opts || {};
+                    showLoading();
+                    return fetch(url + (opts.data ? '?' + new URLSearchParams(opts.data) : ''))
+                        .then(function(resp) {
+                            if (!resp.ok) throw resp;
+                            return resp.text();
+                        })
+                        .then(function(text) {
+                            hideLoading();
+                            if (opts.success) opts.success(text);
+                            if (opts.complete) opts.complete(text, 'success');
+                            return text;
+                        })
+                        .catch(function(err) {
+                            hideLoading();
+                            if (opts.error) opts.error(err);
+                            if (opts.complete) {
+                                if (err && typeof err.text === 'function') {
+                                    err.text().then(function(t) { opts.complete(t, 'error'); });
+                                } else {
+                                    opts.complete('', 'error');
+                                }
+                            }
+                        });
+                }
+
+                function parseResultTable(html) {
+                    var tmp = document.createElement('div');
+                    tmp.innerHTML = html;
+                    var table = tmp.querySelector('table');
+                    return table ? table.outerHTML : null;
+                }
+
+                function qAll(sel, ctx) { return Array.from((ctx || document).querySelectorAll(sel)); }
+                function q(sel, ctx) { return (ctx || document).querySelector(sel); }
+
                 var testError = function(msg) {
-                    window.location = bookmark()
+                    window.location = bookmark();
                     stop();
                     updateSelected();
-                }
-                        
+                };
+
                 var run = function() {
                     updateSelected();
-                    $(document.body).addClass('running');
-                    $('.test, #header').removeClass('passed').removeClass('failed');
-                    $.ajax({
-                       type: 'GET',
-                       url: '@{TestRunner.run("init")}',
-                       success: function() {
-                           runNextTest();
-                       },
-                       error: function(req) {
-                           testError(req.responseText);
-                       }
+                    document.body.classList.add('running');
+                    qAll('.test, #header').forEach(function(el) { el.classList.remove('passed', 'failed'); });
+                    ajax('@{TestRunner.run("init")}', {
+                        success: function() { runNextTest(); },
+                        error: function(req) { testError(''); }
                     });
-                }
+                };
 
                 var runNextTest = function() {
-                    if($(document.body).is('.running')) {
-
-                        var test = $('.test.selected.runFirst');
-                        if(!test.size()) {
-                            test = $('.test.selected:not(.passed,.failed):first');
-                        }
-                        if(test.size()) {
-                            var testId = test.attr('id');
-                            runTest(testId, test);
+                    if (document.body.classList.contains('running')) {
+                        var test = q('.test.selected.runFirst') || q('.test.selected:not(.passed):not(.failed)');
+                        if (test) {
+                            runTest(test.id, test);
                         } else {
                             result();
                         }
-                    }					
-                }
-                                
-                var result = function() {
-                    $('#selenium-mask, #selenium').hide();
-                    $('#selenium-runner').attr('src', 'about:blank');
-                    clearInterval(window.checkResult);
-                    $(document.body).removeClass('running');
-                    $('.passing').removeClass('passing');
-                    if($('.test.failed').size()) {
-                        $('#header').addClass('failed');
-                    } else {
-                        $('#header').addClass('passed');
-                    }
-                    var areFailedTests = $('.test.failed').size();
-                    $.ajax({
-                       type: 'GET',
-                       url: '@{TestRunner.run("end")}',
-                       data: {result: areFailedTests ? 'failed' : 'passed'}
-                    });
-                    if(areFailedTests) {
-                        var skip = $("#header").outerHeight();
-                        skip += $("#results").outerHeight();
-                        $.scrollTo($('.test.failed').offset().top - skip, 500);
                     }
                 };
-                                
+
+                var result = function() {
+                    var mask = q('#selenium-mask');
+                    var selenium = q('#selenium');
+                    var runner = q('#selenium-runner');
+                    if (mask) mask.style.display = 'none';
+                    if (selenium) selenium.style.display = 'none';
+                    if (runner) runner.src = 'about:blank';
+                    clearInterval(window.checkResult);
+                    document.body.classList.remove('running');
+                    qAll('.passing').forEach(function(el) { el.classList.remove('passing'); });
+                    var header = q('#header');
+                    if (qAll('.test.failed').length) {
+                        header.classList.add('failed');
+                    } else {
+                        header.classList.add('passed');
+                    }
+                    var areFailedTests = qAll('.test.failed').length;
+                    ajax('@{TestRunner.run("end")}', {
+                        data: { result: areFailedTests ? 'failed' : 'passed' }
+                    });
+                    if (areFailedTests) {
+                        var firstFailed = q('.test.failed');
+                        if (firstFailed) {
+                            var skip = q('#header').offsetHeight + q('#results').offsetHeight;
+                            window.scrollTo({ top: firstFailed.offsetTop - skip, behavior: 'smooth' });
+                        }
+                    }
+                };
+
                 var runTest = function(testId, test) {
-					test.addClass('passing');
-                    $('.touch', test).html('&nbsp;');
-                    if(/.class$/.test(testId)) {
-                        $.ajax({
-                            type: 'GET',
-                            dataType: 'html',
-                            url: '@{TestRunner.run("XXX")}'.replace('XXX', testId),
-                            complete: function(res, status) {
-                                var results = jQuery("<div/>").append(res.responseText).find('table');
-                                if(!results || !results.size()) {
+                    test.classList.add('passing');
+                    var touch = q('.touch', test);
+                    if (touch) touch.innerHTML = '&nbsp;';
+                    if (/.class$/.test(testId)) {
+                        ajax('@{TestRunner.run("XXX")}'.replace('XXX', testId), {
+                            complete: function(responseText, status) {
+                                var results = parseResultTable(responseText);
+                                if (!results) {
                                     results = '<strong class="error">Error, the test has not been properly run. Check the server logs, or open this test in another browser tab to see the error page.</strong>';
                                 }
-                                if(status == 'success') {
+                                if (status === 'success') {
                                     testSuccess(test, results);
                                 } else {
                                     testFail(test, results);
-                                };
+                                }
                             }
                         });
                     }
-                    if(/.test.html/.test(testId)) {
+                    if (/.test.html/.test(testId)) {
                         %{
                             protocol = "http";
                             port = 9000;
@@ -112,172 +138,193 @@
                                 port = play.configuration['http.port'];
                             }
                         }%
-                        $('#selenium-runner').attr('src', '@{'/public/test-runner/selenium/TestRunner.html'}?baseUrl=${protocol}://localhost:${port}&test=/@tests/'+testId+'.suite&auto=true&close=true&resultsUrl=/@tests/'+testId);
-                        $('#selenium-mask, #selenium').show();
+                        q('#selenium-runner').src = '@{'/public/test-runner/selenium/TestRunner.html'}?baseUrl=${protocol}://localhost:${port}&test=/@tests/'+testId+'.suite&auto=true&close=true&resultsUrl=/@tests/'+testId;
+                        q('#selenium-mask').style.display = '';
+                        q('#selenium').style.display = '';
                         window.checkResult = setInterval(function() {
-                             var req = $.ajax({url: '@{TestRunner.run("XXX.result")}'.replace('XXX', testId), async: false});
-                             if(req.status == 200) {
-                                 var results = jQuery("<div/>").append(req.responseText).find('table');
-                                 clearInterval(window.checkResult);
-                                 $('#selenium-mask, #selenium').hide();
-                                 testSuccess(test, results);
-                             }
-                             if(req.status == 500) {
-                                 var results = jQuery("<div/>").append(req.responseText).find('table');
-                                 clearInterval(window.checkResult);
-                                 $('#selenium-mask, #selenium').hide();
-                                 testFail(test, results);
-                             }
+                            fetch('@{TestRunner.run("XXX.result")}'.replace('XXX', testId))
+                                .then(function(resp) {
+                                    if (resp.status === 200 || resp.status === 500) {
+                                        resp.text().then(function(text) {
+                                            var results = parseResultTable(text);
+                                            clearInterval(window.checkResult);
+                                            q('#selenium-mask').style.display = 'none';
+                                            q('#selenium').style.display = 'none';
+                                            if (resp.status === 200) {
+                                                testSuccess(test, results);
+                                            } else {
+                                                testFail(test, results);
+                                            }
+                                        });
+                                    }
+                                });
                         }, 2000);
                     }
                 };
-                                
+
                 var testSuccess = function(test, result) {
-                    test.removeClass('passing').addClass('passed').removeClass('runFirst');
-                    $('.touch', test).html('+');
-                    $('.testResult', test).html(result);
-					window.top.document.title = title;
+                    test.classList.remove('passing', 'runFirst');
+                    test.classList.add('passed');
+                    var touch = q('.touch', test);
+                    if (touch) touch.textContent = '+';
+                    var tr = q('.testResult', test);
+                    if (tr) { tr.innerHTML = result; }
+                    window.top.document.title = title;
                     runNextTest();
                 };
-                                
+
                 var testFail = function(test, result) {
-                    test.removeClass('passing').addClass('failed').removeClass('runFirst');
-                    $('.touch', test).html('-');
-                    $('.testResult', test).html(result).show();
-					window.top.document.title = title;
+                    test.classList.remove('passing', 'runFirst');
+                    test.classList.add('failed');
+                    var touch = q('.touch', test);
+                    if (touch) touch.textContent = '-';
+                    var tr = q('.testResult', test);
+                    if (tr) { tr.innerHTML = result; tr.style.display = ''; }
+                    window.top.document.title = title;
                     stop();
                 };
-                        
+
                 var stop = function() {
                     result();
                 };
-                        
+
                 var updateSelected = function() {
-                    var nb = $('.test.selected').size();
-                    if(nb) {
-                        $('.nbToRun').text(nb);
-                        $('.nbToRunPluralize').text((nb>1) ? 's' : '');
-                        $('#start').removeAttr('disabled').removeClass('disabled');
-                        $('#bms').show();
-                        $('#bms a').attr('href', bookmark());
-                        $('#quickLinks').hide();
+                    var nb = qAll('.test.selected').length;
+                    if (nb) {
+                        qAll('.nbToRun').forEach(function(el) { el.textContent = nb; });
+                        qAll('.nbToRunPluralize').forEach(function(el) { el.textContent = (nb > 1) ? 's' : ''; });
+                        var start = q('#start');
+                        if (start) { start.removeAttribute('disabled'); start.classList.remove('disabled'); }
+                        var bms = q('#bms');
+                        if (bms) { bms.style.display = ''; }
+                        var bmsLink = q('#bms a');
+                        if (bmsLink) bmsLink.href = bookmark();
+                        var ql = q('#quickLinks');
+                        if (ql) ql.style.display = 'none';
                     } else {
-                        $('.nbToRun').text('no');
-                        $('.nbToRunPluralize').text('');
-                        $('#start').attr('disabled', 'true').addClass('disabled');
-                        $('#bms').hide();
-                        $('#quickLinks').show();
+                        qAll('.nbToRun').forEach(function(el) { el.textContent = 'no'; });
+                        qAll('.nbToRunPluralize').forEach(function(el) { el.textContent = ''; });
+                        var start = q('#start');
+                        if (start) { start.setAttribute('disabled', 'true'); start.classList.add('disabled'); }
+                        var bms = q('#bms');
+                        if (bms) bms.style.display = 'none';
+                        var ql = q('#quickLinks');
+                        if (ql) ql.style.display = '';
                     }
-                    $('.test.failed').addClass('runFirst');
-                    $('.test, #header').removeClass('passed').removeClass('failed');
-                    $('.touch').html('&sim;');
-                    $('.testResult').hide();
-                }
+                    qAll('.test.failed').forEach(function(el) { el.classList.add('runFirst'); });
+                    qAll('.test, #header').forEach(function(el) { el.classList.remove('passed', 'failed'); });
+                    qAll('.touch').forEach(function(el) { el.innerHTML = '&sim;'; });
+                    qAll('.testResult').forEach(function(el) { el.style.display = 'none'; });
+                };
 
                 var bookmark = function() {
-                    var url = 'http://'+document.location.host;
-                    if(document.location.port && url.indexOf(":") == -1) {
-                        url += ':'+document.location.port;
+                    var url = window.location.origin + window.location.pathname + '?select=';
+                    var ids = qAll('.test.selected').map(function(el) { return el.id; });
+                    return url + ids.join(',');
+                };
+
+                // Event delegation for test links
+                document.addEventListener('click', function(e) {
+                    // Test name click - toggle selection
+                    var testLink = e.target.closest('.test a');
+                    if (testLink) {
+                        e.preventDefault();
+                        if (document.body.classList.contains('running')) return;
+                        testLink.closest('.test').classList.toggle('selected');
+                        updateSelected();
+                        return;
                     }
-                    url += document.location.pathname;
-                    url += '?select=';
-                    var v = false;
-                    $('.test.selected').each(function() {
-                        if(v) url += ',';
-                        url += $(this).attr('id');	
-                        v = true;					
-                    });
-                    if(url)
-                        return url;
-                }
-                        
-                $('.test a').click(function(e) {
-                    e.preventDefault();
-                    if($(document.body).is('.running')) return;
-                    $(this).closest('.test').toggleClass('selected');
-                    updateSelected();
+
+                    // Touch indicator click - toggle result visibility
+                    var touchEl = e.target.closest('.test .touch');
+                    if (touchEl) {
+                        e.preventDefault();
+                        var test = touchEl.closest('.test');
+                        if (test.classList.contains('failed') || test.classList.contains('passed')) {
+                            var tr = q('.testResult', test);
+                            if (tr) tr.style.display = (tr.style.display === 'none') ? '' : 'none';
+                            touchEl.textContent = (touchEl.textContent === '-') ? '+' : '-';
+                        }
+                        return;
+                    }
+
+                    // Category header click - toggle all tests in category
+                    var h2span = e.target.closest('#tests h2 span');
+                    if (h2span) {
+                        if (document.body.classList.contains('running')) return;
+                        var ul = h2span.parentElement.nextElementSibling;
+                        if (ul && ul.tagName === 'UL') {
+                            var tests = qAll('.test', ul);
+                            var selected = qAll('.test.selected', ul);
+                            if (tests.length === selected.length) {
+                                tests.forEach(function(el) { el.classList.remove('selected'); });
+                            } else {
+                                tests.forEach(function(el) { el.classList.add('selected'); });
+                            }
+                            updateSelected();
+                        }
+                        return;
+                    }
                 });
 
-                $('.test .touch').click(function(e) {
-                    e.preventDefault();
-                    var test = $(this).closest('.test')
-                    if($(test).is('.failed,.passed')) {
-                        $('.testResult', test).toggle();
-                        $(this).html( $(this).html() == '-' ? '+' : '-' );
-                    }
-                });
-                        
-                $('#tests h2 span').click(function() {
-                    if($(document.body).is('.running')) return;
-                    var ul = $(this).parent().next('ul');
-                    if( $('.test', ul).size() ==  $('.test.selected', ul).size() ) {
-                        $('.test', ul).removeClass('selected');
-                    } else {
-                        $('.test', ul).addClass('selected');
-                    }
-                    updateSelected();
-                });
-                        
-                $('#start').click(function() {
-                    if($(this).is('.disabled')) return;
+                q('#start').addEventListener('click', function() {
+                    if (this.classList.contains('disabled')) return;
                     run();
                 });
-                        
-                $('#stop').click(function() {
-                    stop();
-                });
 
-				$('#stopSelenium').click(function() {
-                    stop();
-                });
+                q('#stop').addEventListener('click', function() { stop(); });
+                q('#stopSelenium').addEventListener('click', function() { stop(); });
 
-                if(/select=/.exec(document.location.search)) {
-                    var toSelect = /select=([^&]+)/.exec(document.location.search)[1].split(',');
-                    if(toSelect[0] == 'all') {
-                        $('.test').addClass('selected');
+                // URL-based test selection
+                var selectMatch = /select=([^&]+)/.exec(document.location.search);
+                if (selectMatch) {
+                    var toSelect = selectMatch[1].split(',');
+                    if (toSelect[0] === 'all') {
+                        qAll('.test').forEach(function(el) { el.classList.add('selected'); });
                     } else {
-                        $(toSelect).each(function() {
-                            $(document.getElementById(this)).addClass('selected');
+                        toSelect.forEach(function(id) {
+                            var el = document.getElementById(id);
+                            if (el) el.classList.add('selected');
                         });
                     }
                 }
 
-                $('#sa').click(function() {
-                    $('.test').addClass('selected');
+                q('#sa').addEventListener('click', function() {
+                    qAll('.test').forEach(function(el) { el.classList.add('selected'); });
                     updateSelected();
                 });
 
-                $('#unselectAll').click(function(e) {
-	                e.preventDefault();
-                    $('.test').removeClass('selected');
-					updateSelected();
+                q('#unselectAll').addEventListener('click', function(e) {
+                    e.preventDefault();
+                    qAll('.test').forEach(function(el) { el.classList.remove('selected'); });
+                    updateSelected();
                 });
-                
-                $('#ra').click(function() {
-                    $('.test').addClass('selected');
+
+                q('#ra').addEventListener('click', function() {
+                    qAll('.test').forEach(function(el) { el.classList.add('selected'); });
                     updateSelected();
                     run();
                 });
-                
+
                 updateSelected();
 
-                if(/auto=yes/.exec(document.location.search)) {
+                if (/auto=yes/.exec(document.location.search)) {
                     run();
                 }
-                        
+
             });
-            function toggle_trace(link){
-            	var $link = jQuery(link);
-            	var $trace = jQuery("pre[data-role=trace]", $link.parent());
-            	if($trace.attr('data-shown') == "true"){
-            		$trace.hide();
-            		$link.text("Show trace");
-            		$trace.attr('data-shown', false);
-            	}else{
-            		$trace.show();
-            		$link.text("Hide trace");
-            		$trace.attr('data-shown', true);
-            	}
+
+            function toggle_trace(link) {
+                var trace = link.parentElement.querySelector('pre[data-role=trace]');
+                if (trace.getAttribute('data-shown') === 'true') {
+                    trace.style.display = 'none';
+                    link.textContent = 'Show trace';
+                    trace.setAttribute('data-shown', 'false');
+                } else {
+                    trace.style.display = '';
+                    link.textContent = 'Hide trace';
+                    trace.setAttribute('data-shown', 'true');
+                }
             }
         </script>
     </head>

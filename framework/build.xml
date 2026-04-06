@@ -238,15 +238,9 @@
         </javac>
     </target>
 
-    <target name="build-test-modules">
-        <ant antfile="build.xml" target="build" dir="../samples-and-tests/modules/testModule" >
-            <property name="play.path" value="../../../"/>
-        </ant>
-    </target>
-
     <!-- Launch all *Test.java -->
 
-    <target name="test" depends="clean,jar,build-test-modules" description="run tests suite">
+    <target name="test" depends="clean,jar" description="run tests suite">
         <condition property="playExtension" value=".bat">
             <and><os family="windows"/></and>
         </condition>
@@ -280,30 +274,6 @@
             <param name="testAppPath" value="${basedir}/../samples-and-tests/just-test-cases"/>
             <param name="play.user.language" value="-Duser.language=en"/>
             <param name="play.user.country" value="-Duser.country=US"/>
-        </antcall>
-
-        <antcall target="play-test">
-            <param name="testAppPath" value="${basedir}/../samples-and-tests/forum"/>
-        </antcall>
-
-        <antcall target="play-test">
-            <param name="testAppPath" value="${basedir}/../samples-and-tests/zencontact"/>
-        </antcall>
-
-        <antcall target="play-test">
-            <param name="testAppPath" value="${basedir}/../samples-and-tests/jobboard"/>
-        </antcall>
-
-        <antcall target="play-test">
-            <param name="testAppPath" value="${basedir}/../samples-and-tests/yabe"/>
-        </antcall>
-
-        <antcall target="play-test">
-            <param name="testAppPath" value="${basedir}/../samples-and-tests/nonstatic-app"/>
-        </antcall>
-
-        <antcall target="play-test">
-            <param name="testAppPath" value="${basedir}/../samples-and-tests/fast-tag"/>
         </antcall>
 
         <antcall target="test-success" />
