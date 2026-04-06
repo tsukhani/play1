@@ -789,7 +789,7 @@ public class PlayHandler extends SimpleChannelUpstreamHandler {
                 Logger.error(e, "Internal Server Error (500) for request %s", request.method + " " + request.url);
                 Logger.error(ex, "Error during the 500 response generation");
                 try {
-                    String errorHtml = "Internal Error (check logs)";
+                    String errorHtml = generateStaticErrorPage(e);
                     byte[] bytes = errorHtml.getBytes(encoding);
                     ChannelBuffer buf = ChannelBuffers.copiedBuffer(bytes);
                     setContentLength(nettyResponse, bytes.length);
@@ -820,6 +820,33 @@ public class PlayHandler extends SimpleChannelUpstreamHandler {
         if (Logger.isTraceEnabled()) {
             Logger.trace("serve500: end");
         }
+    }
+
+    private static String generateStaticErrorPage(Throwable e) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("<!DOCTYPE html><html><head><title>Application error</title>");
+        sb.append("<style>body{font-family:sans-serif;margin:40px}h1{color:#c00}pre{background:#f5f5f5;padding:15px;overflow:auto;border:1px solid #ddd}");
+        sb.append(".source{background:#fff9e6;border-left:3px solid #c00;padding:10px;margin:10px 0}</style></head><body>");
+        sb.append("<h1>Compilation error</h1>");
+
+        Throwable cause = e;
+        while (cause.getCause() != null && cause.getCause() != cause) {
+            cause = cause.getCause();
+        }
+        sb.append("<p>").append(escapeHtml(cause.getMessage())).append("</p>");
+
+        if (e instanceof PlayException playException) {
+            sb.append("<p><strong>").append(escapeHtml(playException.getErrorTitle())).append("</strong></p>");
+            sb.append("<p>").append(escapeHtml(playException.getErrorDescription())).append("</p>");
+        }
+
+        sb.append("</body></html>");
+        return sb.toString();
+    }
+
+    private static String escapeHtml(String text) {
+        if (text == null) return "";
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;");
     }
 
     public void serveStatic(RenderStatic renderStatic, ChannelHandlerContext ctx, Request request, Response response,

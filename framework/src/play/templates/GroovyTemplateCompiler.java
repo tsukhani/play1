@@ -356,7 +356,11 @@ public class GroovyTemplateCompiler extends TemplateCompiler {
             } catch (Exception e) {
                 // Use fastTag if exists
                 List<Class> fastClasses = new ArrayList<>();
-                fastClasses.addAll(Play.classloader.getAssignableClasses(FastTags.class));
+                try {
+                    fastClasses.addAll(Play.classloader.getAssignableClasses(FastTags.class));
+                } catch (Throwable t) {
+                    Logger.error(t, "Failed to load FastTags subclasses during template compilation");
+                }
                 fastClasses.add(FastTags.class);
 
                 Method m = null;

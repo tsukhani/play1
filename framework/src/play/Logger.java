@@ -71,11 +71,9 @@ public class Logger {
             context.reconfigure();
         } else if (Logger.log4j == null) {
             try {
-                if (init.access()) {
-                    Configurator.reconfigure(log4jConf.toURI());
-                    configuredManually = true;
-                    Logger.log4j = LogManager.getLogger("play");
-                }
+                Configurator.reconfigure(log4jConf.toURI());
+                configuredManually = init.access();
+                Logger.log4j = LogManager.getLogger("play");
             } catch (IllegalArgumentException | FileSystemNotFoundException | SecurityException | URISyntaxException ignored) {
             }
             if (Logger.log4j == null) {
