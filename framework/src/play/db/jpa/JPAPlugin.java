@@ -214,7 +214,10 @@ public class JPAPlugin extends PlayPlugin {
         properties.putAll(dbConfig.getProperties());
         properties.put("jakarta.persistence.transaction", "RESOURCE_LOCAL");
         properties.put("jakarta.persistence.provider", "org.hibernate.jpa.HibernatePersistenceProvider");
-        properties.put("hibernate.dialect", getDefaultDialect(dbConfig, dbConfig.getProperty("db.driver")));
+        String dialect = getDefaultDialect(dbConfig, dbConfig.getProperty("db.driver"));
+        if (dialect != null) {
+            properties.put("hibernate.dialect", dialect);
+        }
 
         if (!dbConfig.getProperty("jpa.ddl", Play.mode.isDev() ? "update" : "none").equals("none")) {
             properties.setProperty("hibernate.hbm2ddl.auto", dbConfig.getProperty("jpa.ddl", "update"));
@@ -229,31 +232,15 @@ public class JPAPlugin extends PlayPlugin {
     }
 
     public static String getDefaultDialect(Configuration dbConfig, String driver) {
+        // If explicitly configured, use it
         String dialect = dbConfig.getProperty("jpa.dialect");
         if (dialect != null) {
             return dialect;
-        } else if ("org.h2.Driver".equals(driver)) {
-            return "org.hibernate.dialect.H2Dialect";
-        } else if ("org.hsqldb.jdbcDriver".equals(driver)) {
-            return "org.hibernate.dialect.HSQLDialect";
-        } else if ("com.mysql.cj.jdbc.Driver".equals(driver)) {
-            return "org.hibernate.dialect.MySQLDialect";
-        } else if ("com.mysql.jdbc.Driver".equals(driver)) {
-            return "org.hibernate.dialect.MySQLDialect";
-        } else if ("org.postgresql.Driver".equals(driver)) {
-            return "org.hibernate.dialect.PostgreSQLDialect";
-        } else if ("com.ibm.db2.jdbc.app.DB2Driver".equals(driver)) {
-            return "org.hibernate.dialect.DB2Dialect";
-        } else if ("com.ibm.as400.access.AS400JDBCDriver".equals(driver)) {
-            return "org.hibernate.dialect.DB2Dialect";
-        } else if ("oracle.jdbc.OracleDriver".equals(driver)) {
-            return "org.hibernate.dialect.OracleDialect";
-        } else if ("com.microsoft.jdbc.sqlserver.SQLServerDriver".equals(driver)) {
-            return "org.hibernate.dialect.SQLServerDialect";
-        } else {
-            throw new UnsupportedOperationException("I do not know which hibernate dialect to use with "
-                    + driver + " and I cannot guess it, use the property jpa.dialect in config file");
         }
+        // Otherwise let Hibernate auto-detect the dialect from the JDBC connection.
+        // Hibernate 7.x handles all major databases natively and warns if dialect
+        // is set explicitly.
+        return null;
     }
 
     @Override
