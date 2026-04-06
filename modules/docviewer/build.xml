@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
 <project name="Docviewer" default="build" basedir=".">
-    <property name="build-release" value="17" />
+    <property name="build-release" value="25" />
     <path id="project.classpath">
         <pathelement path="${play.path}/framework/classes"/>
         <fileset dir="${play.path}/framework/lib">
