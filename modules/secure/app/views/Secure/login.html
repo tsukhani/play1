@@ -1,36 +1,38 @@
 #{extends 'Secure/layout.html' /}
 
-<div id="login">
-	
-	<h1>&{'secure.title'}</h1>
-		
+<div class="max-w-md mx-auto mt-12 text-center">
+
+	<h1 class="text-xl font-bold text-gray-900 mb-4">&{'secure.title'}</h1>
+
 	#{form @authenticate()}
-		
+
 		#{if flash.error}
-			<p class="error">
+			<p class="bg-error text-white text-xs text-center mb-2 py-1 px-2">
 				${messages.get(flash.error)}
 			</p>
 		#{/if}
 		#{if flash.success}
-			<p class="success">
+			<p class="bg-green-700 text-white text-xs text-center mb-2 py-1 px-2">
 				${messages.get(flash.success)}
 			</p>
 		#{/if}
-	
-		<p id="username-field">
-			<label for="username">&{'secure.username'}</label>
-			<input type="text" name="username" id="username" value="${flash.username}" />
-		</p>
-		<p id="password-field">
-			<label for="password">&{'secure.password'}</label>
-			<input type="password" name="password" id="password" value="" />
-		</p>
-		<p id="remember-field">
-			<input type="checkbox" name="remember" id="remember" value="true" ${flash.remember ? 'checked="true"' : ''} />
-			<label for="remember">&{'secure.remember'}</label>
-		</p>
-		<p id="signin-field">
-			<input type="submit" id="signin" value="&{'secure.signin'}" />
-		</p>
+
+		<div class="border-4 border-gray-300 bg-white p-4 text-left space-y-2">
+			<div class="flex items-center mt-2">
+				<label for="username" class="block w-40 text-right mr-2 text-gray-700 text-sm">&{'secure.username'}</label>
+				<input type="text" name="username" id="username" value="${flash.username}" class="border border-gray-300 px-2 py-1 text-sm w-52" />
+			</div>
+			<div class="flex items-center">
+				<label for="password" class="block w-40 text-right mr-2 text-gray-700 text-sm">&{'secure.password'}</label>
+				<input type="password" name="password" id="password" value="" class="border border-gray-300 px-2 py-1 text-sm w-40" />
+			</div>
+			<div class="ml-42 text-xs text-gray-500">
+				<input type="checkbox" name="remember" id="remember" value="true" ${flash.remember ? 'checked="true"' : ''} />
+				<label for="remember">&{'secure.remember'}</label>
+			</div>
+			<div class="ml-42 mt-2">
+				<input type="submit" id="signin" value="&{'secure.signin'}" class="cursor-pointer" />
+			</div>
+		</div>
 	#{/form}
 </div>

@@ -1,24 +1,24 @@
 #{extends 'CRUD/layout.html' /}
 #{set title:messages.get('crud.list.title', type.name) /}
 
-<div id="crudList" class="${type.name}">
+<div id="crudList" class="${type.name} relative">
 
-    <h2 id="crudListTitle">&{'crud.list.title', type.name}</h2>
+    <h2 class="text-gray-700 font-normal mt-2.5">&{'crud.list.title', type.name}</h2>
 
-    <div id="crudListSearch">
+    <div class="px-1.5 py-1 border border-gray-300 bg-gray-100">
         #{crud.search /}
     </div>
 
-    <div id="crudListTable">
+    <div>
         #{crud.table /}
     </div>
 
-    <div id="crudListPagination">
+    <div class="px-1.5 py-1 border border-gray-300 border-t-0 bg-gray-100 text-sm relative">
         #{crud.pagination /}
     </div>
 
-    <p id="crudListAdd">
-        <a href="@{blank()}">&{'crud.add', type.modelName}</a>
+    <p class="absolute top-0 right-0 m-0">
+        <a class="bg-success px-2.5 py-1 text-sm rounded-lg text-white no-underline hover:opacity-80" href="@{blank()}">&{'crud.add', type.modelName}</a>
     </p>
 
 </div>

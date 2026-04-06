@@ -4,8 +4,9 @@
     <head>
         <title>Application error</title>
         <meta http-equiv="Content-Type" content="text/html; charset=${_response_encoding}"/>
+        <link rel="stylesheet" href="@{'/public/stylesheets/play-tailwind.css'}"/>
     </head>
-    <body>
+    <body class="m-0 p-0 font-sans bg-gray-200">
         #{if play.mode.name() == 'DEV'}
             #{500 exception /}
         #{/if}

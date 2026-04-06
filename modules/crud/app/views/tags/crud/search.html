@@ -2,8 +2,8 @@
     #{if _fields}
         <input type="hidden" name="searchFields" value="${_fields.toString().substring(1, _fields.toString().length()-1).replace(',', '')}" />
     #{/if}
-    <input type="text" name="search" value="${params.search?.escape()?.raw()}" /> <input type="submit" value="&{'crud.search'}" />
+    <input class="font-sans text-xs w-2/5" type="text" name="search" value="${params.search?.escape()?.raw()}" /> <input class="font-sans text-xs" type="submit" value="&{'crud.search'}" />
     #{if _caller.params.search}
-        (<a href="@{list()}">&{'crud.list.totalSize', _caller.totalCount}</a>)
+        (<a class="text-gray-900 text-sm" href="@{list()}">&{'crud.list.totalSize', _caller.totalCount}</a>)
     #{/if}
 #{/form}

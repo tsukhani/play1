@@ -3,15 +3,15 @@
 
 <div id="crudBlank" class="${type.name}">
 
-    <h2 id="crudBlankTitle">&{'crud.blank.title', type.modelName}</h2>
+    <h2 class="text-gray-700 font-normal mt-2.5">&{'crud.blank.title', type.modelName}</h2>
 
-    <div class="objectForm">
+    <div class="border border-gray-300">
     #{form action:@create(), enctype:'multipart/form-data'}
         #{crud.form /}
-        <p class="crudButtons">
-            <input type="submit" name="_save" value="&{'crud.save', type.modelName}" />
-            <input type="submit" name="_saveAndContinue" value="&{'crud.saveAndContinue', type.modelName}" />
-            <input type="submit" name="_saveAndAddAnother" value="&{'crud.saveAndAddAnother', type.modelName}" />
+        <p class="bg-gray-100 text-right m-0 p-2.5">
+            <input class="cursor-pointer" type="submit" name="_save" value="&{'crud.save', type.modelName}" />
+            <input class="cursor-pointer" type="submit" name="_saveAndContinue" value="&{'crud.saveAndContinue', type.modelName}" />
+            <input class="cursor-pointer" type="submit" name="_saveAndAddAnother" value="&{'crud.saveAndAddAnother', type.modelName}" />
         </p>
     #{/form}
     </div>

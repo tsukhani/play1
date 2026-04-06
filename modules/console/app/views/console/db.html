@@ -4,47 +4,47 @@
     <head>
         <title>#{get 'title' /}</title>
         <meta http-equiv="Content-Type" content="text/html; charset=${_response_encoding}">
-        <link rel="stylesheet" type="text/css" media="screen" href="@{'/public/stylesheets/console_main.css'}">
+        <link rel="stylesheet" type="text/css" media="screen" href="@{'/public/stylesheets/play-tailwind.css'}">
         <link rel="shortcut icon" type="image/png" href="@{'/public/images/favicon.png'}">
     </head>
-    <body>
-        
-        <h1>Console</h1>
-        <h2>-DB</h2>
+    <body class="bg-[#100B09] font-sans py-8 px-12 text-white">
+
+        <h1 class="text-[#E2FE91] font-normal m-0 text-4xl">Console</h1>
+        <h2 class="text-[#D373C8] font-light mt-0 mb-5">-DB</h2>
 	#{navigation /}
-	<p>
+	<p class="text-sm max-w-xl leading-7">
 	%{ if (connection != null) { }%
 	<form action="${action}" method="POST">
-		  <textarea rows="5" cols="70" name="query">${query}</textarea> 
+		  <textarea rows="5" cols="70" name="query">${query}</textarea>
 		  <br>
-		<input type="submit" value="Submit" />	
-	  </form>	  
-        </p> 
-        
-        <div id="results">
+		<input type="submit" value="Submit" />
+	  </form>
+        </p>
+
+        <div class="my-8">
             #{list results}
-                <div class="print ${_parity}">
+                <div class="bg-[#F3FFC1] text-gray-900 text-sm p-1 mb-1 font-mono break-words ${_parity == 'even' ? 'bg-[#B1BA8E]' : ''}">
                     ${_}
                 </div>
             #{/list}
         </div>
-        
+
         #{if error}
-            <div id="error">
-		    <h3>Oops, ${error.message}</h3>
+            <div class="mb-8">
+		    <h3 class="text-red-700 font-light m-0 mb-2">Oops, ${error.message}</h3>
             </div>
         #{/if}
-        
-	<h3>Connection parameters</h3>
-	<h4>Holdability</h4>
+
+	<h3 class="text-[#7AB2F2] font-light mt-0 mb-2">Connection parameters</h3>
+	<h4 class="text-[#F28D33] font-light mt-8 mb-2">Holdability</h4>
 	${connection.getHoldability()}
-	<h4>AutoCommit</h4>
+	<h4 class="text-[#F28D33] font-light mt-8 mb-2">AutoCommit</h4>
 	${connection.getAutoCommit()}
-	<h4>Db product name</h4>
+	<h4 class="text-[#F28D33] font-light mt-8 mb-2">Db product name</h4>
 	${connection.getMetaData().getDatabaseProductName()}
-	<h4>Db driver</h4>
+	<h4 class="text-[#F28D33] font-light mt-8 mb-2">Db driver</h4>
 	${connection.getMetaData().getURL()}
-	<h4>Db version</h4>
+	<h4 class="text-[#F28D33] font-light mt-8 mb-2">Db version</h4>
 	${connection.getMetaData().getDatabaseMajorVersion()}.${connection.getMetaData().getDatabaseMinorVersion()}
 	%{ } else { }%
 	No Database was configured

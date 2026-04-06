@@ -26,7 +26,7 @@
 
     %{ def field = currentType.getField(fieldName) }%
 
-<div class="crudField crud_${field.type}">
+<div class="p-2.5 border-b border-gray-100 relative flex flex-wrap items-start crud_${field.type}">
 
     %{ if(fieldsHandler[fieldName]) { }%
         %{
@@ -86,7 +86,7 @@
             #{crud.hiddenField name:field.name, value:(currentObject ? currentObject[field.name] : null) /}
         #{/if}
 
-    <span class="crudHelp">
+    <span class="text-[0.7em] text-gray-400 block ml-[20%] mt-1">
         &{am}
             %{ play.data.validation.Validation.getValidators(currentType.entityClass, fieldName, 'object').each() { }%
                 %{
@@ -96,7 +96,7 @@
                             break;
                         case "MinSize":
                             out.println(messages.get('crud.help.minlength', it.annotation.value()))
-                            break;    
+                            break;
                         case "MaxSize":
                             out.println(messages.get('crud.help.maxlength', it.annotation.value()))
                             break;

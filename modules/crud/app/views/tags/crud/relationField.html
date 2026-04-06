@@ -1,13 +1,13 @@
 %{ pName = 'object.' + _name + '.' + play.db.Model.Manager.factoryFor(_field.property.relationType).keyName() }%
 
 #{field 'object.' + _name}
-    <label for="${field.id}">
+    <label class="block font-bold w-1/5 float-left text-gray-500 cursor-pointer" for="${field.id}">
         &{_name}
     </label>
 
     #{if _field.multiple}
         <input type="hidden" name="${pName}" value="" />
-        <select id="${field.id}" name="${pName}" multiple="yes">
+        <select class="font-sans text-xs max-h-[100px]" id="${field.id}" name="${pName}" multiple="yes">
             %{ _field.choices.each() { }%
             %{
                 selected = false;
@@ -30,7 +30,7 @@
         </select>
     #{/if}
     #{else}
-        <select id="${field.id}" name="${pName}">
+        <select class="font-sans text-xs" id="${field.id}" name="${pName}">
             #{ifnot _field.required}
                 <option value="">&{'crud.none'}</option>
             #{/ifnot}
@@ -54,6 +54,6 @@
     #{/else}
 
     #{ifError field.name}
-        <span class="error">${field.error.raw()}</span>
+        <span class="text-error pl-2.5 absolute top-4 text-xs">${field.error.raw()}</span>
     #{/ifError}
 #{/field}

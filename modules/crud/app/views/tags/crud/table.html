@@ -9,15 +9,15 @@
     }
 }%
 
-<table>
+<table class="w-full border border-gray-300 border-t-0 border-collapse table-fixed">
     <thead>
-        <tr>
+        <tr class="bg-admin-blue">
         %{ if(_fields) { }%
             %{ _fields.each() { }%
-            <th>
+            <th class="text-white font-bold text-left px-1.5 py-1.5">
                 %{ if(!_sort || _sort.contains(it)) { }%
-                <a class="${_caller.orderBy == it ? (_caller.order == 'DESC' ? 'crudSortedDesc' : 'crudSortedAsc') : ''}" href="@{list().remove('page').add('search', params.search).add('orderBy', it).add('order', (_caller.orderBy == it && _caller.order == 'ASC' ? 'DESC' : 'ASC'))}">
-                    &{it}
+                <a class="text-white font-bold no-underline" href="@{list().remove('page').add('search', params.search).add('orderBy', it).add('order', (_caller.orderBy == it && _caller.order == 'ASC' ? 'DESC' : 'ASC'))}">
+                    &{it}${_caller.orderBy == it ? (_caller.order == 'DESC' ? ' &#9650;' : ' &#9660;') : ''}
                 </a>
                 %{ } else { }%
                     &{it}
@@ -25,19 +25,19 @@
             </th>
             %{ } }%
         %{ } else { }%
-            <th>
-                <a class="${_caller.order == 'DESC' ? 'crudSortedDesc' : 'crudSortedAsc'}" href="@{list().remove('page').add('search', params.search).add('order', (_caller.order == 'DESC' ? 'ASC' : 'DESC'))}">
-                    &{_caller.type.name}
+            <th class="text-white font-bold text-left px-1.5 py-1.5">
+                <a class="text-white font-bold no-underline" href="@{list().remove('page').add('search', params.search).add('order', (_caller.order == 'DESC' ? 'ASC' : 'DESC'))}">
+                    &{_caller.type.name}${_caller.order == 'DESC' ? ' &#9650;' : ' &#9660;'}
                 </a>
             </th>
         %{ } }%
         </tr>
     </thead>
     %{ _caller.objects.eachWithIndex() { object, k -> }%
-    <tr class="${k % 2 ? 'even' : 'odd'}">
+    <tr class="${k % 2 ? 'bg-gray-50' : ''}">
         %{ if(_fields) { }%
             %{ _fields.eachWithIndex() { field, i -> }%
-            <td>
+            <td class="text-left px-1.5 py-1 border-b border-gray-100">
                 %{ if(fieldsHandler[field]) { }%
                     %{
                         def handler = fieldsHandler[field];
@@ -49,13 +49,13 @@
                     }%
                 %{ } else { }%
                     %{ if(i == 0) { }%
-                        <a href="@{show(object._key())}">${object[field]?.toString()?.escape()?.raw() ?: '(no value)'}</a>
+                        <a class="text-gray-600" href="@{show(object._key())}">${object[field]?.toString()?.escape()?.raw() ?: '(no value)'}</a>
                     %{ } else { }%
                         %{ if(_caller.type.getField(field).type == 'file') { }%
                             %{ if(object[field]) { }%
-                                <a class="currentAttachment" href="@{attachment(object.id, field)}">${object[field].filename} (${object[field].get().size().formatSize()})</a>
+                                <a class="block text-xs ml-[20%] pt-1" href="@{attachment(object.id, field)}">${object[field].filename} (${object[field].get().size().formatSize()})</a>
                              %{ } else { }%
-                                
+
                              %{ } }%
                         %{ } else { }%
                             ${object[field]?.escape()?.raw()}
@@ -72,8 +72,8 @@
                 }%
                 #{doBody body:handler /}
             %{ } else { }%
-                <td>
-                    <a href="@{show(object._key())}">${object.toString()?.escape()?.raw() ?: '(no value)'}</a>
+                <td class="text-left px-1.5 py-1 border-b border-gray-100">
+                    <a class="text-gray-600" href="@{show(object._key())}">${object.toString()?.escape()?.raw() ?: '(no value)'}</a>
                 </td>
             %{ } }%
         %{ } }%

@@ -3,23 +3,23 @@
 
 <div id="crudIndex">
 
-    <h2>&{'crud.index.title'}</h2>
+    <h2 class="text-gray-700 font-normal mt-2.5">&{'crud.index.title'}</h2>
 
-    <table>
+    <table class="w-full border border-gray-300 border-t-0 border-collapse table-fixed">
         <thead>
-            <tr>
-                <th>&{'crud.index.objectType'}</th>
-                <th width="20%">&{'crud.index.action'}</th>
+            <tr class="bg-admin-blue">
+                <th class="text-white font-bold text-left px-1.5 py-1.5">&{'crud.index.objectType'}</th>
+                <th class="text-white font-bold text-left px-1.5 py-1.5 w-1/5">&{'crud.index.action'}</th>
             </tr>
         </thead>
         <tbody>
 #{crud.types}
-            <tr>
-                <td>
-                    <a href="${type.listAction}">&{type.name}</a>
+            <tr class="even:bg-gray-50">
+                <td class="text-left px-1.5 py-1 border-b border-gray-100 last:border-gray-300">
+                    <a class="text-gray-600" href="${type.listAction}">&{type.name}</a>
                 </td>
-                <td class="crudNew" >
-                    <a href="${type.blankAction}">&{'crud.index.add', type}</a>
+                <td class="text-right px-1.5 py-1 border-b border-gray-100 last:border-gray-300">
+                    <a class="bg-success px-2.5 py-0.5 text-sm rounded-lg text-white no-underline hover:opacity-80" href="${type.blankAction}">&{'crud.index.add', type}</a>
                 </td>
             </tr>
 #{/crud.types}

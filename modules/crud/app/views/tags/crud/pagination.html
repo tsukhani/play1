@@ -1,11 +1,11 @@
 %{ nbPages = _caller.count.page(controllers.CRUD.getPageSize()) }%
 
-<p class="crudCount">
+<p class="m-0">
     &{'crud.list.size', _caller.count, _caller.type.name}
 </p>
 
 #{if nbPages > 1}
-    <p class="crudPages">
+    <p class="m-0 absolute right-1.5 top-1">
 
         %{
             limit = (_limit != null ? _limit : 10)
@@ -24,19 +24,19 @@
         }%
 
         #{if _caller.page > 1}
-            <span class="previous">
+            <span class="mr-1">
                 #{a @list().add('page', _caller.page-1).add('search', _caller.params.search).add('orderBy', _caller.orderBy).add('order', _caller.order)}&{'crud.pagination.previous'}#{/a}
             </span>
         #{/if}
 
         #{if start > 1}
-            <span class="first">
+            <span class="mr-1">
                 #{a @list().add('page', 1).add('search', _caller.params.search).add('orderBy', _caller.orderBy).add('order', _caller.order)}&{'crud.pagination.first'}#{/a}
             </span>
         #{/if}
 
         %{ for (i in start..end) { }%
-            <span class="page">
+            <span class="mr-1">
                 #{if _caller.page == i}
                     <strong>${i}</strong>
                 #{/if}
@@ -47,13 +47,13 @@
         %{ } }%
 
         #{if end < nbPages}
-            <span class="last">
+            <span class="mr-1">
                 #{a @list().add('page', nbPages).add('search', _caller.params.search).add('orderBy', _caller.orderBy).add('order', _caller.order)}&{'crud.pagination.last'}#{/a}
             </span>
         #{/if}
 
         #{if _caller.page < nbPages}
-            <span class="next">
+            <span class="mr-1">
                 #{a @list().add('page', _caller.page+1).add('search', _caller.params.search).add('orderBy', _caller.orderBy).add('order', _caller.order)}&{'crud.pagination.next'}#{/a}
             </span>
         #{/if}

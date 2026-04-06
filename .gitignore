@@ -21,6 +21,7 @@ samples-and-tests/*/test-result/
 
 bitbucket.log
 .mcp.json
+framework/tailwindcss
 
 # IDE and editors
 *~

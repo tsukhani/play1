@@ -1,25 +1,63 @@
 <html>
     <head>
         <title>Play manual - Cheat Sheet</title>
-        <link rel="stylesheet" href="@{'/public/playmanual/manual.css'}" type="text/css" media="screen" charset="${_response_encoding}">
-        <link rel="stylesheet" href="@{'/public/playmanual/wiki.css'}" type="text/css" media="screen" charset="${_response_encoding}">
-        <link rel="stylesheet" href="@{'/public/playmanual/cheat-sheet.css'}" type="text/css" media="screen" charset="${_response_encoding}">
-        <link rel="stylesheet" href="@{'/public/playmanual/cheat-sheet-print.css'}" type="text/css" media="print" charset="${_response_encoding}">
+        <link rel="stylesheet" href="@{'/public/stylesheets/play-tailwind.css'}" type="text/css" media="screen" charset="${_response_encoding}">
+        <style>
+            /* Prose styling for Textile/Markdown rendered content */
+            .wikistyle h1,.wikistyle h2,.wikistyle h3,.wikistyle h4,.wikistyle h5,.wikistyle h6{border:0!important;}
+            .wikistyle h1{font-size:170%!important;border-top:4px solid #aaa!important;padding-top:.5em!important;margin-top:1.5em!important;}
+            .wikistyle h1:first-child{margin-top:0!important;padding-top:.25em!important;border-top:none!important;}
+            .wikistyle h2{font-size:150%!important;margin-top:1.5em!important;border-top:4px solid #e0e0e0!important;padding-top:.5em!important;}
+            .wikistyle h3{margin-top:1em!important;}
+            .wikistyle p{margin:1em 0!important;line-height:1.5em!important;}
+            .wikistyle ul{margin:1em 0 1em 2em!important; list-style: square; line-height: 24px;}
+            .wikistyle ol{margin:1em 0 1em 2em!important; list-style-position: outside; list-style-type: decimal; line-height: 24px;}
+            .wikistyle ul ul,.wikistyle ul ol,.wikistyle ol ol,.wikistyle ol ul{margin-top:0!important;margin-bottom:0!important;}
+            .wikistyle blockquote{margin:1em 0 2em 0!important;border-left:5px solid #ddd!important;padding-left:.6em!important;color:#666!important;}
+            .wikistyle dt{font-weight:bold!important;margin-left:1em!important;}
+            .wikistyle dd{margin-left:2em!important;margin-bottom:1em!important;}
+            .wikistyle table{margin:1em 0!important;width:100%;}
+            .wikistyle table th{border-bottom:1px solid #bbb!important;padding:.2em 1em!important;}
+            .wikistyle table td{border-bottom:1px solid #ddd!important;padding:.2em 1em!important;}
+            .wikistyle pre{margin:1em 0 2em 0!important;font-size:90%!important;background-color:#f8f8ff!important;border-left:4px solid #e0e0e0!important;padding:.5em!important;line-height:1.5em!important;color:#444!important;overflow:auto!important;}
+            .wikistyle code{font-family:Consolas,"Andale Mono",monospace;font-size:90%;color:#444;background-color:#f8f8ff;border:1px solid #e0e0e0;padding:0 0.2em!important;}
+            .wikistyle pre code{display:block;padding:0!important;padding-left:10px!important;font-size:100%!important;border:none!important;}
+            .wikistyle h1:after, .wikistyle h2:after, .wikistyle h3:after {content: '';}
+            .wikistyle a{color: #444;}
+
+            /* Cheat sheet column card overrides */
+            .wikistyle .cs h2{width:100%;background:rgba(103,169,39,0.75);color:white;font-size:12px!important;margin-top:0!important;margin-bottom:0!important;border-top:none!important;padding-top:0!important;text-indent:0.5em;border-top-left-radius:3px;}
+            .wikistyle div.cs p{margin:0.5em!important;line-height:1.3!important;}
+
+            /* Print styles */
+            @media print {
+                .back-to-toc, .search-bar, .titlebar-links { display: none; }
+                .cs-topbar { padding: 0; height: 90px; }
+                .cs-topbar h1 { font-weight: normal; font-size: 30pt; }
+                .cs-topbar h1:after { color: #67A927; display: block; font-size: 10pt; content: 'Play framework cheat sheet'; }
+                .cs-card { margin-bottom: 1em !important; font-size: 90%; min-height: 10em; float: left; width: 46%; columns: unset; column-gap: unset; }
+                .cs-card.odd { clear: left; margin-right: 2%; }
+                .cs-card.even { margin-left: 2%; }
+                .wikistyle .cs h2 { color: #67A927; font-size: 10pt !important; margin-bottom: 0.5em !important; background: none; }
+                .wikistyle div.cs p { margin: 0 0 0.5em 0 !important; line-height: 1.3 !important; page-break-inside: avoid; }
+                #logobar-version { font-size: 8pt; }
+            }
+        </style>
     </head>
-    <body>
-        <div class="cs-wrapper">
-            <div id="docTopbar">
-                <div id="backToToc">
-                    <span>Back to </span><a href="/@documentation/home">Table of contents</a>
+    <body class="bg-[#F7F7F7] font-['Lucida_Grande',Helvetica,Arial,sans-serif] text-sm leading-6 border-t-4 border-[#67A927] overflow-y-scroll">
+        <div class="mx-5">
+            <div class="cs-topbar relative bg-white p-2.5 h-[70px] text-xs overflow-hidden rounded shadow-sm">
+                <div class="back-to-toc text-sm absolute top-1 left-1">
+                    <span class="font-bold text-gray-500 text-[15px]">Back to </span><a class="text-[#568C00]" href="/@documentation/home">Table of contents</a>
                 </div>
-                <div id="searchBar">
+                <div class="search-bar absolute bottom-1 left-1 h-[45px]">
                     <span>Get help with Google:</span>
                     <div id="searchBox"><form action="http://www.google.com/cse" id="cse-search-box"><div><input type="hidden" name="cx" value="002614023023983855063:jn1mu_7bof0" /><input type="hidden" name="ie" value="UTF-8" /><input type="text" name="q" size="28" style="font-size:14px"/></div></form><script type="text/javascript" src="http://www.google.com/coop/cse/brand?form=cse-search-box&lang=en"></script></div>
                 </div>
-                <div class="titlebar">
+                <div class="w-full text-center">
                     <h1>${title}</h1>
                 </div>
-                <div class="titlebar links">
+                <div class="titlebar-links w-full text-center">
                     #{list items: otherCategories, as: 'category'}
                         #{if category.value != title}
                             #{a @PlayDocumentation.cheatSheet(category.key, docLang)}${category.value}#{/a}
@@ -29,14 +67,14 @@
                         &nbsp;
                     #{/list}
                 </div>
-                <div id="logobar">
+                <div class="absolute right-1 top-1 text-center">
                     <img src="@{'/public/playmanual/logo.png'}">
-                    <h2 id="version">Play ${play.version}</h2>
+                    <h2 id="logobar-version" class="text-[10px] mt-0 font-normal">Play ${play.version}</h2>
                 </div>
             </div>
-            <div id="content" class="wikistyle">
+            <div class="wikistyle">
                 #{list items: sheets, as: 'sheet'}
-                    <div class="cs ${sheet_parity}">
+                    <div class="cs cs-card columns-3 gap-2.5 mx-auto text-[90%] mt-2.5 mb-2.5 pb-1 rounded shadow-sm hover:bg-white ${sheet_parity}">
                        ${sheet.raw()}
                     </div>
                 #{/list}

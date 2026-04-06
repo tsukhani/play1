@@ -1,0 +1,23 @@
+@import "tailwindcss";
+
+@source "../templates/**/*.html";
+@source "../../modules/*/app/views/**/*.html";
+@source "../../modules/*/app/views/**/*.tag";
+@source "../../resources/application-skel/app/views/**/*.html";
+
+@theme {
+    --color-play-green: #67A927;
+    --color-play-dark-green: #3F6C12;
+    --color-admin-blue: #0A65AF;
+    --color-success: #54BD06;
+    --color-error: #cc0000;
+    --color-test-pass: #81CF5A;
+    --color-test-fail: #EF6868;
+    --color-test-running: #95D7EF;
+    --color-test-selected: #fff2ab;
+    --color-console-bg: #100B09;
+    --color-console-green: #E2FE91;
+    --color-console-pink: #D373C8;
+    --color-console-blue: #7AB2F2;
+    --color-console-orange: #F28D33;
+}

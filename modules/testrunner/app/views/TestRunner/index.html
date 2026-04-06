@@ -3,7 +3,36 @@
     <head>
         <title>Play! - Tests runner</title>
         <meta http-equiv="Content-Type" content="text/html; charset=${_response_encoding}"/>
-        <link href="@{'/public/test-runner/stylesheets/screen.css'}" type="text/css" rel="stylesheet"  />
+        <link rel="stylesheet" type="text/css" href="@{'/public/stylesheets/play-tailwind.css'}" />
+
+        <style>
+            /* Dynamic state styles toggled by JavaScript classList operations */
+            .running #started { display: block; }
+            .running #stopped { display: none; }
+            .running #tests h2 span { cursor: default; }
+            .running .test { cursor: default; }
+            .passed > a, #header.passed { background-color: #81CF5A !important; }
+            .failed > a, #header.failed { background-color: #EF6868 !important; }
+            .passing .touch { background: url(@{'/public/test-runner/running.gif'}) no-repeat; }
+            .passing > a { background-color: #95D7EF; }
+            .passed .touch { color: #81CF5A !important; }
+            .failed .touch { color: #EF6868 !important; }
+            .failed .touch, .passed .touch { cursor: pointer; }
+            .selected > a { background-color: #fff2ab; color: #333; }
+            #start.disabled { background-color: #b7d2aa; cursor: default; }
+
+            /* Test result table styles */
+            .testResult .status_passed { background-color: #9BCF81 !important; }
+            .testResult .status_failed { background-color: #EF8686 !important; }
+            .testResult .status_done { background-color: #EFEFD1 !important; }
+            .testResult table .passed span { background-color: #9BCF81 !important; padding: 3px 5px; }
+            .testResult table .failed span { background-color: #EF8686 !important; padding: 3px 5px; }
+            .testResult table .source { margin-top: 10px; }
+            .testResult table .source span { color: #fff; font-size: 85%; padding: 1px 3px; background-color: #666; }
+            .testResult table pre { display: none; }
+            .testResult table .sourceLine { border-left: 3px solid #cc0000; padding: 4px 3px; color: #000; font-size: 85%; margin-bottom: 10px; }
+            .testResult a { background: white !important; font-weight: normal !important; padding: 0 !important; }
+        </style>
 
         <script type="text/javascript">
             document.addEventListener('DOMContentLoaded', function() {
@@ -117,7 +146,7 @@
                             complete: function(responseText, status) {
                                 var results = parseResultTable(responseText);
                                 if (!results) {
-                                    results = '<strong class="error">Error, the test has not been properly run. Check the server logs, or open this test in another browser tab to see the error page.</strong>';
+                                    results = '<strong class="text-[#cc0000]">Error, the test has not been properly run. Check the server logs, or open this test in another browser tab to see the error page.</strong>';
                                 }
                                 if (status === 'success') {
                                     testSuccess(test, results);
@@ -328,74 +357,74 @@
             }
         </script>
     </head>
-    <body>
-        <div id="header" class="block">
-            <h1>
+    <body class="m-0 p-0 font-sans bg-[#eeeeee] select-none">
+        <div id="header" class="fixed h-[60px] w-full bg-[#a4c4f3] p-5 border-b border-gray-400">
+            <h1 class="font-normal text-[28px] m-0">
                 Tests runner
-            </h1>           
-            <p>
+            </h1>
+            <p class="text-gray-700">
                 <strong>Select the tests to run</strong>, then click [Start] and pray
             </p>
-            <div id="loading">working ...</div>
+            <div id="loading" class="bg-[#cc0000] text-white absolute top-0 right-0 px-[5px] py-1 text-[80%] hidden">working ...</div>
         </div>
-        <div id="results" class="block">
-            
+        <div id="results" class="fixed h-5 w-full top-[100px] bg-gray-100 p-5 border-b border-gray-400 text-[110%] text-gray-400">
+
             <div id="stopped">
-                <span id="start">Start !</span>
+                <span id="start" class="bg-[#70c111] text-white text-[120%] border border-double border-[#70c111] cursor-pointer px-2 py-[3px] select-none">Start !</span>
                 &nbsp;
-                <span class="nbToRun">no</span> test<span class="nbToRunPluralize"></span> to run <span id="bms">(<a id="" href="#">Bookmark this link to save this configuration</a>) - <span id="unselectAll"><a id="" href="#">Unselect all</a></span></span>
-				
-                <span id="quickLinks">
-                    <span id="sa">(<a id="" href="#">Select all</a></span> -
-                    <span id="ra"><a id="" href="#">Run all</a>)</span>
+                <span class="nbToRun">no</span> test<span class="nbToRunPluralize"></span> to run <span id="bms" class="text-gray-400 text-[80%]">(<a id="" href="#" class="text-gray-400">Bookmark this link to save this configuration</a>) - <span id="unselectAll"><a id="" href="#" class="text-gray-400">Unselect all</a></span></span>
+
+                <span id="quickLinks" class="text-gray-400 text-[80%]">
+                    <span id="sa">(<a id="" href="#" class="text-gray-400">Select all</a></span> -
+                    <span id="ra"><a id="" href="#" class="text-gray-400">Run all</a>)</span>
                 </span>
             </div>
-            
-            <div id="started">
-                <span id="stop">Stop ...</span>
+
+            <div id="started" class="hidden">
+                <span id="stop" class="bg-[#cc0000] text-white text-[120%] border border-double border-[#cc0000] cursor-pointer px-2 py-[3px] select-none">Stop ...</span>
                 &nbsp;(running <span class="nbToRun">no</span> test<span class="nbToRunPluralize"></span>)
             </div>
-            
+
             <div id="finished">
-                
+
             </div>
-            
+
         </div>
-        <div id="tests" class="block">
-            
+        <div id="tests" class="pt-[12em] p-5 border-b border-gray-400">
+
             #{if unitTests}
-            <h2><span>There ${unitTests.size().pluralize('is', 'are')} ${unitTests.size()} unit test${unitTests.size().pluralize()},</span></h2>
-            <ul>
+            <h2 class="text-gray-700 font-normal border-l-4 border-gray-300 pl-[5px] select-none"><span class="cursor-pointer">There ${unitTests.size().pluralize('is', 'are')} ${unitTests.size()} unit test${unitTests.size().pluralize()},</span></h2>
+            <ul class="list-none mb-10 pl-5">
                 #{list items:unitTests, as:'test'}
-                <li>
+                <li class="p-[2px] mb-1">
                     <div class="test" id="${test.name}.class">
-                        <span class="touch">+</span><a href="@{TestRunner.run(test.name+'.class')}">${test.name.replace('.','/').replace('$','.')}</a>
-                        <div class="testResult"></div>
+                        <span class="touch text-gray-300 py-[2px] pr-[10px] pl-[5px] cursor-default font-mono text-[110%] font-bold">+</span><a href="@{TestRunner.run(test.name+'.class')}" class="bg-gray-50 px-1.5 py-[3px] text-gray-500 font-bold no-underline cursor-pointer select-none">${test.name.replace('.','/').replace('$','.')}</a>
+                        <div class="testResult hidden bg-white ml-6 mt-1.5 mb-2.5 p-2 text-[80%] border-l-[6px] border-gray-300 select-text"></div>
                     </div>
                 </li>
                 #{/list}
             </ul>
             %{ tis = true; }%
             #{/if}
-            
+
             #{if functionalTests}
-            <h2><span>${tis ? '' : 'There '+functionalTests.size().pluralize('is', 'are')} ${tis && !seleniumTests ? 'and' : ''} ${functionalTests.size()} functional test${functionalTests.size().pluralize()},</span></h2>
-            <ul>
+            <h2 class="text-gray-700 font-normal border-l-4 border-gray-300 pl-[5px] select-none"><span class="cursor-pointer">${tis ? '' : 'There '+functionalTests.size().pluralize('is', 'are')} ${tis && !seleniumTests ? 'and' : ''} ${functionalTests.size()} functional test${functionalTests.size().pluralize()},</span></h2>
+            <ul class="list-none mb-10 pl-5">
                 #{list items:functionalTests, as:'test'}
-                <li>
+                <li class="p-[2px] mb-1">
                     <div class="test" id="${test.name}.class">
-                        <span class="touch">+</span><a href="@{TestRunner.run(test.name+'.class')}">${test.name.replace('.','/').replace('$','.')}</a>
-                        <div class="testResult"></div>
+                        <span class="touch text-gray-300 py-[2px] pr-[10px] pl-[5px] cursor-default font-mono text-[110%] font-bold">+</span><a href="@{TestRunner.run(test.name+'.class')}" class="bg-gray-50 px-1.5 py-[3px] text-gray-500 font-bold no-underline cursor-pointer select-none">${test.name.replace('.','/').replace('$','.')}</a>
+                        <div class="testResult hidden bg-white ml-6 mt-1.5 mb-2.5 p-2 text-[80%] border-l-[6px] border-gray-300 select-text"></div>
                     </div>
                 </li>
                 #{/list}
             </ul>
             %{ tis = true; }%
             #{/if}
-            
+
             #{if seleniumTests}
-            <h2><span>${tis ? '' : 'There '+seleniumTests.size().pluralize('is', 'are')} ${tis ? 'and' : ''} ${seleniumTests.size()} selenium test${seleniumTests.size().pluralize()},</span></h2>
-            <ul>
+            <h2 class="text-gray-700 font-normal border-l-4 border-gray-300 pl-[5px] select-none"><span class="cursor-pointer">${tis ? '' : 'There '+seleniumTests.size().pluralize('is', 'are')} ${tis ? 'and' : ''} ${seleniumTests.size()} selenium test${seleniumTests.size().pluralize()},</span></h2>
+            <ul class="list-none mb-10 pl-5">
                 %{
                     protocol = "http";
                     port = 9000;
@@ -407,25 +436,25 @@
                     }
                 }%
                 #{list items:seleniumTests, as:'test'}
-                <li>
+                <li class="p-[2px] mb-1">
                     <div class="test" id="${test}">
-                        <span class="touch">+</span><a href="@{'/public/test-runner/selenium/TestRunner.html'}?baseUrl=${protocol}://localhost:${port}&test=/@tests/${test}.suite">${test.replace('.test.html','')}</a>
-                        <div class="testResult"></div>
+                        <span class="touch text-gray-300 py-[2px] pr-[10px] pl-[5px] cursor-default font-mono text-[110%] font-bold">+</span><a href="@{'/public/test-runner/selenium/TestRunner.html'}?baseUrl=${protocol}://localhost:${port}&test=/@tests/${test}.suite" class="bg-gray-50 px-1.5 py-[3px] text-gray-500 font-bold no-underline cursor-pointer select-none">${test.replace('.test.html','')}</a>
+                        <div class="testResult hidden bg-white ml-6 mt-1.5 mb-2.5 p-2 text-[80%] border-l-[6px] border-gray-300 select-text"></div>
                     </div>
                 </li>
                 #{/list}
             </ul>
             #{/if}
-            
+
             #{if !functionalTests && !unitTests && !seleniumTests}
-            <h2><span>There is no test to run</span></h2>
+            <h2 class="text-gray-700 font-normal border-l-4 border-gray-300 pl-[5px] select-none"><span>There is no test to run</span></h2>
             #{/if}
-            
+
         </div>
-        <div id="selenium-mask"></div>
-        <div id="selenium">
-            Play is running a selenium test... <span id="stopSelenium">Stop it</span>
-            <iframe id="selenium-runner" width="100%" height="100%" src="about:blank"></iframe>
+        <div id="selenium-mask" class="bg-black/80 fixed inset-0 hidden"></div>
+        <div id="selenium" class="fixed top-5 bottom-[50px] right-5 left-5 hidden z-[100000] text-white text-[110%]">
+            Play is running a selenium test... <span id="stopSelenium" class="bg-[#cc0000] text-white text-[90%] border border-double border-[#cc0000] cursor-pointer px-2 py-[2px] select-none">Stop it</span>
+            <iframe id="selenium-runner" class="mt-2.5 border border-gray-500 bg-white" width="100%" height="100%" src="about:blank"></iframe>
         </div>
     </body>
 </html>

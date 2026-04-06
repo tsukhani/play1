@@ -1,23 +1,23 @@
 #{extends 'CRUD/layout.html' /}
 #{set title:messages.get('crud.show.title', type.modelName) /}
 
-<div id="crudShow" class="${type.name}">
+<div id="crudShow" class="${type.name} relative">
 
-    <h2 id="crudShowTitle">&{'crud.show.title', type.modelName}</h2>
+    <h2 class="text-gray-700 font-normal mt-2.5">&{'crud.show.title', type.modelName}</h2>
 
-    <div class="objectForm">
+    <div class="border border-gray-300">
     #{form action:@save(object._key()), enctype:'multipart/form-data'}
         #{crud.form /}
-        <p class="crudButtons">
-            <input type="submit" name="_save" value="&{'crud.save', type.modelName}" />
-            <input type="submit" name="_saveAndContinue" value="&{'crud.saveAndContinue', type.modelName}" />
+        <p class="bg-gray-100 text-right m-0 p-2.5">
+            <input class="cursor-pointer" type="submit" name="_save" value="&{'crud.save', type.modelName}" />
+            <input class="cursor-pointer" type="submit" name="_saveAndContinue" value="&{'crud.saveAndContinue', type.modelName}" />
         </p>
     #{/form}
     </div>
 
     #{form @delete(object._key())}
-        <p class="crudDelete">
-            <input type="submit" value="&{'crud.delete', type.modelName}" />
+        <p class="absolute top-0 right-0 m-0">
+            <input class="text-white border-none cursor-pointer bg-error px-2.5 py-0.5 text-sm rounded-lg hover:opacity-70" type="submit" value="&{'crud.delete', type.modelName}" />
         </p>
     #{/form}
 

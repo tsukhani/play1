@@ -33,7 +33,7 @@ def execute(**kargs):
                 return
 
             if o == '--css':
-                app.override('public/stylesheets/crud.css', 'public/stylesheets/crud.css')
+                app.override('public/stylesheets/play-tailwind.css', 'public/stylesheets/play-tailwind.css')
                 print("~ ")
                 return
 
@@ -44,6 +44,6 @@ def execute(**kargs):
 
     print("~ Specify the template to override, ex : -t Users/list") 
     print("~ ")
-    print("~ Use --css to override the CRUD css") 
+    print("~ Use --css to override the CRUD Tailwind css")
     print("~ Use --layout to override the CRUD layout") 
     print("~ ")

@@ -1,13 +1,13 @@
 #{field 'object.' + _name}
-    <label for="${field.id}">
+    <label class="block font-bold w-1/5 float-left text-gray-500 cursor-pointer" for="${field.id}">
         &{_name}
     </label>
-    <input id="${field.id}" class="${field.errorClass}" type="file" name="${field.name}" />
+    <input id="${field.id}" class="font-sans text-xs ${field.errorClass}" type="file" name="${field.name}" />
     #{ifError field.name}
-        <span class="error">${field.error.raw()}</span>
+        <span class="text-error pl-2.5 absolute top-4 text-xs">${field.error.raw()}</span>
     #{/ifError}
     #{if _value && _value.exists() && _id}
-        <a class="currentAttachment" href="@{attachment(_id, _name)}">Download current file (${_value.length().formatSize()})</a>
-        <span class="removeAttachment"><input type="checkbox" name="${field.name}_delete_" value="true" /> (delete)</span>
+        <a class="block text-xs ml-[20%] pt-1" href="@{attachment(_id, _name)}">Download current file (${_value.length().formatSize()})</a>
+        <span class="block text-xs ml-[20%]"><input type="checkbox" name="${field.name}_delete_" value="true" /> (delete)</span>
     #{/if}
 #{/field}
