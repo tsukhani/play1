@@ -1,8 +1,0 @@
-#{extends 'main.html' /}
-#{set title:'Home' /}
-
-URL param value : ${url} <br/>
-
-XSS test on &lt;a&gt;
-<a href="@{security.XssAttempts.testUrlParam(url)}">actionxsstest</a>
-

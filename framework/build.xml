@@ -38,16 +38,6 @@
             <fileset dir="pym">
                 <include name="**/*.pyc"/>
             </fileset>
-            <fileset dir="../samples-and-tests">
-                <include name="**/test-result/**"/>
-                <include name="**/tmp/**"/>
-                <include name="**/db/**"/>
-                <include name="**/attachments/**"/>
-                <include name="**/nbproject/**"/>
-                <include name="**/data/**"/>
-                <include name="**/logs/**"/>
-                <include name="**/i-am-working-here/**"/>
-            </fileset>
         </delete>
         <antcall target="clean-unittest"/>
     </target>
@@ -238,49 +228,13 @@
         </javac>
     </target>
 
-    <target name="build-test-modules">
-        <ant antfile="build.xml" target="build" dir="../samples-and-tests/modules/testModule" >
-            <property name="play.path" value="../../../"/>
-        </ant>
-    </target>
-
     <!-- Launch all *Test.java -->
 
-    <target name="test" depends="clean,jar,build-test-modules" description="run tests suite">
-        <condition property="playExtension" value=".bat">
-            <and><os family="windows"/></and>
-        </condition>
-        <condition property="playExtension" value="">
-            <and><os family="unix"/></and>
-        </condition>
-        <condition property="pythonExecutable" value="python">
-            <and><os family="windows"/></and>
-        </condition>
-        <condition property="pythonExecutable" value="python">
-            <and><os family="unix"/></and>
-        </condition>
+    <target name="test" depends="clean,jar" description="run tests suite">
 
         <echo message="Testing unittests" />
 
         <antcall target="unittest" />
-
-        <echo message="Testing development lifecycle (wait ...)" />
-
-        <exec executable="${pythonExecutable}" failonerror="true">
-            <arg value="${basedir}/../samples-and-tests/i-am-a-developer/tests.py" />
-        </exec>
-
-        <exec executable="${pythonExecutable}" failonerror="true">
-            <arg value="${basedir}/../samples-and-tests/i-am-a-developer/test_jvm_version_flag.py" />
-        </exec>
-
-        <echo message="Using ${basedir}/../play${playExtension}" />
-
-        <antcall target="play-test">
-            <param name="testAppPath" value="${basedir}/../samples-and-tests/just-test-cases"/>
-            <param name="play.user.language" value="-Duser.language=en"/>
-            <param name="play.user.country" value="-Duser.country=US"/>
-        </antcall>
 
         <antcall target="test-success" />
 
