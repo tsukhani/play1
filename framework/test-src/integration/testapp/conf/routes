@@ -1,0 +1,6 @@
+GET     /                          TestController.index
+GET     /hello/{name}              TestController.hello
+POST    /echo                      TestController.echo
+GET     /redirect                  TestController.redirect
+GET     /json                      TestController.json
+GET     /public/                   staticDir:public
