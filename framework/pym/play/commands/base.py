@@ -50,13 +50,16 @@ def execute(**kargs):
 def new(app, args, env, cmdloader=None):
     withModules = []
     application_name = None
+    frontend = None
     try:
-        optlist, args = getopt.getopt(args, '', ['with=', 'name='])
+        optlist, args = getopt.getopt(args, '', ['with=', 'name=', 'frontend='])
         for o, a in optlist:
             if o in ('--with'):
                 withModules = a.split(',')
             if o in ('--name'):
                 application_name = a
+            if o in ('--frontend'):
+                frontend = a
     except getopt.GetoptError as err:
         print("~ %s" % str(err))
         print("~ Sorry, unrecognized option")
@@ -113,9 +116,57 @@ def new(app, args, env, cmdloader=None):
 
     cmdloader.commands['dependencies'].execute(command='dependencies', app=app, args=['--sync'], env=env, cmdloader=cmdloader)
 
+    # Set up Nuxt 3 frontend if requested
+    if frontend == 'nuxt':
+        setup_nuxt_frontend(app, application_name, env)
+
     print("~ OK, the application is created.")
     print("~ Start it with : play run %s" % sys.argv[2])
+    if frontend == 'nuxt':
+        print("~ Start the frontend with : cd %s/frontend && npm install && npm run dev" % sys.argv[2])
     print("~ Have fun!")
+    print("~")
+
+def setup_nuxt_frontend(app, application_name, env):
+    """Set up a Nuxt 3 + Tailwind CSS frontend alongside the Play app."""
+    nuxt_skel = os.path.join(env["basedir"], 'resources/nuxt-skel')
+    frontend_path = os.path.join(app.path, 'frontend')
+
+    print("~")
+    print("~ Setting up Nuxt 3 frontend...")
+
+    # Copy Nuxt skeleton to frontend/
+    copy_directory(nuxt_skel, frontend_path)
+
+    # Remove the ApiController.java from frontend/ (it was copied with the skeleton)
+    api_controller_src = os.path.join(frontend_path, 'ApiController.java')
+    api_controller_dst = os.path.join(app.path, 'app/controllers/ApiController.java')
+    if os.path.exists(api_controller_src):
+        shutil.move(api_controller_src, api_controller_dst)
+
+    # Replace application name placeholders
+    for root, dirs, files in os.walk(frontend_path):
+        for f in files:
+            filepath = os.path.join(root, f)
+            try:
+                replaceAll(filepath, r'%APPLICATION_NAME%', application_name)
+            except Exception:
+                pass
+
+    # Add API routes to the Play app
+    routes_file = os.path.join(app.path, 'conf/routes')
+    with open(routes_file, 'r') as f:
+        routes = f.read()
+    api_routes = "\n# API endpoints for Nuxt frontend\nGET     /api/status                ApiController.status\n"
+    routes = routes.rstrip() + "\n" + api_routes
+    with open(routes_file, 'w') as f:
+        f.write(routes)
+
+    # Add .gitignore for Nuxt build artifacts
+    with open(os.path.join(frontend_path, '.gitignore'), 'w') as f:
+        f.write("node_modules\n.nuxt\n.output\ndist\n")
+
+    print("~ Nuxt 3 frontend created in %s/frontend" % os.path.normpath(app.path))
     print("~")
 
 process = None

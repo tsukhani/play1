@@ -76,5 +76,49 @@ class TestPlayNew(unittest.TestCase):
         self.assertIn('play', content)
 
 
+class TestPlayNewWithNuxt(unittest.TestCase):
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix='play-cli-test-nuxt-')
+        self.app_path = os.path.join(self.tmpdir, 'nuxtapp')
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_creates_nuxt_frontend(self):
+        result = run_play(['new', self.app_path, '--name=NuxtApp', '--frontend=nuxt'])
+        self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
+
+        self.assertTrue(os.path.isdir(os.path.join(self.app_path, 'frontend')))
+        self.assertTrue(os.path.isfile(os.path.join(self.app_path, 'frontend', 'package.json')))
+        self.assertTrue(os.path.isfile(os.path.join(self.app_path, 'frontend', 'nuxt.config.ts')))
+        self.assertTrue(os.path.isfile(os.path.join(self.app_path, 'frontend', 'pages', 'index.vue')))
+
+    def test_creates_api_controller(self):
+        run_play(['new', self.app_path, '--name=NuxtApp', '--frontend=nuxt'])
+
+        api_controller = os.path.join(self.app_path, 'app', 'controllers', 'ApiController.java')
+        self.assertTrue(os.path.isfile(api_controller))
+        with open(api_controller) as f:
+            content = f.read()
+        self.assertIn('renderJSON', content)
+
+    def test_adds_api_route(self):
+        run_play(['new', self.app_path, '--name=NuxtApp', '--frontend=nuxt'])
+
+        routes_path = os.path.join(self.app_path, 'conf', 'routes')
+        with open(routes_path) as f:
+            content = f.read()
+        self.assertIn('/api/status', content)
+        self.assertIn('ApiController.status', content)
+
+    def test_substitutes_app_name_in_frontend(self):
+        run_play(['new', self.app_path, '--name=MyNuxtApp', '--frontend=nuxt'])
+
+        with open(os.path.join(self.app_path, 'frontend', 'package.json')) as f:
+            content = f.read()
+        self.assertIn('MyNuxtApp-frontend', content)
+
+
 if __name__ == '__main__':
     unittest.main()
