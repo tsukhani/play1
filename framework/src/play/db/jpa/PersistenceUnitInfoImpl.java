@@ -52,6 +52,16 @@ public class PersistenceUnitInfoImpl implements PersistenceUnitInfo {
     }
 
     @Override
+    public String getScopeAnnotationName() {
+        return null;
+    }
+
+    @Override
+    public List<String> getQualifierAnnotationNames() {
+        return Collections.emptyList();
+    }
+
+    @Override
     public PersistenceUnitTransactionType getTransactionType() {
         return transactionType;
     }
@@ -122,7 +132,7 @@ public class PersistenceUnitInfoImpl implements PersistenceUnitInfo {
 
     @Override
     public String getPersistenceXMLSchemaVersion() {
-        return "2.1";
+        return "3.2";
     }
 
     @Override

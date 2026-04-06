@@ -213,7 +213,7 @@ public class JPAPlugin extends PlayPlugin {
         Properties properties = new Properties();
         properties.putAll(dbConfig.getProperties());
         properties.put("jakarta.persistence.transaction", "RESOURCE_LOCAL");
-        properties.put("jakarta.persistence.provider", "org.hibernate.ejb.HibernatePersistence");
+        properties.put("jakarta.persistence.provider", "org.hibernate.jpa.HibernatePersistenceProvider");
         properties.put("hibernate.dialect", getDefaultDialect(dbConfig, dbConfig.getProperty("db.driver")));
 
         if (!dbConfig.getProperty("jpa.ddl", Play.mode.isDev() ? "update" : "none").equals("none")) {
@@ -237,7 +237,7 @@ public class JPAPlugin extends PlayPlugin {
         } else if ("org.hsqldb.jdbcDriver".equals(driver)) {
             return "org.hibernate.dialect.HSQLDialect";
         } else if ("com.mysql.cj.jdbc.Driver".equals(driver)) {
-            return "org.hibernate.dialect.MySQL8Dialect";
+            return "org.hibernate.dialect.MySQLDialect";
         } else if ("com.mysql.jdbc.Driver".equals(driver)) {
             return "org.hibernate.dialect.MySQLDialect";
         } else if ("org.postgresql.Driver".equals(driver)) {
@@ -245,7 +245,7 @@ public class JPAPlugin extends PlayPlugin {
         } else if ("com.ibm.db2.jdbc.app.DB2Driver".equals(driver)) {
             return "org.hibernate.dialect.DB2Dialect";
         } else if ("com.ibm.as400.access.AS400JDBCDriver".equals(driver)) {
-            return "org.hibernate.dialect.DB2400Dialect";
+            return "org.hibernate.dialect.DB2Dialect";
         } else if ("oracle.jdbc.OracleDriver".equals(driver)) {
             return "org.hibernate.dialect.OracleDialect";
         } else if ("com.microsoft.jdbc.sqlserver.SQLServerDriver".equals(driver)) {
