@@ -153,12 +153,12 @@ def setup_nuxt_frontend(app, application_name, env):
             except Exception:
                 pass
 
-    # Add API routes to the Play app
+    # Add API routes before the catch-all route
     routes_file = os.path.join(app.path, 'conf/routes')
     with open(routes_file, 'r') as f:
         routes = f.read()
-    api_routes = "\n# API endpoints for Nuxt frontend\nGET     /api/status                ApiController.status\n"
-    routes = routes.rstrip() + "\n" + api_routes
+    api_routes = "# API endpoints for Nuxt frontend\nGET     /api/status                ApiController.status\n\n"
+    routes = routes.replace("# Catch all\n", api_routes + "# Catch all\n")
     with open(routes_file, 'w') as f:
         f.write(routes)
 
