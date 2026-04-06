@@ -120,5 +120,81 @@ class TestPlayNewWithNuxt(unittest.TestCase):
         self.assertIn('MyNuxtApp-frontend', content)
 
 
+class TestPlayDist(unittest.TestCase):
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix='play-cli-test-dist-')
+        self.app_path = os.path.join(self.tmpdir, 'distapp')
+        run_play(['new', self.app_path, '--name=DistApp'])
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_creates_zip(self):
+        result = run_play(['dist', self.app_path])
+        self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
+
+        zip_path = os.path.join(self.app_path, 'dist', 'distapp.zip')
+        self.assertTrue(os.path.isfile(zip_path))
+
+    def test_custom_output_path(self):
+        out = os.path.join(self.tmpdir, 'custom.zip')
+        result = run_play(['dist', self.app_path, '-o', out])
+        self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
+        self.assertTrue(os.path.isfile(out))
+
+    def test_includes_app_and_conf(self):
+        import zipfile
+        run_play(['dist', self.app_path])
+
+        zip_path = os.path.join(self.app_path, 'dist', 'distapp.zip')
+        with zipfile.ZipFile(zip_path) as zf:
+            names = zf.namelist()
+        self.assertTrue(any('app/controllers' in n for n in names))
+        self.assertTrue(any('conf/application.conf' in n for n in names))
+        self.assertTrue(any('conf/routes' in n for n in names))
+
+    def test_excludes_tmp_and_logs(self):
+        import zipfile
+        # Create tmp and logs dirs that should be excluded
+        os.makedirs(os.path.join(self.app_path, 'tmp'))
+        os.makedirs(os.path.join(self.app_path, 'logs'))
+        with open(os.path.join(self.app_path, 'tmp', 'dump.txt'), 'w') as f:
+            f.write('temp')
+        with open(os.path.join(self.app_path, 'logs', 'app.log'), 'w') as f:
+            f.write('log')
+
+        run_play(['dist', self.app_path])
+
+        zip_path = os.path.join(self.app_path, 'dist', 'distapp.zip')
+        with zipfile.ZipFile(zip_path) as zf:
+            names = zf.namelist()
+        self.assertFalse(any('/tmp/' in n for n in names))
+        self.assertFalse(any('/logs/' in n for n in names))
+
+    def test_includes_frontend_excludes_node_modules(self):
+        import zipfile
+        # Create a frontend dir with source and node_modules
+        frontend = os.path.join(self.app_path, 'frontend')
+        os.makedirs(os.path.join(frontend, 'components'))
+        os.makedirs(os.path.join(frontend, 'node_modules', 'somepkg'))
+        os.makedirs(os.path.join(frontend, '.nuxt'))
+        with open(os.path.join(frontend, 'components', 'App.vue'), 'w') as f:
+            f.write('<template></template>')
+        with open(os.path.join(frontend, 'node_modules', 'somepkg', 'index.js'), 'w') as f:
+            f.write('module.exports = {}')
+        with open(os.path.join(frontend, '.nuxt', 'cache.json'), 'w') as f:
+            f.write('{}')
+
+        run_play(['dist', self.app_path])
+
+        zip_path = os.path.join(self.app_path, 'dist', 'distapp.zip')
+        with zipfile.ZipFile(zip_path) as zf:
+            names = zf.namelist()
+        self.assertTrue(any('frontend/components/App.vue' in n for n in names))
+        self.assertFalse(any('node_modules' in n for n in names))
+        self.assertFalse(any('.nuxt' in n for n in names))
+
+
 if __name__ == '__main__':
     unittest.main()
