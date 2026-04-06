@@ -17,10 +17,17 @@ if [ ! -x "$TAILWIND" ]; then
     exit 1
 fi
 
-OUTPUT="$FRAMEWORK_DIR/public/stylesheets/play-tailwind.css"
-mkdir -p "$(dirname "$OUTPUT")"
+# Generate minified CSS
+OUTPUT_SKEL="$FRAMEWORK_DIR/../resources/application-skel/public/stylesheets/play-tailwind.css"
+OUTPUT_DOCVIEWER="$FRAMEWORK_DIR/../modules/docviewer/public/stylesheets/play-tailwind.css"
 
 echo "Building Tailwind CSS..."
-"$TAILWIND" --input "$SCRIPT_DIR/input.css" --output "$OUTPUT" --minify
+"$TAILWIND" --input "$SCRIPT_DIR/input.css" --output "$OUTPUT_SKEL" --minify
 
-echo "Generated: $OUTPUT"
+# Copy to docviewer module (serves framework pages like welcome, documentation)
+mkdir -p "$(dirname "$OUTPUT_DOCVIEWER")"
+cp "$OUTPUT_SKEL" "$OUTPUT_DOCVIEWER"
+
+echo "Generated:"
+echo "  $OUTPUT_SKEL"
+echo "  $OUTPUT_DOCVIEWER"
