@@ -5,6 +5,16 @@ export default defineNuxtConfig({
   devtools: { enabled: true },
 
   // Proxy API requests to the Play backend during development
+  nitro: {
+    devProxy: {
+      '/api': {
+        target: 'http://localhost:9000/api',
+        changeOrigin: true
+      }
+    }
+  },
+
+  // Proxy API requests in production (SSR mode)
   routeRules: {
     '/api/**': { proxy: 'http://localhost:9000/api/**' }
   },
