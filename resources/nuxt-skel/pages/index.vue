@@ -18,7 +18,7 @@ const { data: status } = await useFetch('/api/status')
     </div>
 
     <div class="mt-8 text-sm text-gray-400 space-y-1">
-      <p>Frontend: <code class="bg-gray-100 px-1.5 py-0.5 rounded text-xs">cd frontend && npm run dev</code> (port 3000)</p>
+      <p>Frontend: <code class="bg-gray-100 px-1.5 py-0.5 rounded text-xs">cd frontend && pnpm dev</code> (port 3000)</p>
       <p>Backend: <code class="bg-gray-100 px-1.5 py-0.5 rounded text-xs">play run</code> (port 9000)</p>
       <p>API calls from the frontend are proxied to the backend via <code class="bg-gray-100 px-1.5 py-0.5 rounded text-xs">/api/**</code>.</p>
     </div>

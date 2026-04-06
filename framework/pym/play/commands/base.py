@@ -123,7 +123,7 @@ def new(app, args, env, cmdloader=None):
     print("~ OK, the application is created.")
     print("~ Start it with : play run %s" % sys.argv[2])
     if frontend == 'nuxt':
-        print("~ Start the frontend with : cd %s/frontend && npm install && npm run dev" % sys.argv[2])
+        print("~ Start the frontend with : cd %s/frontend && pnpm install && pnpm dev" % sys.argv[2])
     print("~ Have fun!")
     print("~")
 
