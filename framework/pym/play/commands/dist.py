@@ -94,10 +94,26 @@ def _zip_with_git(app_path, output, app_name, output_dir, git_files):
     """Create ZIP using git ls-files to honor .gitignore."""
     output_rel = os.path.relpath(output_dir, app_path) if output_dir.startswith(app_path) else None
 
+    # Load .distignore patterns if present
+    distignore_prefixes = []
+    distignore_path = os.path.join(app_path, '.distignore')
+    if os.path.isfile(distignore_path):
+        with open(distignore_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    distignore_prefixes.append(line)
+        if distignore_prefixes:
+            print("~ Using .distignore to exclude additional paths")
+
     with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as zf:
         for relpath in sorted(git_files):
             # Skip the dist output directory itself
             if output_rel and relpath.startswith(output_rel + os.sep):
+                continue
+
+            # Skip paths matching .distignore prefixes
+            if any(relpath.startswith(prefix) for prefix in distignore_prefixes):
                 continue
 
             filepath = os.path.join(app_path, relpath)
