@@ -1,5 +1,6 @@
 package play.mvc;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import play.Play;
@@ -14,6 +15,11 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class RouterTest {
+
+    @AfterEach
+    void tearDown() {
+        Router.routes.clear();
+    }
 
     @Test
     public void test_getBaseUrl() {

@@ -1,5 +1,6 @@
 package play.mvc;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import play.Play;
@@ -88,7 +89,7 @@ public class SessionTest {
         assertNotNull(Response.current().cookies.get(Scope.COOKIE_PREFIX + "_SESSION"));
     }
 
-    @After
+    @AfterEach
     public void restoreDefault() {
         boolean SESSION_SEND_ONLY_IF_CHANGED = Play.configuration.getProperty("application.session.sendOnlyIfChanged", "false").toLowerCase().equals("true"); 
         setSendOnlyIfChangedConstant(SESSION_SEND_ONLY_IF_CHANGED);

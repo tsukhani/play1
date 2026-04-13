@@ -57,15 +57,15 @@ public class JavaExtensionsTest {
 
     @Test 
     public void testCapitalizeWords()  {
-        assertThat(JavaExtensions.capitalizeWords("This is a small   test!")).as("This Is A Small  Test!");
+        assertThat(JavaExtensions.capitalizeWords("This is a small   test!")).isEqualTo("This Is A Small  Test!");
     }
 
     @Test 
     public void testPad()  {
-        assertThat(JavaExtensions.pad("12345", 4)).as("12345");
-        assertThat(JavaExtensions.pad("12345", 5)).as("12345");
-        assertThat(JavaExtensions.pad("12345", 6)).as("12345&nbsp;");
-        assertThat(JavaExtensions.pad("12345", 8)).as("12345&nbsp;&nbsp;&nbsp;");
+        assertThat(JavaExtensions.pad("12345", 4)).isEqualTo("12345");
+        assertThat(JavaExtensions.pad("12345", 5)).isEqualTo("12345");
+        assertThat(JavaExtensions.pad("12345", 6)).isEqualTo("12345&nbsp;");
+        assertThat(JavaExtensions.pad("12345", 8)).isEqualTo("12345&nbsp;&nbsp;&nbsp;");
     }
 
     //TODO @Test public void testEscapeHtml()  {}
