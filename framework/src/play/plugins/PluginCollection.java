@@ -11,6 +11,7 @@ import java.net.MalformedURLException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 import play.Logger;
@@ -438,11 +439,23 @@ public class PluginCollection {
 
     /**
      * Returns new readonly list of all enabled plugins that define filters.
-     * 
+     *
      * @return List of plugins
      */
     public List<PlayPlugin> getEnabledPluginsWithFilters() {
         return enabledPluginsWithFilters_readOnlyCopy;
+    }
+
+    /**
+     * Broadcasts an action to all enabled plugins in order.
+     *
+     * @param action
+     *            The action to perform on each plugin
+     */
+    private void broadcast(Consumer<PlayPlugin> action) {
+        for (PlayPlugin plugin : getEnabledPlugins()) {
+            action.accept(plugin);
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -466,40 +479,13 @@ public class PluginCollection {
 
     /**
      * Returns readonly view of all enabled plugins in reversed order
-     * 
+     *
      * @return Collection of plugins
      */
     public Collection<PlayPlugin> getReversedEnabledPlugins() {
-        return new AbstractCollection<PlayPlugin>() {
-
-            @Override
-            public Iterator<PlayPlugin> iterator() {
-                final ListIterator<PlayPlugin> enabledPluginsListIt = enabledPlugins.listIterator(size() - 1);
-                return new Iterator<PlayPlugin>() {
-
-                    @Override
-                    public boolean hasNext() {
-                        return enabledPluginsListIt.hasPrevious();
-                    }
-
-                    @Override
-                    public PlayPlugin next() {
-                        return enabledPluginsListIt.previous();
-                    }
-
-                    @Override
-                    public void remove() {
-                        enabledPluginsListIt.remove();
-                    }
-                };
-            }
-
-            @Override
-            public int size() {
-                return enabledPlugins.size();
-            }
-
-        };
+        synchronized (this) {
+            return List.copyOf(enabledPlugins).reversed();
+        }
     }
 
     /**
@@ -541,27 +527,19 @@ public class PluginCollection {
     }
 
     public void invocationFinally() {
-        for (PlayPlugin plugin : getEnabledPlugins()) {
-            plugin.invocationFinally();
-        }
+        broadcast(PlayPlugin::invocationFinally);
     }
 
     public void beforeInvocation() {
-        for (PlayPlugin plugin : getEnabledPlugins()) {
-            plugin.beforeInvocation();
-        }
+        broadcast(PlayPlugin::beforeInvocation);
     }
 
     public void afterInvocation() {
-        for (PlayPlugin plugin : getEnabledPlugins()) {
-            plugin.afterInvocation();
-        }
+        broadcast(PlayPlugin::afterInvocation);
     }
 
     public void onInvocationSuccess() {
-        for (PlayPlugin plugin : getEnabledPlugins()) {
-            plugin.onInvocationSuccess();
-        }
+        broadcast(PlayPlugin::onInvocationSuccess);
     }
 
     public void onInvocationException(Throwable e) {
@@ -575,39 +553,27 @@ public class PluginCollection {
     }
 
     public void beforeDetectingChanges() {
-        for (PlayPlugin plugin : getEnabledPlugins()) {
-            plugin.beforeDetectingChanges();
-        }
+        broadcast(PlayPlugin::beforeDetectingChanges);
     }
 
     public void detectChange() {
-        for (PlayPlugin plugin : getEnabledPlugins()) {
-            plugin.detectChange();
-        }
+        broadcast(PlayPlugin::detectChange);
     }
 
     public void onApplicationReady() {
-        for (PlayPlugin plugin : getEnabledPlugins()) {
-            plugin.onApplicationReady();
-        }
+        broadcast(PlayPlugin::onApplicationReady);
     }
 
     public void onConfigurationRead() {
-        for (PlayPlugin plugin : getEnabledPlugins()) {
-            plugin.onConfigurationRead();
-        }
+        broadcast(PlayPlugin::onConfigurationRead);
     }
 
     public void onApplicationStart() {
-        for (PlayPlugin plugin : getEnabledPlugins()) {
-            plugin.onApplicationStart();
-        }
+        broadcast(PlayPlugin::onApplicationStart);
     }
 
     public void afterApplicationStart() {
-        for (PlayPlugin plugin : getEnabledPlugins()) {
-            plugin.afterApplicationStart();
-        }
+        broadcast(PlayPlugin::afterApplicationStart);
     }
 
     public void onApplicationStop() {
@@ -626,9 +592,7 @@ public class PluginCollection {
     }
 
     public void onEvent(String message, Object context) {
-        for (PlayPlugin plugin : getEnabledPlugins()) {
-            plugin.onEvent(message, context);
-        }
+        broadcast(plugin -> plugin.onEvent(message, context));
     }
 
     public void enhance(ApplicationClasses.ApplicationClass applicationClass) {
@@ -656,9 +620,7 @@ public class PluginCollection {
 
     @Deprecated
     public void compileAll(List<ApplicationClasses.ApplicationClass> classes) {
-        for (PlayPlugin plugin : getEnabledPlugins()) {
-            plugin.compileAll(classes);
-        }
+        broadcast(plugin -> plugin.compileAll(classes));
     }
 
     public Object bind(RootParamNode rootParamNode, String name, Class<?> clazz, Type type, Annotation[] annotations) {
@@ -722,45 +684,31 @@ public class PluginCollection {
     }
 
     public void beforeActionInvocation(Method actionMethod) {
-        for (PlayPlugin plugin : getEnabledPlugins()) {
-            plugin.beforeActionInvocation(actionMethod);
-        }
+        broadcast(plugin -> plugin.beforeActionInvocation(actionMethod));
     }
 
     public void onActionInvocationResult(Result result) {
-        for (PlayPlugin plugin : getEnabledPlugins()) {
-            plugin.onActionInvocationResult(result);
-        }
+        broadcast(plugin -> plugin.onActionInvocationResult(result));
     }
 
     public void afterActionInvocation() {
-        for (PlayPlugin plugin : getEnabledPlugins()) {
-            plugin.afterActionInvocation();
-        }
+        broadcast(PlayPlugin::afterActionInvocation);
     }
 
     public void onActionInvocationFinally() {
-        for (PlayPlugin plugin : getEnabledPlugins()) {
-            plugin.onActionInvocationFinally();
-        }
+        broadcast(PlayPlugin::onActionInvocationFinally);
     }
 
     public void routeRequest(Http.Request request) {
-        for (PlayPlugin plugin : getEnabledPlugins()) {
-            plugin.routeRequest(request);
-        }
+        broadcast(plugin -> plugin.routeRequest(request));
     }
 
     public void onRequestRouting(Router.Route route) {
-        for (PlayPlugin plugin : getEnabledPlugins()) {
-            plugin.onRequestRouting(route);
-        }
+        broadcast(plugin -> plugin.onRequestRouting(route));
     }
 
     public void onRoutesLoaded() {
-        for (PlayPlugin plugin : getEnabledPlugins()) {
-            plugin.onRoutesLoaded();
-        }
+        broadcast(PlayPlugin::onRoutesLoaded);
     }
 
     public boolean rawInvocation(Http.Request request, Http.Response response) throws Exception {
@@ -810,9 +758,7 @@ public class PluginCollection {
     }
 
     public void afterFixtureLoad() {
-        for (PlayPlugin plugin : getEnabledPlugins()) {
-            plugin.afterFixtureLoad();
-        }
+        broadcast(PlayPlugin::afterFixtureLoad);
     }
 
     public TestEngine.TestResults runTest(Class<BaseTest> clazz) {

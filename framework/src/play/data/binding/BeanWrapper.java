@@ -50,11 +50,10 @@ public class BeanWrapper {
     }
 
     public void set(String name, Object instance, Object value) {
-        for (Property prop : wrappers.values()) {
-            if (name.equals(prop.name)) {
-                prop.setValue(instance, value);
-                return;
-            }
+        Property prop = wrappers.get(name);
+        if (prop != null) {
+            prop.setValue(instance, value);
+            return;
         }
         String message = String.format("Can't find property with name '%s' on class %s", name, instance.getClass().getName());
         Logger.warn(message);
