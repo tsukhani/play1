@@ -38,12 +38,15 @@ import play.mvc.With;
 public class Java {
 
     protected static JavaWithCaching _javaWithCaching = new JavaWithCaching();
-    protected static ApplicationClassloaderState _lastKnownApplicationClassloaderState = Play.classloader.currentState;
+    protected static ApplicationClassloaderState _lastKnownApplicationClassloaderState = Play.classloader != null ? Play.classloader.currentState : null;
     private static final Object _javaWithCachingLock = new Object();
 
     protected static JavaWithCaching getJavaWithCaching() {
         synchronized (_javaWithCachingLock) {
             // has the state of the ApplicationClassloader changed?
+            if (Play.classloader == null) {
+                return _javaWithCaching;
+            }
             ApplicationClassloaderState currentApplicationClassloaderState = Play.classloader.currentState;
             if (!currentApplicationClassloaderState.equals(_lastKnownApplicationClassloaderState)) {
                 // it has changed.
@@ -332,6 +335,9 @@ public class Java {
     }
 
     public static Object deserialize(byte[] b) throws Exception {
+        if (b == null || b.length == 0) {
+            return null;
+        }
         try (
             ByteArrayInputStream bais = new ByteArrayInputStream(b);
             ObjectInputStream oi = new ObjectInputStream(bais) {

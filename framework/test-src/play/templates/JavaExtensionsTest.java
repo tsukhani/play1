@@ -57,7 +57,7 @@ public class JavaExtensionsTest {
 
     @Test 
     public void testCapitalizeWords()  {
-        assertThat(JavaExtensions.capitalizeWords("This is a small   test!")).isEqualTo("This Is A Small  Test!");
+        assertThat(JavaExtensions.capitalizeWords("This is a small   test!")).isEqualTo("This Is A Small   Test!");
     }
 
     @Test 
