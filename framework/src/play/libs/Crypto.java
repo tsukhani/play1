@@ -2,9 +2,17 @@ package play.libs;
 
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
+import java.security.spec.KeySpec;
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 
+import javax.crypto.AEADBadTagException;
 import javax.crypto.Cipher;
 import javax.crypto.Mac;
+import javax.crypto.SecretKeyFactory;
+import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.PBEKeySpec;
 import javax.crypto.spec.SecretKeySpec;
 
 import org.apache.commons.codec.binary.Base64;
@@ -37,15 +45,15 @@ public class Crypto {
     }
 
     /**
-     * Set-up MD5 as the default hashing algorithm
+     * Default hash type kept for legacy compatibility via passwordHash(String, HashType)
      */
     private static final HashType DEFAULT_HASH_TYPE = HashType.MD5;
 
     static final char[] HEX_CHARS = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f' };
 
     /**
-     * Sign a message using the application secret key (HMAC-SHA1)
-     * 
+     * Sign a message using the application secret key (HMAC-SHA256)
+     *
      * @param message
      *            the message to sign
      * @return The signed message
@@ -56,7 +64,7 @@ public class Crypto {
 
     /**
      * Sign a message with a key
-     * 
+     *
      * @param message
      *            The message to sign
      * @param key
@@ -70,8 +78,8 @@ public class Crypto {
         }
 
         try {
-            Mac mac = Mac.getInstance("HmacSHA1");
-            SecretKeySpec signingKey = new SecretKeySpec(key, "HmacSHA1");
+            Mac mac = Mac.getInstance("HmacSHA256");
+            SecretKeySpec signingKey = new SecretKeySpec(key, "HmacSHA256");
             mac.init(signingKey);
             byte[] messageBytes = message.getBytes(UTF_8);
             byte[] result = mac.doFinal(messageBytes);
@@ -91,19 +99,19 @@ public class Crypto {
     }
 
     /**
-     * Create a password hash using the default hashing algorithm
-     * 
+     * Create a password hash using PBKDF2WithHmacSHA256
+     *
      * @param input
      *            The password
-     * @return The password hash
+     * @return The password hash in format pbkdf2$&lt;hex-salt&gt;$&lt;hex-hash&gt;
      */
     public static String passwordHash(String input) {
-        return passwordHash(input, DEFAULT_HASH_TYPE);
+        return passwordHashPBKDF2(input);
     }
 
     /**
      * Create a password hash using specific hashing algorithm
-     * 
+     *
      * @param input
      *            The password
      * @param hashType
@@ -121,19 +129,90 @@ public class Crypto {
     }
 
     /**
-     * Encrypt a String with the AES encryption standard using the application secret
-     * 
+     * Create a password hash using PBKDF2WithHmacSHA256 with a random salt.
+     *
+     * @param password
+     *            The password to hash
+     * @return A string in format: pbkdf2$&lt;hex-salt&gt;$&lt;hex-hash&gt;
+     */
+    public static String passwordHashPBKDF2(String password) {
+        try {
+            SecureRandom random = new SecureRandom();
+            byte[] salt = new byte[16];
+            random.nextBytes(salt);
+
+            KeySpec spec = new PBEKeySpec(password.toCharArray(), salt, 260000, 256);
+            SecretKeyFactory factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
+            byte[] hash = factory.generateSecret(spec).getEncoded();
+
+            return "pbkdf2$" + bytesToHex(salt) + "$" + bytesToHex(hash);
+        } catch (Exception ex) {
+            throw new UnexpectedException(ex);
+        }
+    }
+
+    /**
+     * Verify a password against a stored PBKDF2 hash produced by {@link #passwordHashPBKDF2(String)}.
+     *
+     * @param password
+     *            The password to check
+     * @param stored
+     *            The stored hash string in format pbkdf2$&lt;hex-salt&gt;$&lt;hex-hash&gt;
+     * @return true if the password matches
+     */
+    public static boolean checkPasswordPBKDF2(String password, String stored) {
+        try {
+            String[] parts = stored.split("\\$");
+            if (parts.length != 3 || !parts[0].equals("pbkdf2")) {
+                return false;
+            }
+            byte[] salt = hexToBytes(parts[1]);
+            byte[] expectedHash = hexToBytes(parts[2]);
+
+            KeySpec spec = new PBEKeySpec(password.toCharArray(), salt, 260000, 256);
+            SecretKeyFactory factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
+            byte[] actualHash = factory.generateSecret(spec).getEncoded();
+
+            return Arrays.equals(expectedHash, actualHash);
+        } catch (Exception ex) {
+            throw new UnexpectedException(ex);
+        }
+    }
+
+    /**
+     * Encrypt a String with AES/GCM/NoPadding using the application secret
+     *
      * @param value
      *            The String to encrypt
-     * @return An hexadecimal encrypted string
+     * @return A Base64-encoded string (IV prepended to ciphertext)
      */
     public static String encryptAES(String value) {
-        return encryptAES(value, Play.configuration.getProperty("application.secret").substring(0, 16));
+        try {
+            byte[] keyBytes = Arrays.copyOf(
+                    Play.configuration.getProperty("application.secret").getBytes(StandardCharsets.UTF_8), 16);
+            SecretKeySpec skeySpec = new SecretKeySpec(keyBytes, "AES");
+
+            SecureRandom random = new SecureRandom();
+            byte[] iv = new byte[12];
+            random.nextBytes(iv);
+
+            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+            cipher.init(Cipher.ENCRYPT_MODE, skeySpec, new GCMParameterSpec(128, iv));
+            byte[] ciphertext = cipher.doFinal(value.getBytes(StandardCharsets.UTF_8));
+
+            byte[] combined = new byte[iv.length + ciphertext.length];
+            System.arraycopy(iv, 0, combined, 0, iv.length);
+            System.arraycopy(ciphertext, 0, combined, iv.length, ciphertext.length);
+
+            return new String(Base64.encodeBase64(combined), StandardCharsets.UTF_8);
+        } catch (Exception ex) {
+            throw new UnexpectedException(ex);
+        }
     }
 
     /**
      * Encrypt a String with the AES encryption standard. Private key must have a length of 16 bytes
-     * 
+     *
      * @param value
      *            The String to encrypt
      * @param privateKey
@@ -153,19 +232,35 @@ public class Crypto {
     }
 
     /**
-     * Decrypt a String with the AES encryption standard using the application secret
-     * 
+     * Decrypt a String with AES/GCM/NoPadding using the application secret
+     *
      * @param value
-     *            An hexadecimal encrypted string
+     *            A Base64-encoded string (IV prepended to ciphertext)
      * @return The decrypted String
      */
     public static String decryptAES(String value) {
-        return decryptAES(value, Play.configuration.getProperty("application.secret").substring(0, 16));
+        try {
+            byte[] keyBytes = Arrays.copyOf(
+                    Play.configuration.getProperty("application.secret").getBytes(StandardCharsets.UTF_8), 16);
+            SecretKeySpec skeySpec = new SecretKeySpec(keyBytes, "AES");
+
+            byte[] combined = Base64.decodeBase64(value.getBytes(StandardCharsets.UTF_8));
+            byte[] iv = Arrays.copyOfRange(combined, 0, 12);
+            byte[] ciphertext = Arrays.copyOfRange(combined, 12, combined.length);
+
+            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+            cipher.init(Cipher.DECRYPT_MODE, skeySpec, new GCMParameterSpec(128, iv));
+            return new String(cipher.doFinal(ciphertext), StandardCharsets.UTF_8);
+        } catch (AEADBadTagException ex) {
+            throw new UnexpectedException(new Exception("Decryption failed", ex));
+        } catch (Exception ex) {
+            throw new UnexpectedException(ex);
+        }
     }
 
     /**
      * Decrypt a String with the AES encryption standard. Private key must have a length of 16 bytes
-     * 
+     *
      * @param value
      *            An hexadecimal encrypted string
      * @param privateKey
@@ -182,6 +277,30 @@ public class Crypto {
         } catch (Exception ex) {
             throw new UnexpectedException(ex);
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Internal helpers
+    // -------------------------------------------------------------------------
+
+    private static String bytesToHex(byte[] bytes) {
+        char[] hexChars = new char[bytes.length * 2];
+        for (int i = 0; i < bytes.length; i++) {
+            int bite = bytes[i] & 0xff;
+            hexChars[i * 2]     = HEX_CHARS[bite >> 4];
+            hexChars[i * 2 + 1] = HEX_CHARS[bite & 0xf];
+        }
+        return new String(hexChars);
+    }
+
+    private static byte[] hexToBytes(String hex) {
+        int len = hex.length();
+        byte[] data = new byte[len / 2];
+        for (int i = 0; i < len; i += 2) {
+            data[i / 2] = (byte) ((Character.digit(hex.charAt(i), 16) << 4)
+                    + Character.digit(hex.charAt(i + 1), 16));
+        }
+        return data;
     }
 
 }
