@@ -345,7 +345,33 @@ public class Java {
     public static Object deserialize(byte[] b) throws Exception {
         try (
             ByteArrayInputStream bais = new ByteArrayInputStream(b);
-            ObjectInputStream oi = new ObjectInputStream(bais)
+            ObjectInputStream oi = new ObjectInputStream(bais) {
+                private static final Set<String> ALLOWED = Set.of(
+                    "java.util.HashMap",
+                    "java.util.LinkedHashMap",
+                    "java.util.ArrayList",
+                    "java.util.LinkedList",
+                    "java.util.HashSet",
+                    "[B", "[I", "[Ljava.lang.String;",
+                    "java.lang.Integer",
+                    "java.lang.Long",
+                    "java.lang.String",
+                    "java.lang.Boolean",
+                    "java.lang.Double",
+                    "java.lang.Number",
+                    "java.util.Map$Entry",
+                    "java.util.HashMap$Node",
+                    "java.util.HashMap$TreeNode",
+                    "java.util.HashSet$Entry"
+                );
+                @Override
+                protected Class<?> resolveClass(java.io.ObjectStreamClass desc) throws IOException, ClassNotFoundException {
+                    if (!ALLOWED.contains(desc.getName()) && !desc.getName().startsWith("[L")) {
+                        throw new java.io.InvalidClassException("Unauthorized deserialization attempt", desc.getName());
+                    }
+                    return super.resolveClass(desc);
+                }
+            }
         ) {
             return oi.readObject();
         }

@@ -62,10 +62,28 @@ public class MemcachedImpl implements CacheImpl {
                 try {
                     return new ObjectInputStream(new ByteArrayInputStream(data)) {
 
+                        private static final String[] BLOCKED_PREFIXES = {
+                            "org.apache.commons.collections.functors",
+                            "org.apache.commons.collections4.functors",
+                            "com.sun.org.apache.xalan",
+                            "org.springframework.beans.factory",
+                            "com.mchange.v2.c3p0"
+                        };
+
                         @Override
                         protected Class<?> resolveClass(ObjectStreamClass desc)
                                 throws IOException, ClassNotFoundException {
-                            return Class.forName(desc.getName(), false, Play.classloader);
+                            String name = desc.getName();
+                            for (String blocked : BLOCKED_PREFIXES) {
+                                if (name.startsWith(blocked)) {
+                                    throw new java.io.InvalidClassException(
+                                        "Unauthorized deserialization attempt - blocked gadget class", name);
+                                }
+                            }
+                            if (!name.startsWith("java.") && !name.startsWith("play.") && !name.startsWith("[")) {
+                                Logger.warn("Deserializing non-standard class from Memcached: %s", name);
+                            }
+                            return Class.forName(name, false, Play.classloader);
                         }
                     }.readObject();
                 } catch (Exception e) {
