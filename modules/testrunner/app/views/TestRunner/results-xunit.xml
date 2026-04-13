@@ -1,8 +1,11 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 
-<testsuite failures="${results.failures}" time="${results.time/1000}" errors="${results.errors}" skipped="0" tests="${results.success}" name="${test.cut(".class")}">
+<testsuite failures="${results.failures}" time="${results.time/1000}" errors="${results.errors}" skipped="${results.skipped}" tests="${results.success}" name="${test.cut(".class")}">
 #{list items:results.results, as:'result'}
   <testcase classname="${test.cut(".class")}" name="${result.name}" time="${result.time/1000}">
+    #{if result.skipped}
+        <skipped message="${result.error?.escapeXml()?.raw()}"/>
+    #{/if}
     #{if !result.passed}
       #{if result.error?.startsWith("Failure")}
         <failure type="" message="${result.error.escapeXml().raw()}">

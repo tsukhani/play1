@@ -220,12 +220,30 @@ public class TestEngine {
         }
 
         @Override
+        public void executionSkipped(TestIdentifier testIdentifier, String reason) {
+            if (testIdentifier.isTest()) {
+                current = new TestResult();
+                current.name = testIdentifier.getDisplayName();
+                current.time = 0;
+                current.passed = true;
+                current.skipped = true;
+                current.error = "Skipped: " + reason;
+                results.add(current);
+            }
+        }
+
+        @Override
         public void executionFinished(TestIdentifier testIdentifier, TestExecutionResult testExecutionResult) {
             if (testIdentifier.isTest()) {
                 current.time = System.currentTimeMillis() - current.time;
                 TestExecutionResult.Status status = testExecutionResult.getStatus();
                 if (status == TestExecutionResult.Status.SUCCESSFUL) {
                     current.passed = true;
+                } else if (status == TestExecutionResult.Status.ABORTED) {
+                    current.passed = true;
+                    current.skipped = true;
+                    Throwable ex = testExecutionResult.getThrowable().orElse(null);
+                    current.error = ex != null ? "Skipped: " + ex.getMessage() : "Skipped";
                 } else {
                     current.passed = false;
                     Throwable ex = testExecutionResult.getThrowable().orElse(null);
@@ -270,12 +288,15 @@ public class TestEngine {
         public int success = 0;
         public int errors = 0;
         public int failures = 0;
+        public int skipped = 0;
         public long time = 0;
 
         public void add(TestResult result) {
             time = result.time + time;
             this.results.add(result);
-            if (result.passed) {
+            if (result.skipped) {
+                skipped++;
+            } else if (result.passed) {
                 success++;
             } else {
                 if (result.error != null && result.error.startsWith("Failure")) {
@@ -293,6 +314,7 @@ public class TestEngine {
         public String name;
         public String error;
         public boolean passed = true;
+        public boolean skipped = false;
         public long time;
         public String trace;
         public String sourceInfos;
