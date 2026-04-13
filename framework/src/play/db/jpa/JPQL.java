@@ -278,7 +278,7 @@ public class JPQL {
                 jpql.append(prop).append(" >= ?").append(index++);
             } else if (part.endsWith("Between")) {
                 String prop = extractProp(part, "Between");
-                jpql.append(prop).append(" < ?").append(index++).append(" AND ").append(prop).append(" > ?").append(index++);
+                jpql.append(prop).append(" >= ?").append(index++).append(" AND ").append(prop).append(" <= ?").append(index++);
             } else if (part.endsWith("Like")) {
                 String prop = extractProp(part, "Like");
                 jpql.append("LOWER(").append(prop).append(") like ?").append(index++);

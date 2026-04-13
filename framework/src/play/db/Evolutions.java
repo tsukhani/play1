@@ -439,10 +439,13 @@ public class Evolutions extends PlayPlugin {
     public static synchronized boolean applyScript(boolean runScript, String moduleKey, VirtualFile evolutionsDirectory) {
         // Look over all the DB
         Set<String> dBNames = Configuration.getDbNames();
+        boolean result = true;
         for (String dbName : dBNames) {
-            return applyScript(dbName, runScript, moduleKey, evolutionsDirectory);
+            if (!applyScript(dbName, runScript, moduleKey, evolutionsDirectory)) {
+                result = false;
+            }
         }
-        return true;
+        return result;
     }
 
     public static synchronized boolean applyScript(String dbName, boolean runScript, String moduleKey, VirtualFile evolutionsDirectory) {
