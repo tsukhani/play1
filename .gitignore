@@ -6,6 +6,7 @@ framework/out
 framework/.idea
 framework/play.jar
 .DS_Store
+.claude/worktrees/
 nbproject/genfiles.properties
 nbproject/jdk.xml
 nbproject/nbjdk.properties
