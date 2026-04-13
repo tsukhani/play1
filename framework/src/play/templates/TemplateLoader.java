@@ -68,34 +68,35 @@ public class TemplateLoader {
         // Use default engine
         String fileRelativePath = file.relativePath();
         String key = getUniqueNumberForTemplateFile(fileRelativePath);
-        if (!templates.containsKey(key) || templates.get(key).compiledTemplate == null) {
+        BaseTemplate result = templates.compute(key, (k, existing) -> {
+            if (existing != null && existing.compiledTemplate != null) {
+                // Template is cached and compiled; check for DEV-mode hot-reload
+                if (Play.mode == Play.Mode.DEV && existing.timestamp < file.lastModified()) {
+                    return new GroovyTemplateCompiler().compile(file);
+                }
+                return existing;
+            }
+            // Template absent or not yet compiled — load or compile it
             if (Play.usePrecompiled) {
-                BaseTemplate template = new GroovyTemplate(
+                BaseTemplate precompiled = new GroovyTemplate(
                         fileRelativePath.replaceAll("\\{(.*)\\}", "from_$1").replace(':', '_').replace("..", "parent"), "");
                 try {
-                    template.loadPrecompiled();
-                    templates.put(key, template);
-                    return template;
+                    precompiled.loadPrecompiled();
+                    return precompiled;
                 } catch (Exception e) {
                     Logger.warn(e, "Precompiled template %s not found, trying to load it dynamically...", file.relativePath());
                 }
             }
             BaseTemplate template = new GroovyTemplate(fileRelativePath, file.contentAsString());
             if (template.loadFromCache()) {
-                templates.put(key, template);
-            } else {
-                templates.put(key, new GroovyTemplateCompiler().compile(file));
+                return template;
             }
-        } else {
-            BaseTemplate template = templates.get(key);
-            if (Play.mode == Play.Mode.DEV && template.timestamp < file.lastModified()) {
-                templates.put(key, new GroovyTemplateCompiler().compile(file));
-            }
-        }
-        if (templates.get(key) == null) {
+            return new GroovyTemplateCompiler().compile(file);
+        });
+        if (result == null) {
             throw new TemplateNotFoundException(fileRelativePath);
         }
-        return templates.get(key);
+        return result;
     }
 
     /**
@@ -108,23 +109,25 @@ public class TemplateLoader {
      * @return A Template
      */
     public static BaseTemplate load(String key, String source) {
-        if (!templates.containsKey(key) || templates.get(key).compiledTemplate == null) {
-            BaseTemplate template = new GroovyTemplate(key, source);
+        BaseTemplate result = templates.compute(key, (k, existing) -> {
+            if (existing != null && existing.compiledTemplate != null) {
+                // Template is cached and compiled; recompile in DEV mode
+                if (Play.mode == Play.Mode.DEV) {
+                    return new GroovyTemplateCompiler().compile(new GroovyTemplate(k, source));
+                }
+                return existing;
+            }
+            // Template absent or not yet compiled — load or compile it
+            BaseTemplate template = new GroovyTemplate(k, source);
             if (template.loadFromCache()) {
-                templates.put(key, template);
-            } else {
-                templates.put(key, new GroovyTemplateCompiler().compile(template));
+                return template;
             }
-        } else {
-            BaseTemplate template = new GroovyTemplate(key, source);
-            if (Play.mode == Play.Mode.DEV) {
-                templates.put(key, new GroovyTemplateCompiler().compile(template));
-            }
-        }
-        if (templates.get(key) == null) {
+            return new GroovyTemplateCompiler().compile(template);
+        });
+        if (result == null) {
             throw new TemplateNotFoundException(key);
         }
-        return templates.get(key);
+        return result;
     }
 
     /**

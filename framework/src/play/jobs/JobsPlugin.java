@@ -26,9 +26,9 @@ import java.util.concurrent.*;
 
 public class JobsPlugin extends PlayPlugin {
 
-    public static ScheduledThreadPoolExecutor executor;
-    public static VirtualThreadScheduledExecutor virtualExecutor;
-    public static boolean usingVirtualThreads = false;
+    public static volatile ScheduledThreadPoolExecutor executor;
+    public static volatile VirtualThreadScheduledExecutor virtualExecutor;
+    public static volatile boolean usingVirtualThreads = false;
     public static final List<Job<?>> scheduledJobs = new ArrayList<>();
     private static final ThreadLocal<List<Callable<?>>> afterInvocationActions = new ThreadLocal<>();
 

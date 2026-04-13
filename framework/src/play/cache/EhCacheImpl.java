@@ -58,7 +58,7 @@ public class EhCacheImpl implements CacheImpl {
     }
 
     @Override
-    public synchronized long decr(String key, int by) {
+    public long decr(String key, int by) {
         Element e = cache.get(key);
         if (e == null) {
             return -1;
@@ -91,7 +91,7 @@ public class EhCacheImpl implements CacheImpl {
     }
 
     @Override
-    public synchronized long incr(String key, int by) {
+    public long incr(String key, int by) {
         Element e = cache.get(key);
         if (e == null) {
             return -1;
