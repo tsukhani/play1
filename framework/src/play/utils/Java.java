@@ -9,6 +9,7 @@ import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Field;
+import java.lang.reflect.InaccessibleObjectException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.Parameter;
@@ -68,40 +69,28 @@ public class Java {
 
     /**
      * Try to discover what is hidden under a FutureTask (hack)
-     * <p>
-     * Field sync first, if not present will try field callable
-     * </p>
-     * 
+     *
      * @param futureTask
-     *            The given tack
-     * @return Field sync first, if not present will try field callable
+     *            The given task
+     * @return The underlying callable, or null if it cannot be extracted
      */
     public static Object extractUnderlyingCallable(FutureTask<?> futureTask) {
         try {
-            Object callable = null;
-            // Try to search for the Field sync first, if not present will try field callable
-            try {
-                Field syncField = FutureTask.class.getDeclaredField("sync");
-                syncField.setAccessible(true);
-                Object sync = syncField.get(futureTask);
-                if (sync != null) {
-                    Field callableField = sync.getClass().getDeclaredField("callable");
-                    callableField.setAccessible(true);
-                    callable = callableField.get(sync);
-                }
-            } catch (NoSuchFieldException ex) {
-                Field callableField = FutureTask.class.getDeclaredField("callable");
-                callableField.setAccessible(true);
-                callable = callableField.get(futureTask);
-            }
+            Field callableField = FutureTask.class.getDeclaredField("callable");
+            callableField.setAccessible(true);
+            Object callable = callableField.get(futureTask);
             if (callable != null && callable.getClass().getSimpleName().equals("RunnableAdapter")) {
                 Field taskField = callable.getClass().getDeclaredField("task");
                 taskField.setAccessible(true);
                 return taskField.get(callable);
             }
             return callable;
-        } catch (Exception e) {
-            throw new RuntimeException(e);
+        } catch (InaccessibleObjectException e) {
+            play.Logger.debug("Cannot access FutureTask.callable field due to module encapsulation (add --add-opens java.base/java.util.concurrent=ALL-UNNAMED to JVM args if needed): %s", e.getMessage());
+            return null;
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            play.Logger.debug("Cannot extract callable from FutureTask: %s", e.getMessage());
+            return null;
         }
     }
 
