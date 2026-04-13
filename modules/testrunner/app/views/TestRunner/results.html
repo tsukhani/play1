@@ -84,29 +84,29 @@
                     <td class="${result.skipped ? '' : (result.error ? 'error' : '')}" valign="top">
                         #{if result.skipped}
                         <em>${result.error}</em>
-                        #{else}
-                            #{if result.error}
-                            <strong>${result.error}</strong>
-                            #{if result.sourceInfos}
-                            <div class="source">
-                                <span>${result.sourceInfos} :</span>
-                            </div>
-                            <div class="sourceLine">
-                                <span>
-                                    ${play.utils.Utils.open(result.sourceFile, result.sourceLine) ? ('<a href="' + play.utils.Utils.open(result.sourceFile, result.sourceLine) + '">').raw() : ''}
-                                        ${result.sourceCode}
-                                    ${play.utils.Utils.open(result.sourceFile, result.sourceLine) ? '</a>'.raw() : ''}
-                                </span>
-                            </div>
-                            #{/if}
-                            #{if result.trace}
-                            <a href="#" onclick="toggle_trace(this); return false;">Show trace</a>
-                            <pre data-role="trace">${result.trace.raw()}</pre>
-                            #{/if}
-                            #{else}
-                            Ok
-                            #{/if}
                         #{/if}
+                        #{if result.error && !result.skipped}
+                        <strong>${result.error}</strong>
+                        #{if result.sourceInfos}
+                        <div class="source">
+                            <span>${result.sourceInfos} :</span>
+                        </div>
+                        <div class="sourceLine">
+                            <span>
+                                ${play.utils.Utils.open(result.sourceFile, result.sourceLine) ? ('<a href="' + play.utils.Utils.open(result.sourceFile, result.sourceLine) + '">').raw() : ''}
+                                    ${result.sourceCode}
+                                ${play.utils.Utils.open(result.sourceFile, result.sourceLine) ? '</a>'.raw() : ''}
+                            </span>
+                        </div>
+                        #{/if}
+                        #{if result.trace}
+                        <a href="#" onclick="toggle_trace(this); return false;">Show trace</a>
+                        <pre data-role="trace">${result.trace.raw()}</pre>
+                        #{/if}
+                        #{/if}
+                        #{else}
+                        Ok
+                        #{/else}
                     </td>
                     <td width="5%" align="right" class="time" valign="top">
                         ${result.time} ms
