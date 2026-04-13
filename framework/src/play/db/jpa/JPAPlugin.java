@@ -16,6 +16,9 @@ import jakarta.persistence.PersistenceException;
 import jakarta.persistence.PersistenceUnit;
 import jakarta.persistence.Query;
 import jakarta.persistence.spi.PersistenceUnitInfo;
+import jakarta.validation.Validation;
+import jakarta.validation.ValidatorFactory;
+import org.hibernate.validator.messageinterpolation.ParameterMessageInterpolator;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.core.config.Configurator;
 import org.hibernate.cfg.AvailableSettings;
@@ -189,6 +192,16 @@ public class JPAPlugin extends PlayPlugin {
         PersistenceUnitInfo persistenceUnitInfo = persistenceUnitInfo(dbName, dbConfig);
         Map<String, Object> configuration = new HashMap<>();
         configuration.put(AvailableSettings.INTERCEPTOR, new HibernateInterceptor());
+
+        // Hibernate Validator 8.x requires a Jakarta EL implementation for its default
+        // ResourceBundleMessageInterpolator. Use ParameterMessageInterpolator instead
+        // to avoid pulling in an EL impl dependency — Play uses OVal for form validation
+        // so EL expression interpolation in JPA constraint messages is not needed.
+        ValidatorFactory validatorFactory = Validation.byDefaultProvider()
+                .configure()
+                .messageInterpolator(new ParameterMessageInterpolator())
+                .buildValidatorFactory();
+        configuration.put("jakarta.persistence.validation.factory", validatorFactory);
 
         return new EntityManagerFactoryBuilderImpl(
                 new PersistenceUnitInfoDescriptor(persistenceUnitInfo), configuration
