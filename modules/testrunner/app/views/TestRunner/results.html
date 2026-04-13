@@ -84,7 +84,6 @@
                     <td class="${result.skipped ? '' : (result.error ? 'error' : '')}" valign="top">
                         #{if result.skipped}
                         <em>${result.error}</em>
-                        #{/if}
                         #{else}
                             #{if result.error}
                             <strong>${result.error}</strong>
@@ -104,11 +103,10 @@
                             <a href="#" onclick="toggle_trace(this); return false;">Show trace</a>
                             <pre data-role="trace">${result.trace.raw()}</pre>
                             #{/if}
-                            #{/if}
                             #{else}
                             Ok
-                            #{/else}
-                        #{/else}
+                            #{/if}
+                        #{/if}
                     </td>
                     <td width="5%" align="right" class="time" valign="top">
                         ${result.time} ms
