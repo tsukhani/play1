@@ -18,6 +18,7 @@ def execute(**kargs):
     play_env = kargs.get("env")
 
     app.check()
+    play_env["id"] = "test"
     java_cmd = app.java_cmd(args)
     if os.path.exists(os.path.join(app.path, 'tmp')):
         shutil.rmtree(os.path.join(app.path, 'tmp'))
