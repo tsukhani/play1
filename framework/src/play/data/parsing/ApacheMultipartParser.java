@@ -281,10 +281,7 @@ public class ApacheMultipartParser extends DataParser {
         /**
          * Returns the contents of the file as a String, using the default character encoding. This method uses
          * {@link #get()} to retrieve the contents of the file.
-         * <p>
-         * 
          * @play.todo Note: TODO Consider making this method throw UnsupportedEncodingException .
-         *            </p>
          * 
          * @return The contents of the file, as a string.
          */

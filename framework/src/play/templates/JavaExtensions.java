@@ -417,7 +417,7 @@ public class JavaExtensions {
     }
 
     /**
-     * Concatenate items of a collection as a string separated with <tt>separator</tt> items toString() method should be
+     * Concatenate items of a collection as a string separated with <code>separator</code> items toString() method should be
      * implemented to provide a string representation
      * 
      * @param items
