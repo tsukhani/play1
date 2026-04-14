@@ -112,6 +112,12 @@ public class PlayHandler extends SimpleChannelUpstreamHandler {
 
                 final Request request = parseRequest(ctx, nettyRequest, messageEvent);
 
+                // Stamp the Netty acceptance time so downstream instrumentation
+                // can measure queue-wait (time spent waiting for a free Invoker
+                // thread) separately from in-controller latency. Zero-overhead
+                // when unused — consumers read it lazily from request.args.
+                request.args.put("acceptedAtNanos", System.nanoTime());
+
                 // Buffered in memory output
                 response.out = new ByteArrayOutputStream();
 
