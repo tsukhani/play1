@@ -1,14 +1,12 @@
 package play.server.ssl;
 
+import static org.jboss.netty.channel.Channels.pipeline;
+
 import javax.net.ssl.SSLEngine;
 
-import io.netty.channel.Channel;
-import io.netty.channel.ChannelHandler;
-import io.netty.channel.ChannelPipeline;
-import io.netty.handler.codec.http.HttpObjectAggregator;
-import io.netty.handler.ssl.SslHandler;
-
-import java.lang.reflect.Constructor;
+import org.jboss.netty.channel.ChannelHandler;
+import org.jboss.netty.channel.ChannelPipeline;
+import org.jboss.netty.handler.ssl.SslHandler;
 
 import play.Logger;
 import play.Play;
@@ -17,19 +15,16 @@ import play.server.HttpServerPipelineFactory;
 public class SslHttpServerPipelineFactory extends HttpServerPipelineFactory {
 
     private final String pipelineConfig = Play.configuration.getProperty("play.ssl.netty.pipeline",
-            "io.netty.handler.codec.http.HttpRequestDecoder,io.netty.handler.codec.http.HttpObjectAggregator,io.netty.handler.codec.http.HttpResponseEncoder,io.netty.handler.stream.ChunkedWriteHandler,play.server.ssl.SslPlayHandler");
-
-    private static final int DEFAULT_MAX_CONTENT_LENGTH = Integer.parseInt(
-            Play.configuration.getProperty("play.netty.maxContentLength", "1048576"));
+            "org.jboss.netty.handler.codec.http.HttpRequestDecoder,play.server.StreamChunkAggregator,org.jboss.netty.handler.codec.http.HttpResponseEncoder,org.jboss.netty.handler.stream.ChunkedWriteHandler,play.server.ssl.SslPlayHandler");
 
     @Override
-    protected void initChannel(Channel ch) throws Exception {
+    public ChannelPipeline getPipeline() throws Exception {
 
         String mode = Play.configuration.getProperty("play.netty.clientAuth", "none");
         String enabledCiphers = Play.configuration.getProperty("play.ssl.enabledCiphers", "");
         String enabledProtocols = Play.configuration.getProperty("play.ssl.enabledProtocols", "");
 
-        ChannelPipeline pipeline = ch.pipeline();
+        ChannelPipeline pipeline = pipeline();
 
         // Add SSL handler first to encrypt and decrypt everything.
         SSLEngine engine = SslHttpServerContextFactory.getServerContext().createSSLEngine();
@@ -53,27 +48,27 @@ public class SslHttpServerPipelineFactory extends HttpServerPipelineFactory {
 
         pipeline.addLast("ssl", new SslHandler(engine));
 
-        // Build the rest of the pipeline. Users can extend it via play.ssl.netty.pipeline.
+        // Get all the pipeline. Give the user the opportunity to add their own
         String[] handlers = pipelineConfig.split(",");
         if (handlers.length <= 0) {
             Logger.error("You must defined at least the SslPlayHandler in \"play.netty.pipeline\"");
-            return;
+            return pipeline;
         }
 
         // Create the play Handler (always the last one)
         String handler = handlers[handlers.length - 1];
-        ChannelHandler instance = sslGetInstance(handler);
+        ChannelHandler instance = getInstance(handler);
         SslPlayHandler sslPlayHandler = (SslPlayHandler) instance;
         if (instance == null || !(instance instanceof SslPlayHandler) || sslPlayHandler == null) {
             Logger.error("The last handler must be the SslPlayHandler in \"play.netty.pipeline\"");
-            return;
+            return pipeline;
         }
 
         for (int i = 0; i < handlers.length - 1; i++) {
             handler = handlers[i];
             try {
                 String name = getName(handler.trim());
-                instance = sslGetInstance(handler);
+                instance = getInstance(handler);
                 if (instance != null) {
                     pipeline.addLast(name, instance);
                     sslPlayHandler.pipelines.put("Ssl" + name, instance);
@@ -81,30 +76,14 @@ public class SslHttpServerPipelineFactory extends HttpServerPipelineFactory {
             } catch (Throwable e) {
                 Logger.error(" error adding " + handler, e);
             }
+
         }
 
-        pipeline.addLast("handler", sslPlayHandler);
-        sslPlayHandler.pipelines.put("SslHandler", sslPlayHandler);
-    }
+        if (sslPlayHandler != null) {
+            pipeline.addLast("handler", sslPlayHandler);
+            sslPlayHandler.pipelines.put("SslHandler", sslPlayHandler);
+        }
 
-    private ChannelHandler sslGetInstance(String name) throws Exception {
-        Class<?> clazz = classes.computeIfAbsent(name, className -> {
-            try {
-                return Class.forName(className);
-            } catch (ClassNotFoundException e) {
-                throw new play.exceptions.UnexpectedException(e);
-            }
-        });
-        if (!ChannelHandler.class.isAssignableFrom(clazz)) return null;
-        if (clazz == HttpObjectAggregator.class) {
-            return new HttpObjectAggregator(DEFAULT_MAX_CONTENT_LENGTH);
-        }
-        try {
-            Constructor<?> ctor = clazz.getDeclaredConstructor();
-            return (ChannelHandler) ctor.newInstance();
-        } catch (NoSuchMethodException ignored) {
-            Constructor<?> ctor = clazz.getDeclaredConstructor(int.class);
-            return (ChannelHandler) ctor.newInstance(DEFAULT_MAX_CONTENT_LENGTH);
-        }
+        return pipeline;
     }
 }

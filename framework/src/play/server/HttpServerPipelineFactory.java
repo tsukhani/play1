@@ -1,55 +1,44 @@
 package play.server;
 
-import io.netty.channel.Channel;
-import io.netty.channel.ChannelHandler;
-import io.netty.channel.ChannelInitializer;
-import io.netty.channel.ChannelPipeline;
-import io.netty.handler.codec.http.HttpObjectAggregator;
+import org.jboss.netty.channel.ChannelPipeline;
+import org.jboss.netty.channel.ChannelPipelineFactory;
+import org.jboss.netty.channel.ChannelHandler;
 import play.Play;
 import play.Logger;
 import play.exceptions.UnexpectedException;
 
-import java.lang.reflect.Constructor;
 import java.util.Map;
 import java.util.HashMap;
 
-public class HttpServerPipelineFactory extends ChannelInitializer<Channel> {
+import static org.jboss.netty.channel.Channels.pipeline;
+
+public class HttpServerPipelineFactory implements ChannelPipelineFactory {
 
     protected static final Map<String, Class<?>> classes = new HashMap<>();
 
-    /**
-     * Default Netty 4 pipeline. {@code HttpObjectAggregator} aggregates request
-     * fragments (HttpRequest + HttpContent + LastHttpContent) into a
-     * {@code FullHttpRequest}. The 1 MB cap is a temporary Stage A limit;
-     * Stage B (PF-32) restores disk-spooling for large bodies.
-     */
-    private final String pipelineConfig = Play.configuration.getProperty("play.netty.pipeline",
-            "io.netty.handler.codec.http.HttpRequestDecoder,io.netty.handler.codec.http.HttpObjectAggregator,io.netty.handler.codec.http.HttpResponseEncoder,io.netty.handler.stream.ChunkedWriteHandler,play.server.PlayHandler");
-
-    /** Cap aggregated request body at 1 MB during Stage A. */
-    private static final int DEFAULT_MAX_CONTENT_LENGTH = Integer.parseInt(
-            Play.configuration.getProperty("play.netty.maxContentLength", "1048576"));
+    private final String pipelineConfig = Play.configuration.getProperty("play.netty.pipeline", "org.jboss.netty.handler.codec.http.HttpRequestDecoder,play.server.StreamChunkAggregator,org.jboss.netty.handler.codec.http.HttpResponseEncoder,org.jboss.netty.handler.stream.ChunkedWriteHandler,play.server.PlayHandler");
 
     @Override
-    protected void initChannel(Channel ch) throws Exception {
-        ChannelPipeline pipeline = ch.pipeline();
+    public ChannelPipeline getPipeline() throws Exception {
 
-        String[] handlers = pipelineConfig.split(",");
-        if (handlers.length <= 0) {
+        ChannelPipeline pipeline = pipeline();
+        
+        String[] handlers = pipelineConfig.split(",");  
+        if(handlers.length <= 0){
             Logger.error("You must defined at least the playHandler in \"play.netty.pipeline\"");
-            return;
-        }
-
+            return pipeline;
+        }       
+        
         // Create the play Handler (always the last one)
         String handler = handlers[handlers.length - 1];
         ChannelHandler instance = getInstance(handler);
         PlayHandler playHandler = (PlayHandler) instance;
         if (playHandler == null) {
             Logger.error("The last handler must be the playHandler in \"play.netty.pipeline\"");
-            return;
+            return pipeline;
         }
-
-        // Build the pipeline. Users can extend it via play.netty.pipeline config.
+      
+        // Get all the pipeline. Give the user the opportunity to add their own
         for (int i = 0; i < handlers.length - 1; i++) {
             handler = handlers[i];
             try {
@@ -63,9 +52,11 @@ public class HttpServerPipelineFactory extends ChannelInitializer<Channel> {
                 Logger.error(" error adding " + handler, e);
             }
         }
-
+               
         pipeline.addLast("handler", playHandler);
         playHandler.pipelines.put("handler", playHandler);
+
+        return pipeline;
     }
 
     protected String getName(String name) {
@@ -83,20 +74,8 @@ public class HttpServerPipelineFactory extends ChannelInitializer<Channel> {
                 throw new UnexpectedException(e);
             }
         });
-        if (!ChannelHandler.class.isAssignableFrom(clazz)) return null;
-
-        // HttpObjectAggregator requires a maxContentLength constructor arg.
-        if (clazz == HttpObjectAggregator.class) {
-            return new HttpObjectAggregator(DEFAULT_MAX_CONTENT_LENGTH);
-        }
-
-        // Otherwise prefer no-arg constructor; fall back to int-arg if needed.
-        try {
-            Constructor<?> ctor = clazz.getDeclaredConstructor();
-            return (ChannelHandler) ctor.newInstance();
-        } catch (NoSuchMethodException ignored) {
-            Constructor<?> ctor = clazz.getDeclaredConstructor(int.class);
-            return (ChannelHandler) ctor.newInstance(DEFAULT_MAX_CONTENT_LENGTH);
-        }
+        if (ChannelHandler.class.isAssignableFrom(clazz))
+            return (ChannelHandler)clazz.getDeclaredConstructor().newInstance(); 
+        return null;
     }
 }

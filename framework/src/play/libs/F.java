@@ -19,7 +19,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
-import io.netty.channel.ChannelHandlerContext;
+import org.jboss.netty.channel.ChannelHandlerContext;
 
 import play.Logger;
 
