@@ -62,14 +62,26 @@ Run the full Play Framework release deployment:
    ```
    Report any push errors before continuing.
 
-5. **Upload zip to GitHub release**
+5. **Publish zip to GitHub release**
 
-   Determine the tag: check existing releases with `gh release list --repo tsukhani/play1` to confirm the tag name for `VERSION`. It is typically `v{VERSION}` (e.g. `v1.11.10`).
-
-   Upload, replacing any existing asset:
+   The tag for the release is `v{VERSION}` (e.g. `v1.11.10`). First check whether a release already exists for that tag:
    ```bash
-   gh release upload v{VERSION} framework/dist/play-{VERSION}.zip --clobber --repo tsukhani/play1
+   gh release view v{VERSION} --repo tsukhani/play1
    ```
+
+   - **If the release exists** (command succeeds): upload the zip, replacing any existing asset:
+     ```bash
+     gh release upload v{VERSION} framework/dist/play-{VERSION}.zip --clobber --repo tsukhani/play1
+     ```
+
+   - **If the release does not exist** (command exits non-zero with `release not found`): create it with the zip attached. `gh release create` will auto-create the `v{VERSION}` git tag at the current `main` HEAD on the GitHub remote.
+     ```bash
+     gh release create v{VERSION} framework/dist/play-{VERSION}.zip \
+       --repo tsukhani/play1 \
+       --title "Play Framework {VERSION}" \
+       --notes "Maintenance release."
+     ```
+     If there are noteworthy commits between the previous release and this one (run `git log <previous-tag>..HEAD --oneline` to see), write a short release-notes summary in place of the default `Maintenance release.` text.
 
    Then verify:
    ```bash
