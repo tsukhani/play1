@@ -1124,7 +1124,7 @@ public class PlayHandler extends SimpleChannelUpstreamHandler {
         }
 
         // Inbound
-        Http.Inbound inbound = new Http.Inbound(ctx) {
+        Http.Inbound inbound = new Http.Inbound(new play.libs.NettyPlayChannel(ctx)) {
 
             @Override
             public boolean isOpen() {

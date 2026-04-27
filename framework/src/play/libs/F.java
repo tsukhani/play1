@@ -536,25 +536,43 @@ public class F {
 
         final LinkedBlockingQueue<T> events;
         final List<Promise<T>> waiting = Collections.synchronizedList(new ArrayList<Promise<T>>());
-        final ChannelHandlerContext ctx;
-        
+        final PlayChannel channel;
 
+
+        /**
+         * @deprecated Use {@link #BlockingEventStream(PlayChannel)}. Netty types
+         *             will be removed from the public API in a future release.
+         */
+        @Deprecated
         public BlockingEventStream(ChannelHandlerContext ctx) {
-            this(100, ctx);
+            this(100, new NettyPlayChannel(ctx));
         }
 
+        /**
+         * @deprecated Use {@link #BlockingEventStream(int, PlayChannel)}. Netty types
+         *             will be removed from the public API in a future release.
+         */
+        @Deprecated
         public BlockingEventStream(int maxBufferSize, ChannelHandlerContext ctx) {
-            this.ctx = ctx;
+            this(maxBufferSize, new NettyPlayChannel(ctx));
+        }
+
+        public BlockingEventStream(PlayChannel channel) {
+            this(100, channel);
+        }
+
+        public BlockingEventStream(int maxBufferSize, PlayChannel channel) {
+            this.channel = channel;
             events = new LinkedBlockingQueue<>(maxBufferSize + 10);
         }
 
         public synchronized Promise<T> nextEvent() {
             if (events.isEmpty()) {
-                LazyTask task = new LazyTask(ctx);
+                LazyTask task = new LazyTask(channel);
                 waiting.add(task);
                 return task;
             }
-            return new LazyTask(events.peek(), ctx);
+            return new LazyTask(events.peek(), channel);
         }
 
         //NOTE: cannot synchronize since events.put may block when system is overloaded.
@@ -570,7 +588,7 @@ public class F {
                 // This method blocks if the queue is full(read publish method documentation just above)
                 if (events.remainingCapacity() == 10) {
                     Logger.trace("events queue is full! Setting readable to false.");
-                    ctx.getChannel().setReadable(false);
+                    channel.setReadable(false);
                 }
                 events.put(event);
             } catch (InterruptedException e) {
@@ -589,14 +607,14 @@ public class F {
 
         class LazyTask extends Promise<T> {
 
-            final ChannelHandlerContext ctx;
+            final PlayChannel channel;
 
-            public LazyTask(ChannelHandlerContext ctx) {
-                this.ctx = ctx;
+            public LazyTask(PlayChannel channel) {
+                this.channel = channel;
             }
 
-            public LazyTask(T value, ChannelHandlerContext ctx) {
-                this.ctx = ctx;
+            public LazyTask(T value, PlayChannel channel) {
+                this.channel = channel;
                 invoke(value);
             }
 
@@ -619,7 +637,7 @@ public class F {
                     events.remove(value);
                     //Don't start back up until we get down to half the total capacity to prevent jittering:
                     if (events.remainingCapacity() > events.size()) {
-                        ctx.getChannel().setReadable(true);
+                        channel.setReadable(true);
                     }
                 }
             }
