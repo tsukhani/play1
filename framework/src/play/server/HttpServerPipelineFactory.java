@@ -18,16 +18,16 @@ public class HttpServerPipelineFactory extends ChannelInitializer<Channel> {
     protected static final Map<String, Class<?>> classes = new HashMap<>();
 
     /**
-     * Default Netty 4 pipeline. {@code HttpObjectAggregator} aggregates request
-     * fragments (HttpRequest + HttpContent + LastHttpContent) into a
-     * {@code FullHttpRequest}. The 1 MB cap is a temporary Stage A limit;
-     * Stage B (PF-32) restores disk-spooling for large bodies.
+     * Default Netty 4 pipeline. {@link StreamChunkAggregator} aggregates request fragments
+     * (HttpRequest + HttpContent + LastHttpContent) into a FullHttpRequest, spooling large
+     * bodies to disk past {@code play.netty.spoolThresholdBytes} (default 1 MB) and
+     * enforcing the optional {@code play.netty.maxContentLength} hard cap.
      */
     private final String pipelineConfig = Play.configuration.getProperty("play.netty.pipeline",
-            "io.netty.handler.codec.http.HttpRequestDecoder,io.netty.handler.codec.http.HttpObjectAggregator,io.netty.handler.codec.http.HttpResponseEncoder,io.netty.handler.stream.ChunkedWriteHandler,play.server.PlayHandler");
+            "io.netty.handler.codec.http.HttpRequestDecoder,play.server.StreamChunkAggregator,io.netty.handler.codec.http.HttpResponseEncoder,io.netty.handler.stream.ChunkedWriteHandler,play.server.PlayHandler");
 
-    /** Cap aggregated request body at 1 MB during Stage A. */
-    private static final int DEFAULT_MAX_CONTENT_LENGTH = Integer.parseInt(
+    /** Fallback for stock {@link HttpObjectAggregator} if a user wires it explicitly. */
+    private static final int DEFAULT_AGGREGATOR_MAX = Integer.parseInt(
             Play.configuration.getProperty("play.netty.maxContentLength", "1048576"));
 
     @Override
@@ -85,9 +85,9 @@ public class HttpServerPipelineFactory extends ChannelInitializer<Channel> {
         });
         if (!ChannelHandler.class.isAssignableFrom(clazz)) return null;
 
-        // HttpObjectAggregator requires a maxContentLength constructor arg.
+        // HttpObjectAggregator (when explicitly wired by users) requires a maxContentLength arg.
         if (clazz == HttpObjectAggregator.class) {
-            return new HttpObjectAggregator(DEFAULT_MAX_CONTENT_LENGTH);
+            return new HttpObjectAggregator(DEFAULT_AGGREGATOR_MAX);
         }
 
         // Otherwise prefer no-arg constructor; fall back to int-arg if needed.
@@ -96,7 +96,7 @@ public class HttpServerPipelineFactory extends ChannelInitializer<Channel> {
             return (ChannelHandler) ctor.newInstance();
         } catch (NoSuchMethodException ignored) {
             Constructor<?> ctor = clazz.getDeclaredConstructor(int.class);
-            return (ChannelHandler) ctor.newInstance(DEFAULT_MAX_CONTENT_LENGTH);
+            return (ChannelHandler) ctor.newInstance(DEFAULT_AGGREGATOR_MAX);
         }
     }
 }

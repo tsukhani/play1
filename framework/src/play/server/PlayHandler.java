@@ -237,9 +237,13 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
                 super.run();
             } catch (Exception e) {
                 serve500(e, ctx, nettyRequest);
-            }
-            if (Logger.isTraceEnabled()) {
-                Logger.trace("run: end");
+            } finally {
+                // Close + delete the spooled body temp file (no-op for in-memory bodies).
+                // Done in finally so disk leaks can't survive a controller throwing.
+                cleanupSpooledBody(request);
+                if (Logger.isTraceEnabled()) {
+                    Logger.trace("run: end");
+                }
             }
         }
 
@@ -542,16 +546,25 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
             method = methodOverride.intern();
         }
 
-        // Body. HttpObjectAggregator gives us a FullHttpRequest; copy bytes out so we don't
-        // hold the refcounted ByteBuf past channelRead.
+        // Body. StreamChunkAggregator gives us a FullHttpRequest; small bodies travel in the
+        // request's ByteBuf, large bodies are spooled to a temp file referenced by a channel
+        // attribute. Read-and-clear the attribute atomically — safe under HTTP/1.1 keep-alive
+        // request serialization on the IO thread.
         InputStream body;
-        ByteBuf content = nettyRequest.content();
-        if (content != null && content.isReadable()) {
-            byte[] bytes = new byte[content.readableBytes()];
-            content.getBytes(content.readerIndex(), bytes);
-            body = new ByteArrayInputStream(bytes);
+        File spooled = ctx.channel().attr(StreamChunkAggregator.SPOOLED_BODY).getAndSet(null);
+        if (spooled != null) {
+            body = new java.io.FileInputStream(spooled);
+            // Stash the spool file on the request so NettyInvocation.cleanupSpool() can delete it.
+            // We don't use a typed key here because Http.Request.args is a generic Map<String, Object>.
         } else {
-            body = new ByteArrayInputStream(new byte[0]);
+            ByteBuf content = nettyRequest.content();
+            if (content != null && content.isReadable()) {
+                byte[] bytes = new byte[content.readableBytes()];
+                content.getBytes(content.readerIndex(), bytes);
+                body = new ByteArrayInputStream(bytes);
+            } else {
+                body = new ByteArrayInputStream(new byte[0]);
+            }
         }
 
         String host = nettyRequest.headers().get(HOST);
@@ -600,10 +613,35 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
         Request request = Request.createRequest(remoteAddress, method, path, querystring, contentType, body, uri, host,
                 isLoopback, port, domain, secure, getHeaders(nettyRequest), getCookies(nettyRequest));
 
+        // If body is backed by a temp file, stash both the stream and the file so
+        // NettyInvocation can close + delete them after the controller returns.
+        if (spooled != null) {
+            request.args.put(SPOOL_FILE_ATTR, spooled);
+            request.args.put(SPOOL_STREAM_ATTR, body);
+        }
+
         if (Logger.isTraceEnabled()) {
             Logger.trace("parseRequest: end");
         }
         return request;
+    }
+
+    static final String SPOOL_FILE_ATTR = "__play.spoolFile";
+    static final String SPOOL_STREAM_ATTR = "__play.spoolStream";
+
+    /** Close the spooled body stream (if any) and delete the temp file. Idempotent. */
+    static void cleanupSpooledBody(Request request) {
+        if (request == null || request.args == null) return;
+        Object stream = request.args.remove(SPOOL_STREAM_ATTR);
+        if (stream instanceof InputStream) {
+            try { ((InputStream) stream).close(); } catch (IOException ignored) {}
+        }
+        Object file = request.args.remove(SPOOL_FILE_ATTR);
+        if (file instanceof File f) {
+            if (!f.delete()) {
+                f.deleteOnExit();
+            }
+        }
     }
 
     protected static Map<String, Http.Header> getHeaders(HttpRequest nettyRequest) {

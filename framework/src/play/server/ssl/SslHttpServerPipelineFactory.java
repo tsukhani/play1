@@ -17,9 +17,9 @@ import play.server.HttpServerPipelineFactory;
 public class SslHttpServerPipelineFactory extends HttpServerPipelineFactory {
 
     private final String pipelineConfig = Play.configuration.getProperty("play.ssl.netty.pipeline",
-            "io.netty.handler.codec.http.HttpRequestDecoder,io.netty.handler.codec.http.HttpObjectAggregator,io.netty.handler.codec.http.HttpResponseEncoder,io.netty.handler.stream.ChunkedWriteHandler,play.server.ssl.SslPlayHandler");
+            "io.netty.handler.codec.http.HttpRequestDecoder,play.server.StreamChunkAggregator,io.netty.handler.codec.http.HttpResponseEncoder,io.netty.handler.stream.ChunkedWriteHandler,play.server.ssl.SslPlayHandler");
 
-    private static final int DEFAULT_MAX_CONTENT_LENGTH = Integer.parseInt(
+    private static final int DEFAULT_AGGREGATOR_MAX = Integer.parseInt(
             Play.configuration.getProperty("play.netty.maxContentLength", "1048576"));
 
     @Override
@@ -97,14 +97,14 @@ public class SslHttpServerPipelineFactory extends HttpServerPipelineFactory {
         });
         if (!ChannelHandler.class.isAssignableFrom(clazz)) return null;
         if (clazz == HttpObjectAggregator.class) {
-            return new HttpObjectAggregator(DEFAULT_MAX_CONTENT_LENGTH);
+            return new HttpObjectAggregator(DEFAULT_AGGREGATOR_MAX);
         }
         try {
             Constructor<?> ctor = clazz.getDeclaredConstructor();
             return (ChannelHandler) ctor.newInstance();
         } catch (NoSuchMethodException ignored) {
             Constructor<?> ctor = clazz.getDeclaredConstructor(int.class);
-            return (ChannelHandler) ctor.newInstance(DEFAULT_MAX_CONTENT_LENGTH);
+            return (ChannelHandler) ctor.newInstance(DEFAULT_AGGREGATOR_MAX);
         }
     }
 }
