@@ -435,7 +435,7 @@
         <mkdir dir="dist" />
         <mkdir dir="dist/play-${version}" />
         <copy todir="dist/play-${version}">
-            <fileset dir=".." excludes=".github,**/cobertura.ser,**/*.pyc,hs_err*,.*,.*/*,framework/dist/**,framework/test-src/**,id,nbproject/**,**/.bzr/**,**/.git/**,*.bzrignore,support/textmate/**,framework/classes/**,framework/tests-results/**,samples-and-tests/**/test-result,samples-and-tests/**/i-am-working-here,samples-and-tests/**/data,samples-and-tests/**/logs,samples-and-tests/**/tmp,samples-and-tests/**/db,samples-and-tests/**/attachments,modules/**,openspec/**,.claude/**,CLAUDE.md,sync-fork.sh" />
+            <fileset dir=".." excludes=".github,**/cobertura.ser,**/*.pyc,**/*.log,hs_err*,.*,.*/*,framework/dist/**,framework/test-src/**,id,nbproject/**,**/.bzr/**,**/.git/**,*.bzrignore,support/textmate/**,framework/classes/**,framework/tests-results/**,samples-and-tests/**/test-result,samples-and-tests/**/i-am-working-here,samples-and-tests/**/data,samples-and-tests/**/logs,samples-and-tests/**/tmp,samples-and-tests/**/db,samples-and-tests/**/attachments,modules/**,openspec/**,.claude/**,CLAUDE.md,sync-fork.sh" />
             <fileset dir=".." includes="modules/crud/**,modules/secure/**,modules/docviewer/**,modules/testrunner/**" excludes="**/*.pyc" />
         </copy>
     </target>
