@@ -541,8 +541,12 @@ public class Controller implements PlayController, ControllerSupport, LocalVaria
      * @see play.templates.FastTags#_authenticityToken
      */
     protected static void checkAuthenticity() {
-        if (Scope.Params.current().get("authenticityToken") == null
-                || !Scope.Params.current().get("authenticityToken").equals(Scope.Session.current().getAuthenticityToken())) {
+        String submitted = Scope.Params.current().get("authenticityToken");
+        String expected = Scope.Session.current().getAuthenticityToken();
+        if (submitted == null || expected == null ||
+                !java.security.MessageDigest.isEqual(
+                    submitted.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                    expected.getBytes(java.nio.charset.StandardCharsets.UTF_8))) {
             forbidden("Bad authenticity token");
         }
     }

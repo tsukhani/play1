@@ -1032,7 +1032,7 @@ public class Router {
                             String urlDecodedResource = Utils.urlDecodePath(resource);
                             String childResourceName = staticDir + (staticFile ? "" : "/" + urlDecodedResource);
                             String child = new File(childResourceName).getCanonicalPath();
-                            if (child.startsWith(root)) {
+                            if (child.startsWith(root + File.separator) || child.equals(root)) {
                                 throw new RenderStatic(childResourceName);
                             }
                         } catch (IOException e) {

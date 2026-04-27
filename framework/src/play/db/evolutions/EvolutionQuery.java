@@ -117,7 +117,9 @@ public class EvolutionQuery{
                 if (StringUtils.isEmpty(s)) {
                     continue;
                 }              
-                connection.createStatement().execute(s);
+                try (java.sql.Statement st = connection.createStatement()) {
+                    st.execute(s);
+                }
             }
         }
         // Insert into logs

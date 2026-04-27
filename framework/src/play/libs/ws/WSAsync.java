@@ -93,9 +93,6 @@ public class WSAsync implements WS.WSImpl {
 
         if (keyStore != null && !keyStore.isEmpty()) {
             Logger.info("Keystore configured, loading from '%s', CA validation enabled : %s", keyStore, CAValidation);
-            if (Logger.isTraceEnabled()) {
-                Logger.trace("Keystore password : %s, SSLCTX : %s", keyStorePass, sslCTX);
-            }
             if (sslCTX == null) {
                 sslCTX = WSSSLContext.getSslContext(keyStore, keyStorePass, CAValidation);
             }
