@@ -17,6 +17,7 @@ class CommandLoader(object):
         self.path = os.path.join(play_path, 'framework', 'pym', 'play', 'commands')
         self.commands = {}
         self.modules = {}
+        self._loaded_module_paths = set()
         self.load_core()
 
     def load_core(self):
@@ -33,6 +34,13 @@ class CommandLoader(object):
                     warnings.warn("!! Warning: could not load core command file " + filename, RuntimeWarning)
 
     def load_play_module(self, modname):
+        # Resolve to a canonical path so the same module reached via different
+        # routes (dev-mode auto-load, `module.X=...` in conf, --with=X) is only
+        # registered once. Without this, the second registration trips the
+        # "conflict on command" warning in _load_cmd_from.
+        canonical = os.path.realpath(modname)
+        if canonical in self._loaded_module_paths:
+            return
         commands = os.path.join(modname, "commands.py")
         if os.path.exists(commands):
             try:
@@ -40,11 +48,14 @@ class CommandLoader(object):
                 # print(f"Loading commands for module \"{modname}\"")
                 mod = load_source(leafname, os.path.join(modname, "commands.py"))
                 self._load_cmd_from(mod)
+                self._loaded_module_paths.add(canonical)
             except Exception as e:
                 print('~')
                 print('~ !! Error while loading %s: %s' % (commands, e))
                 print('~')
                 pass # No command to load in this module
+        else:
+            self._loaded_module_paths.add(canonical)
 
     def _load_cmd_from(self, mod):
         if 'COMMANDS' in dir(mod):
