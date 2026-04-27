@@ -1,12 +1,12 @@
 package play.libs;
 
-import org.jboss.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelHandlerContext;
 
 /**
- * Netty 3 implementation of {@link PlayChannel}. Transitional — exists to
- * back the deprecated {@code ChannelHandlerContext}-typed constructors on
- * {@link play.mvc.Http.Inbound} and {@link F.BlockingEventStream}. Will be
- * replaced (or removed) when the framework migrates to Netty 4.
+ * Netty 4 implementation of {@link PlayChannel}. Backs the deprecated
+ * {@code ChannelHandlerContext}-typed constructors on
+ * {@link play.mvc.Http.Inbound} and {@link F.BlockingEventStream}; new
+ * code should depend on {@link PlayChannel} directly.
  */
 public class NettyPlayChannel implements PlayChannel {
 
@@ -18,6 +18,6 @@ public class NettyPlayChannel implements PlayChannel {
 
     @Override
     public void setReadable(boolean readable) {
-        ctx.getChannel().setReadable(readable);
+        ctx.channel().config().setAutoRead(readable);
     }
 }

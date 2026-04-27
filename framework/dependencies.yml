@@ -78,7 +78,13 @@ require:    &allDependencies
     - org.hibernate.orm -> hibernate-jcache 7.2.0.Final
     - com.mchange -> mchange-commons-java 0.3.2
     - org.javassist -> javassist 3.30.2-GA
-    - io.netty -> netty 3.10.6.Final
+    - io.netty -> netty-buffer 4.2.12.Final
+    - io.netty -> netty-codec-base 4.2.12.Final
+    - io.netty -> netty-codec-http 4.2.12.Final
+    - io.netty -> netty-common 4.2.12.Final
+    - io.netty -> netty-handler 4.2.12.Final
+    - io.netty -> netty-resolver 4.2.12.Final
+    - io.netty -> netty-transport 4.2.12.Final
     - org.postgresql -> postgresql 42.7.7
     - org.slf4j -> slf4j-api 2.0.17
     - org.apache.logging.log4j -> log4j-slf4j2-impl 2.25.3

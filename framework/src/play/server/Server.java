@@ -5,11 +5,13 @@ import java.lang.management.ManagementFactory;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.Properties;
-import java.util.concurrent.Executors;
 
-import org.jboss.netty.bootstrap.ServerBootstrap;
-import org.jboss.netty.channel.ChannelException;
-import org.jboss.netty.channel.socket.nio.NioServerSocketChannelFactory;
+import io.netty.bootstrap.ServerBootstrap;
+import io.netty.channel.ChannelException;
+import io.netty.channel.ChannelOption;
+import io.netty.channel.EventLoopGroup;
+import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.channel.socket.nio.NioServerSocketChannel;
 import play.Logger;
 import play.Play;
 import play.Play.Mode;
@@ -66,14 +68,15 @@ public class Server {
 
         try {
             if (httpPort != -1) {
-                ServerBootstrap bootstrap = new ServerBootstrap(new NioServerSocketChannelFactory(
-                        Executors.newCachedThreadPool(), Executors.newCachedThreadPool())
-                );
+                EventLoopGroup bossGroup = new NioEventLoopGroup();
+                EventLoopGroup workerGroup = new NioEventLoopGroup();
+                ServerBootstrap bootstrap = new ServerBootstrap();
+                bootstrap.group(bossGroup, workerGroup)
+                        .channel(NioServerSocketChannel.class)
+                        .childHandler(new HttpServerPipelineFactory())
+                        .childOption(ChannelOption.TCP_NODELAY, true);
 
-                bootstrap.setPipelineFactory(new HttpServerPipelineFactory());
-
-                bootstrap.bind(new InetSocketAddress(address, httpPort));
-                bootstrap.setOption("child.tcpNoDelay", true);
+                bootstrap.bind(new InetSocketAddress(address, httpPort)).syncUninterruptibly();
 
                 if (Play.mode == Mode.DEV) {
                     if (address == null) {
@@ -98,13 +101,15 @@ public class Server {
 
         try {
             if (httpsPort != -1) {
-                ServerBootstrap bootstrap = new ServerBootstrap(new NioServerSocketChannelFactory(
-                        Executors.newCachedThreadPool(), Executors.newCachedThreadPool())
-                );
+                EventLoopGroup bossGroup = new NioEventLoopGroup();
+                EventLoopGroup workerGroup = new NioEventLoopGroup();
+                ServerBootstrap bootstrap = new ServerBootstrap();
+                bootstrap.group(bossGroup, workerGroup)
+                        .channel(NioServerSocketChannel.class)
+                        .childHandler(new SslHttpServerPipelineFactory())
+                        .childOption(ChannelOption.TCP_NODELAY, true);
 
-                bootstrap.setPipelineFactory(new SslHttpServerPipelineFactory());
-                bootstrap.bind(new InetSocketAddress(secureAddress, httpsPort));
-                bootstrap.setOption("child.tcpNoDelay", true);
+                bootstrap.bind(new InetSocketAddress(secureAddress, httpsPort)).syncUninterruptibly();
 
                 if (Play.mode == Mode.DEV) {
                     if (secureAddress == null) {
@@ -127,7 +132,7 @@ public class Server {
             Play.fatalServerErrorOccurred();
         }
         if (Play.mode == Mode.DEV || Play.runningInTestMode()) {
-           // print this line to STDOUT - not using logger, so auto test runner will not block if logger is misconfigured (see #1222)     
+           // print this line to STDOUT - not using logger, so auto test runner will not block if logger is misconfigured (see #1222)
            System.out.println("~ Server is up and running");
         }
     }
@@ -139,7 +144,7 @@ public class Server {
                 return a.substring(s.length());
             }
         }
-        return defaultValue; 
+        return defaultValue;
     }
 
     private static void writePID(File root) {
