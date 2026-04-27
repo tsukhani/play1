@@ -156,8 +156,10 @@ public class StreamChunkAggregator extends ChannelInboundHandlerAdapter {
                     pendingRequest.protocolVersion(), pendingRequest.method(), pendingRequest.uri(),
                     Unpooled.EMPTY_BUFFER);
             full.headers().set(pendingRequest.headers());
-            // Strip Transfer-Encoding: chunked since the aggregated request now has a known length.
-            full.headers().remove(HttpHeaderNames.TRANSFER_ENCODING);
+            // PF-37: strip only the chunked token from Transfer-Encoding (the aggregated request now
+            // has a known length), but preserve other content codings such as gzip/deflate so the
+            // controller can still decode the body. RFC 7230 §3.3.1 lists these as comma-separated.
+            stripChunkedTransferEncoding(full);
             full.headers().set(HttpHeaderNames.CONTENT_LENGTH, String.valueOf(spoolFile.length()));
             return full;
         } else {
@@ -165,10 +167,35 @@ public class StreamChunkAggregator extends ChannelInboundHandlerAdapter {
                     pendingRequest.protocolVersion(), pendingRequest.method(), pendingRequest.uri(),
                     inMemoryBody);
             full.headers().set(pendingRequest.headers());
-            full.headers().remove(HttpHeaderNames.TRANSFER_ENCODING);
+            stripChunkedTransferEncoding(full);
             full.headers().set(HttpHeaderNames.CONTENT_LENGTH, String.valueOf(inMemoryBody.readableBytes()));
             inMemoryBody = null; // ownership transferred to the FullHttpRequest
             return full;
+        }
+    }
+
+    /**
+     * Remove only the {@code chunked} token from any {@code Transfer-Encoding} header values.
+     * Preserves coexisting codings (e.g. {@code gzip,chunked} → {@code gzip}). If only
+     * {@code chunked} was present, the header is removed entirely.
+     */
+    private static void stripChunkedTransferEncoding(FullHttpRequest req) {
+        java.util.List<String> values = req.headers().getAll(HttpHeaderNames.TRANSFER_ENCODING);
+        if (values.isEmpty()) {
+            return;
+        }
+        req.headers().remove(HttpHeaderNames.TRANSFER_ENCODING);
+        for (String v : values) {
+            StringBuilder kept = new StringBuilder();
+            for (String token : v.split(",")) {
+                String t = token.trim();
+                if (t.isEmpty() || t.equalsIgnoreCase("chunked")) continue;
+                if (kept.length() > 0) kept.append(", ");
+                kept.append(t);
+            }
+            if (kept.length() > 0) {
+                req.headers().add(HttpHeaderNames.TRANSFER_ENCODING, kept.toString());
+            }
         }
     }
 
@@ -181,8 +208,19 @@ public class StreamChunkAggregator extends ChannelInboundHandlerAdapter {
 
     private void rejectOversize(ChannelHandlerContext ctx) {
         rejected = true;
-        // Close in-flight resources so we don't leak.
-        cleanupSpool();
+        // PF-44: on oversize rejection, ownership of any spool file never transfers to the channel
+        // attribute (we never built a FullHttpRequest). Delete the temp file before clearing the
+        // reference; cleanupSpool() deliberately does not delete because the success path transfers
+        // ownership downstream.
+        if (spoolFile != null) {
+            File f = spoolFile;
+            cleanupSpool();
+            if (!f.delete()) {
+                f.deleteOnExit();
+            }
+        } else {
+            cleanupSpool();
+        }
         if (inMemoryBody != null) {
             inMemoryBody.release();
             inMemoryBody = null;

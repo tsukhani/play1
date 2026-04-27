@@ -1096,9 +1096,44 @@ Default: @none@
 
 h3(#play.netty.maxContentLength). play.netty.maxContentLength
 
-HTTP server maximum content length for response streaming, in bytes.
+Maximum HTTP request body size, in bytes. Requests above this cap are rejected with @413 Request Entity Too Large@ and the connection is closed.
 
-Default: none - no maximum.
+bc. play.netty.maxContentLength=10485760
+
+Default: @-1@ (unlimited).
+
+p(note). *Semantic change in 1.12.0:* this property was previously a per-chunk size cap inside @HttpChunkAggregator@ (Netty 3). Under Netty 4 it is now a hard request-body cap enforced by @StreamChunkAggregator@. If you previously set this to e.g. @1048576@ thinking of it as "8 KB chunks aggregated up to 1 MB", review whether that limit is still appropriate as an absolute body cap.
+
+
+h3(#play.netty.spoolThresholdBytes). play.netty.spoolThresholdBytes
+
+Threshold above which an incoming request body is spooled to a temp file under @play.tmp@ instead of accumulating in memory. Bodies smaller than this stay in memory.
+
+bc. play.netty.spoolThresholdBytes=1048576
+
+Default: @1048576@ (1 MB).
+
+Tuning:
+
+* Upload-heavy workloads (concurrent multi-MB uploads): drop to @65536@ to cap heap pressure
+* Low-concurrency JSON APIs: raise to @4194304@ if you want to keep more in memory
+
+The temp file is cleaned up automatically when the request completes (success or exception); on connection drop mid-upload the partial file is deleted by the aggregator's @channelInactive@ handler.
+
+
+h3(#play.threads.virtual). play.threads.virtual
+
+Run framework subsystems on virtual threads (JEP 444). Off by default; the fork ships the machinery but does not enable it for you.
+
+bc. play.threads.virtual=true
+
+Default: @false@.
+
+When enabled, request invocation, background jobs, and mail dispatch each run on a virtual-thread executor. Per-subsystem overrides (any of which inherits from @play.threads.virtual@ when unset):
+
+* @play.threads.virtual.invoker@ — request invocation only
+* @play.threads.virtual.jobs@ — background jobs (@@Every@, @@On@) only
+* @play.threads.virtual.mail@ — mail delivery only
 
 
 h3(#play.ssl.enabledCiphers). play.ssl.enabledCiphers

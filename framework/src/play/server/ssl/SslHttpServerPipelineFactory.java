@@ -60,8 +60,11 @@ public class SslHttpServerPipelineFactory extends HttpServerPipelineFactory {
             return;
         }
 
+        // PF-50: trim FQCNs before resolution; the previous code only trimmed for getName() but
+        // not for the Class.forName() lookup, so a leading space in the comma-separated list
+        // killed pipeline construction.
         // Create the play Handler (always the last one)
-        String handler = handlers[handlers.length - 1];
+        String handler = handlers[handlers.length - 1].trim();
         ChannelHandler instance = sslGetInstance(handler);
         SslPlayHandler sslPlayHandler = (SslPlayHandler) instance;
         if (instance == null || !(instance instanceof SslPlayHandler) || sslPlayHandler == null) {
@@ -70,9 +73,9 @@ public class SslHttpServerPipelineFactory extends HttpServerPipelineFactory {
         }
 
         for (int i = 0; i < handlers.length - 1; i++) {
-            handler = handlers[i];
+            handler = handlers[i].trim();
             try {
-                String name = getName(handler.trim());
+                String name = getName(handler);
                 instance = sslGetInstance(handler);
                 if (instance != null) {
                     pipeline.addLast(name, instance);

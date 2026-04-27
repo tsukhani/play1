@@ -46,7 +46,15 @@ public class SslHttpServerContextFactory {
                 // Initialize the SSLContext to work with our key managers.
                 serverContext = SSLContext.getInstance(PROTOCOL);
                 TrustManagerFactory tmf = TrustManagerFactory.getInstance(algorithm);
-                tmf.init(KeyStore.getInstance(p.getProperty("trustmanager.algorithm", "JKS")));
+                // PF-51: a freshly-instantiated KeyStore is uninitialized and cannot be passed to
+                // TrustManagerFactory.init() — JDK 17+ throws KeyStoreException ("Uninitialized
+                // keystore"). Earlier JDKs accepted it but produced a trust manager that rejected
+                // every client cert. Calling load(null, null) initializes an empty in-memory
+                // keystore, which yields a "trust nothing" manager (matching the prior intended
+                // semantic for the PEM path: client auth disabled, server auth via PEM only).
+                KeyStore trustStore = KeyStore.getInstance(p.getProperty("trustmanager.algorithm", "JKS"));
+                trustStore.load(null, null);
+                tmf.init(trustStore);
 
                 serverContext.init(new KeyManager[]{PEMKeyManager.instance}, tmf.getTrustManagers(), null);
             } else {

@@ -11,11 +11,13 @@ import play.exceptions.UnexpectedException;
 
 import java.lang.reflect.Constructor;
 import java.util.Map;
-import java.util.HashMap;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class HttpServerPipelineFactory extends ChannelInitializer<Channel> {
 
-    protected static final Map<String, Class<?>> classes = new HashMap<>();
+    // PF-49: ConcurrentHashMap so concurrent initChannel calls (one per accepted connection)
+    // don't corrupt the cache via the previously unsynchronized HashMap.computeIfAbsent path.
+    protected static final Map<String, Class<?>> classes = new ConcurrentHashMap<>();
 
     /**
      * Default Netty 4 pipeline. {@link StreamChunkAggregator} aggregates request fragments
@@ -40,8 +42,11 @@ public class HttpServerPipelineFactory extends ChannelInitializer<Channel> {
             return;
         }
 
+        // PF-50: trim each comma-separated FQCN before lookup. Without trim, a config like
+        // "io.netty.handler.codec.http.HttpRequestDecoder, play.server.PlayHandler" fails to
+        // resolve the second class because Class.forName(" play.server.PlayHandler") throws.
         // Create the play Handler (always the last one)
-        String handler = handlers[handlers.length - 1];
+        String handler = handlers[handlers.length - 1].trim();
         ChannelHandler instance = getInstance(handler);
         PlayHandler playHandler = (PlayHandler) instance;
         if (playHandler == null) {
@@ -51,9 +56,9 @@ public class HttpServerPipelineFactory extends ChannelInitializer<Channel> {
 
         // Build the pipeline. Users can extend it via play.netty.pipeline config.
         for (int i = 0; i < handlers.length - 1; i++) {
-            handler = handlers[i];
+            handler = handlers[i].trim();
             try {
-                String name = getName(handler.trim());
+                String name = getName(handler);
                 instance = getInstance(handler);
                 if (instance != null) {
                     pipeline.addLast(name, instance);

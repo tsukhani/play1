@@ -17,7 +17,9 @@ import io.netty.handler.codec.http.websocketx.ContinuationWebSocketFrame;
 import io.netty.handler.codec.http.websocketx.PingWebSocketFrame;
 import io.netty.handler.codec.http.websocketx.PongWebSocketFrame;
 import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
+import io.netty.handler.codec.http.websocketx.WebSocketCloseStatus;
 import io.netty.handler.codec.http.websocketx.WebSocketFrame;
+import io.netty.handler.codec.http.websocketx.WebSocketFrameAggregator;
 import io.netty.handler.codec.http.websocketx.WebSocketServerHandshaker;
 import io.netty.handler.codec.http.websocketx.WebSocketServerHandshakerFactory;
 import io.netty.buffer.ByteBufUtil;
@@ -128,7 +130,15 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
 
                     boolean raw = Play.pluginCollection.rawInvocation(request, response);
                     if (raw) {
-                        copyResponse(ctx, request, response, nettyRequest);
+                        try {
+                            copyResponse(ctx, request, response, nettyRequest);
+                        } finally {
+                            // PF-45: the raw plugin path bypasses NettyInvocation, so its spool
+                            // cleanup never runs. Delete the temp file here so a plugin that hands
+                            // back a response without invoking the controller doesn't leak under
+                            // load (one temp file per upload that hits the spool threshold).
+                            cleanupSpooledBody(request);
+                        }
                     } else {
                         Invoker.invoke(new NettyInvocation(request, response, ctx, nettyRequest));
                     }
@@ -154,7 +164,10 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
         }
     }
 
-    private static final Map<String, RenderStatic> staticPathsCache = new HashMap<>();
+    // PF-43: ConcurrentHashMap so the IO-thread containsKey/get pair (line ~195) and the worker-
+    // thread put on the RenderStatic catch path don't race on the underlying HashMap. The previous
+    // code synchronized only the get/put sites, leaving the unguarded containsKey check exposed.
+    private static final Map<String, RenderStatic> staticPathsCache = new ConcurrentHashMap<>();
 
     public class NettyInvocation extends Invoker.Invocation {
 
@@ -163,11 +176,24 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
         private final Response response;
         private final HttpRequest nettyRequest;
 
+        // PF-46: when a controller throws Suspend, super.run() reschedules this Invocation for a
+        // later run() and returns normally. Without this flag the run() finally block would delete
+        // the spooled body before the resumed run() needs it, leaving the controller's second
+        // execute() to read from a closed-and-deleted temp file. Set in suspend(); reset at the
+        // start of every run() so re-entry is safe.
+        private volatile boolean suspended;
+
         public NettyInvocation(Request request, Response response, ChannelHandlerContext ctx, HttpRequest nettyRequest) {
             this.ctx = ctx;
             this.request = request;
             this.response = response;
             this.nettyRequest = nettyRequest;
+        }
+
+        @Override
+        public void suspend(Invoker.Suspend suspendRequest) {
+            suspended = true;
+            super.suspend(suspendRequest);
         }
 
         @Override
@@ -191,17 +217,15 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
                 if (Play.mode == Play.Mode.DEV) {
                     Router.detectChanges(Play.ctxPath);
                 }
-                if (Play.mode == Play.Mode.PROD
-                        && staticPathsCache.containsKey(request.domain + " " + request.method + " " + request.path)) {
-                    RenderStatic rs = null;
-                    synchronized (staticPathsCache) {
-                        rs = staticPathsCache.get(request.domain + " " + request.method + " " + request.path);
+                if (Play.mode == Play.Mode.PROD) {
+                    RenderStatic rs = staticPathsCache.get(request.domain + " " + request.method + " " + request.path);
+                    if (rs != null) {
+                        serveStatic(rs, ctx, request, response, nettyRequest);
+                        if (Logger.isTraceEnabled()) {
+                            Logger.trace("init: end false");
+                        }
+                        return false;
                     }
-                    serveStatic(rs, ctx, request, response, nettyRequest);
-                    if (Logger.isTraceEnabled()) {
-                        Logger.trace("init: end false");
-                    }
-                    return false;
                 }
                 Router.routeOnlyStatic(request);
                 super.init();
@@ -213,9 +237,7 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
                 return false;
             } catch (RenderStatic rs) {
                 if (Play.mode == Play.Mode.PROD) {
-                    synchronized (staticPathsCache) {
-                        staticPathsCache.put(request.domain + " " + request.method + " " + request.path, rs);
-                    }
+                    staticPathsCache.put(request.domain + " " + request.method + " " + request.path, rs);
                 }
                 serveStatic(rs, ctx, request, response, nettyRequest);
                 if (Logger.isTraceEnabled()) {
@@ -239,6 +261,7 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
 
         @Override
         public void run() {
+            suspended = false;
             try {
                 if (Logger.isTraceEnabled()) {
                     Logger.trace("run: begin");
@@ -248,8 +271,12 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
                 serve500(e, ctx, nettyRequest);
             } finally {
                 // Close + delete the spooled body temp file (no-op for in-memory bodies).
-                // Done in finally so disk leaks can't survive a controller throwing.
-                cleanupSpooledBody(request);
+                // Done in finally so disk leaks can't survive a controller throwing — except when
+                // the controller suspended (PF-46): the resumed invocation needs to re-read the
+                // body, so cleanup is deferred to the terminal run() that completes or fails.
+                if (!suspended) {
+                    cleanupSpooledBody(request);
+                }
                 if (Logger.isTraceEnabled()) {
                     Logger.trace("run: end");
                 }
@@ -1000,6 +1027,14 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
         message.headers().set(HttpHeaderNames.CONTENT_LENGTH, String.valueOf(contentLength));
     }
 
+    /**
+     * PF-40: queue raw body bytes for streaming responses with {@code Transfer-Encoding: chunked}.
+     * Netty 4's {@code HttpResponseEncoder} adds the chunk-framing (size in hex + CRLF wrappers)
+     * itself when the response is in chunked state, and the trailing {@code 0\r\n\r\n} is emitted
+     * by {@code LastHttpContent.EMPTY_LAST_CONTENT}. The Netty 3 implementation pre-encoded the
+     * frames manually because the old encoder did not — that double-encodes under Netty 4 and
+     * produces a malformed wire stream. This class now stores raw bytes only.
+     */
     static class LazyChunkedInput implements ChunkedInput<ByteBuf> {
 
         private final ConcurrentLinkedQueue<byte[]> nextChunks = new ConcurrentLinkedQueue<>();
@@ -1031,9 +1066,8 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
 
         @Override
         public void close() throws Exception {
-            if (!closed) {
-                nextChunks.offer("0\r\n\r\n".getBytes());
-            }
+            // No need to enqueue a chunked-terminator (0\r\n\r\n); LastHttpContent.EMPTY_LAST_CONTENT
+            // queued by copyResponse() drives the encoder to emit it.
             closed = true;
         }
 
@@ -1060,13 +1094,13 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
                 bytes = message.getBytes(Response.current().encoding);
             }
 
-            ByteArrayOutputStream byteStream = new ByteArrayOutputStream();
-            byteStream.write(Integer.toHexString(bytes.length).getBytes());
-            byte[] crlf = new byte[] { (byte) '\r', (byte) '\n' };
-            byteStream.write(crlf);
-            byteStream.write(bytes);
-            byteStream.write(crlf);
-            nextChunks.offer(byteStream.toByteArray());
+            // Skip empty payloads — an empty chunk would round-trip as 0\r\n\r\n through the
+            // encoder and prematurely terminate the chunked response.
+            if (bytes.length == 0) {
+                return;
+            }
+
+            nextChunks.offer(bytes);
         }
     }
 
@@ -1146,6 +1180,15 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
         handshaker.handshake(ctx.channel(), req);
         ctx.channel().attr(WS_HANDSHAKER).set(handshaker);
 
+        // PF-38: install Netty's frame aggregator immediately after the WS frame codec so the
+        // controller receives reassembled Text/BinaryWebSocketFrames instead of an initial
+        // fragment followed by silently-dropped ContinuationWebSocketFrames. maxFrame here caps
+        // the *aggregated* message size; reuse the handshake max so a configured
+        // play.netty.maxContentLength applies symmetrically to single and fragmented messages.
+        if (ctx.pipeline().get("ws-aggregator") == null) {
+            ctx.pipeline().addBefore(ctx.name(), "ws-aggregator", new WebSocketFrameAggregator(maxFrame));
+        }
+
         final Http.Inbound inbound = new Http.Inbound(new play.libs.NettyPlayChannel(ctx)) {
             @Override
             public boolean isOpen() {
@@ -1203,9 +1246,19 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
             // thread) mutates closeTask under the same monitor as close() / isOpen() /
             // futureClose(). Java synchronized methods lock on the instance's monitor;
             // reentrant when onRedeem fires inline from close().
+            // PF-39: emit a CloseWebSocketFrame with status 1000 (Normal Closure) before
+            // closing the TCP connection. Without it, peers observe status 1006 (Abnormal
+            // Closure) and may trigger reconnect-on-error logic. Use the handshaker.close()
+            // helper so the framing is RFC 6455 compliant; fall back to a plain disconnect
+            // if the handshaker is missing (channel already torn down).
             synchronized void finalizeClose() {
                 writeFutures.clear();
-                ctx.channel().disconnect();
+                WebSocketServerHandshaker hs = ctx.channel().attr(WS_HANDSHAKER).get();
+                if (hs != null && ctx.channel().isOpen()) {
+                    hs.close(ctx.channel(), new CloseWebSocketFrame(WebSocketCloseStatus.NORMAL_CLOSURE));
+                } else {
+                    ctx.channel().disconnect();
+                }
                 closeTask = null;
             }
 
@@ -1248,10 +1301,12 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
             return;
         }
 
-        // Continuation frames: not currently reassembled by Play. Most simple text/binary
-        // messages fit in a single frame; multi-frame messages are a separate enhancement.
+        // PF-38: continuation frames are reassembled by WebSocketFrameAggregator (installed in
+        // websocketHandshake), so by the time a frame reaches us it's a complete Text/Binary
+        // message. Anything still landing here as a Continuation indicates the aggregator is
+        // missing — drop it loudly rather than silently corrupting the stream.
         if (frame instanceof ContinuationWebSocketFrame) {
-            Logger.warn("WebSocket continuation frames are not currently reassembled by Play");
+            Logger.warn("Unexpected ContinuationWebSocketFrame past aggregator; pipeline misconfigured");
             return;
         }
         if (frame instanceof BinaryWebSocketFrame) {

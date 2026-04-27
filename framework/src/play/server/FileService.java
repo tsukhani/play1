@@ -77,11 +77,17 @@ public class FileService {
                         MimeTypes.getContentType(localFile.getName(), "text/plain"),
                         channel, nettyRequest, nettyResponse);
                 if (channel.isOpen()) {
+                    // PF-41: write the body without a flush, then writeAndFlush the trailer. The
+                    // single trailing flush is the future we attach the keep-alive close listener to,
+                    // so the channel is not closed before the chunked body has drained.
                     channel.write(nettyResponse);
-                    writeFuture = channel.writeAndFlush(chunkedInput);
-                    // After the chunked body, send LastHttpContent so the encoder finalises the message.
-                    channel.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT);
+                    channel.write(chunkedInput);
+                    writeFuture = channel.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT);
                 } else {
+                    // PF-42: chunkedInput owns the RandomAccessFile via ChunkedFile / ByteRangeInput;
+                    // closing the input also closes the file. Without this, the RAF leaks every
+                    // request that reaches FileService after a client disconnect.
+                    try { chunkedInput.close(); } catch (Throwable ignored) {}
                     Logger.debug("Try to write on a closed channel[keepAlive:%s]: Remote host may have closed the connection",
                             String.valueOf(isKeepAlive));
                 }
@@ -128,6 +134,10 @@ public class FileService {
         ByteRange[] byteRanges;
         int currentByteRange = 0;
         String contentType;
+
+        // PF-52: tracks how many bytes of the closing multipart boundary we've already written.
+        // Only consulted when byteRanges.length > 1.
+        int closingBoundaryWritten = 0;
 
         boolean unsatisfiable = false;
 
@@ -191,6 +201,14 @@ public class FileService {
                         currentByteRange++;
                     }
                 }
+                // PF-52: after the last part body, append the multipart closing boundary so the
+                // response is a well-formed multipart/byteranges document.
+                if (count < chunkSize && byteRanges.length > 1 && currentByteRange >= byteRanges.length) {
+                    byte[] closing = closingBoundaryBytes();
+                    while (count < chunkSize && closingBoundaryWritten < closing.length) {
+                        buffer[count++] = closing[closingBoundaryWritten++];
+                    }
+                }
                 if (count == 0) {
                     return null;
                 }
@@ -205,7 +223,22 @@ public class FileService {
 
         @Override
         public boolean isEndOfInput() throws Exception {
-            return !(currentByteRange < byteRanges.length && byteRanges[currentByteRange].remaining() > 0);
+            // PF-47: byteRanges can be empty when initRanges() failed to parse a malformed
+            // Range header (e.g. "bytes=abc-def" or a missing "bytes=" prefix). Treat that as
+            // "no more input" instead of dereferencing a null/zero-length array.
+            if (byteRanges == null) {
+                return true;
+            }
+            if (currentByteRange < byteRanges.length
+                    && byteRanges[currentByteRange].remaining() > 0) {
+                return false;
+            }
+            // PF-52: in multi-range mode, we still owe the closing boundary bytes.
+            if (byteRanges.length > 1 && currentByteRange >= byteRanges.length
+                    && closingBoundaryWritten < closingBoundaryBytes().length) {
+                return false;
+            }
+            return true;
         }
 
         @Override
@@ -219,6 +252,11 @@ public class FileService {
             if (byteRanges != null) {
                 for (ByteRange range : byteRanges) {
                     total += range.computeTotalLength();
+                }
+                // PF-52: include the multipart closing boundary "\r\n--<sep>--\r\n" so
+                // Content-Length matches what fill() actually emits in multi-range mode.
+                if (byteRanges.length > 1) {
+                    total += closingBoundaryBytes().length;
                 }
             }
             return total;
@@ -235,6 +273,9 @@ public class FileService {
                     ByteRange r = byteRanges[currentByteRange];
                     served += r.servedHeader + r.servedRange;
                 }
+                if (byteRanges.length > 1) {
+                    served += closingBoundaryWritten;
+                }
             }
             return served;
         }
@@ -245,19 +286,48 @@ public class FileService {
 
         private void initRanges() {
             try {
-                String headerValue = request.headers().get("range").trim().substring("bytes=".length());
+                String header = request.headers().get("range");
+                if (header == null) {
+                    // PF-47: ByteRangeInput was constructed only when accepts() said yes, so this
+                    // branch is defensive — but if it ever fires (e.g. concurrent header mutation),
+                    // we must not NPE.
+                    unsatisfiable = true;
+                    this.byteRanges = new ByteRange[0];
+                    return;
+                }
+                String trimmed = header.trim();
+                if (!trimmed.startsWith("bytes=")) {
+                    // PF-47: the spec requires "bytes=" prefix (RFC 7233 §3.1). Without it,
+                    // the substring below would throw and the original code would set
+                    // unsatisfiable=true but leave byteRanges null — causing NPEs later.
+                    unsatisfiable = true;
+                    this.byteRanges = new ByteRange[0];
+                    return;
+                }
+                String headerValue = trimmed.substring("bytes=".length());
                 String[] rangesValues = headerValue.split(",");
                 ArrayList<long[]> ranges = new ArrayList<>(rangesValues.length);
                 for (String rangeValue : rangesValues) {
+                    rangeValue = rangeValue.trim();
+                    if (rangeValue.isEmpty()) continue;
                     long start, end;
                     if (rangeValue.startsWith("-")) {
+                        // RFC 7233 §2.1: "-N" means the *last N bytes*, i.e. [fileLength-N,
+                        // fileLength-1]. PF-48: previous code computed fileLength-1-N, which is
+                        // off by one (returned N+1 bytes).
+                        long suffix = Long.parseLong(rangeValue.substring(1));
+                        if (suffix <= 0) continue;
+                        if (suffix > fileLength) suffix = fileLength;
+                        start = fileLength - suffix;
                         end = fileLength - 1;
-                        start = fileLength - 1 - Long.parseLong(rangeValue.substring("-".length()));
                     } else {
-                        String[] range = rangeValue.split("-");
+                        String[] range = rangeValue.split("-", -1);
                         start = Long.parseLong(range[0]);
-                        end = range.length > 1 ? Long.parseLong(range[1]) : fileLength - 1;
+                        end = range.length > 1 && !range[1].isEmpty()
+                                ? Long.parseLong(range[1])
+                                : fileLength - 1;
                     }
+                    if (start < 0) continue;
                     if (end > fileLength - 1) {
                         end = fileLength - 1;
                     }
@@ -279,6 +349,9 @@ public class FileService {
                 if (Logger.isDebugEnabled())
                     Logger.debug(e, "byterange error");
                 unsatisfiable = true;
+                // PF-47: callers (isEndOfInput, length, progress, fill) deref byteRanges; ensure
+                // it's never null after the constructor returns.
+                this.byteRanges = new ByteRange[0];
             }
         }
 
@@ -311,11 +384,20 @@ public class FileService {
             return result.toArray(new long[0][]);
         }
 
+        // PF-52: each part begins with a leading CRLF (which doubles as the trailing CRLF of the
+        // previous part body), then the boundary line, the part headers, and a blank line. This
+        // matches RFC 7233 Appendix A. The previous version (a) misnamed the header as
+        // "ContentRange" and (b) emitted no separator between successive part bodies, both of
+        // which produced unparseable multipart/byteranges.
         private static String makeRangeBodyHeader(String separator, String contentType, long start, long end, long fileLength) {
-            return "--" + separator + "\r\n" +
+            return "\r\n--" + separator + "\r\n" +
                     "Content-Type: " + contentType + "\r\n" +
-                    "ContentRange: bytes " + start + "-" + end + "/" + fileLength + "\r\n" +
+                    "Content-Range: bytes " + start + "-" + end + "/" + fileLength + "\r\n" +
                     "\r\n";
+        }
+
+        private static byte[] closingBoundaryBytes() {
+            return ("\r\n--" + DEFAULT_SEPARATOR + "--\r\n").getBytes();
         }
 
         private class ByteRange {

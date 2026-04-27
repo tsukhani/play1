@@ -2,7 +2,7 @@ h1. Play 1.12.0 -- Release notes
 
 Play 1.12.0 is a major release whose headline change is a complete migration of the server transport layer from Netty 3.10.6.Final (June 2016, EOL) to Netty 4.2.12.Final. This brings the framework onto the line of Netty that the JVM ecosystem actively maintains (gRPC-Java, Vert.x, Reactor Netty, Elasticsearch all run on 4.x), closes known unpatched CVEs in the 3.x line (HTTP request smuggling, header validation), and unlocks the Netty 4.2 HTTP/2 codec for future work.
 
-The migration was tracked by epic *PF-3* and broken into staged tickets: PF-30 (umbrella) → PF-31 (dep swap + non-WebSocket HTTP) → PF-32 (large-body disk-spooling) → PF-33 (WebSocket migration + retire deprecated ctors) → PF-34/35/36 (post-migration audit fixes).
+The migration was tracked by epic *PF-3* and broken into staged tickets: PF-30 (umbrella) → PF-31 (dep swap + non-WebSocket HTTP) → PF-32 (large-body disk-spooling) → PF-33 (WebSocket migration + retire deprecated ctors) → PF-34/35/36 (initial audit ship-blockers) → PF-37 through PF-53 (full post-migration audit + external Codex review).
 
 h2. Breaking changes
 
@@ -53,16 +53,6 @@ h3. Removed classes
 * @play.server.FlashPolicyHandler@ — Flash EOL December 2020
 * @play.server.FileChannelBuffer@ — was a Netty 3 @ChannelBuffer@ wrapper; replaced by the spool-file flow inside the new @StreamChunkAggregator@
 
-h2. Known limitations
-
-h3. WebSocket continuation frames not currently reassembled
-
-Fragmented WebSocket messages (a @TextWebSocketFrame@ or @BinaryWebSocketFrame@ with @isFinalFragment=false@ followed by N @ContinuationWebSocketFrame@) deliver only the initial fragment to the controller; continuations are logged and dropped. Tracked under the post-migration audit; will be addressed by installing Netty's built-in @WebSocketFrameAggregator@ in a follow-up release. Most simple text/binary messages fit in a single frame, but large messages (>64 KB) from compliant clients may be silently truncated until that fix lands.
-
-h3. Server-initiated WebSocket close emits status 1006
-
-The current implementation calls @ctx.channel().disconnect()@ without sending a @CloseWebSocketFrame@ first; clients observe status 1006 ("Abnormal Closure") rather than 1000 ("Normal Closure"). Tracked under the post-migration audit. Functionally a graceful close, but it triggers reconnect-on-error logic in some clients.
-
 h2. What's new in Play 1.12.0
 
 * *PF-30 / PF-31 / PF-32 / PF-33*: Migrate server transport from Netty 3.10.6.Final to Netty 4.2.12.Final
@@ -73,23 +63,36 @@ h2. What's new in Play 1.12.0
 
 h2. What's fixed in Play 1.12.0 (post-migration audit)
 
-The migration shipped a multi-agent code review that surfaced ten findings; three were ship-blockers and were fixed before release (PF-34/35/36). The remaining seven are tracked as follow-ups under epic PF-3 (PF-37 through PF-43).
+The migration shipped a multi-agent code review and an external Codex review that together surfaced twenty findings. All twenty have been fixed in 1.12.0.
+
+Audit ship-blockers (fixed first):
 
 * *PF-34*: Fix WebSocket @Http.Outbound.close()@ / @futureClose()@ data race — the EventLoop callback now synchronises on the same monitor as @close()@ and @isOpen()@, eliminating a JMM hazard where the close promise could be silently skipped
 * *PF-35*: Fix @ByteBuf@ leak in @serve500@ — three call sites previously allocated an @Unpooled.copiedBuffer@ that was never released; now use the @byte[]@ overload of @writeBytes@ directly
 * *PF-36*: Fix HEAD requests on error paths sending a body — RFC 7230 §3.3.2 violation; @serve404@, @serve500@, and @serveStatic@ error fallback now respect HEAD by passing @Unpooled.EMPTY_BUFFER@ as response content while preserving @Content-Length@
 
-h2. Out of scope (deferred follow-ups)
+Internal audit follow-ups:
 
-Tracked under epic PF-3:
+* *PF-37*: @StreamChunkAggregator@ now strips only the @chunked@ token from @Transfer-Encoding@; coexisting codings such as @gzip@ are preserved so the controller can still decode the body
+* *PF-38*: Install Netty's @WebSocketFrameAggregator@ after the handshake so fragmented messages are reassembled before reaching the controller
+* *PF-39*: Server-initiated close now writes a @CloseWebSocketFrame@ with status 1000 ("Normal Closure") via the handshaker before disconnecting; peers no longer see 1006
+* *PF-40*: @LazyChunkedInput@ now stores raw bytes; the previous Netty 3-style manual chunk-encoding double-wrapped frames under Netty 4's @HttpResponseEncoder@. The terminator is now emitted by @LastHttpContent.EMPTY_LAST_CONTENT@
+* *PF-41*: @FileService@ now writes the body without a flush, then writeAndFlush the @LastHttpContent@; the keep-alive close listener attaches to the trailer's future so the channel is not closed before the chunked body has drained
+* *PF-42*: @FileService@ closes the @ChunkedInput@ (which owns the @RandomAccessFile@) when the channel was already closed before the write started, eliminating a per-request RAF leak under client-disconnect
+* *PF-43*: @PlayHandler.staticPathsCache@ migrated to @ConcurrentHashMap@; the previous unsynchronized @containsKey@ raced with the worker-thread @put@ on the @RenderStatic@ catch path
 
-* *PF-37*: @StreamChunkAggregator@ TE-stripping breaks @gzip, chunked@ — only @chunked@ should be stripped
-* *PF-38*: WebSocket continuation frames silently dropped (see Known limitations)
-* *PF-39*: Server-initiated close emits 1006 instead of 1000 (see Known limitations)
-* *PF-40*: @LazyChunkedInput@ may double-encode chunked transfer-encoding (needs wire-level test to confirm)
-* *PF-41*: @FileService@ keep-alive close listener attached to wrong future + double flush
-* *PF-42*: @FileService@ leaks a @RandomAccessFile@ when channel is closed before write begins
-* *PF-43*: @PlayHandler.staticPathsCache@ @HashMap@ data race in PROD mode
+External Codex review fixes:
+
+* *PF-44*: 413 oversize rejections now delete the partial spool file before clearing the reference; the @cleanupSpool()@ helper deliberately does not delete (the success path transfers ownership), so the rejection path needed an explicit unlink
+* *PF-45*: Plugin @rawInvocation@ paths now run @cleanupSpooledBody@ themselves; previously this only ran inside @NettyInvocation@, leaking one temp file per upload that hit the spool threshold whenever a plugin short-circuited the controller
+* *PF-46*: Suspended requests defer spool cleanup until the resumed @run()@ completes — a new @suspended@ flag set in the @suspend()@ override and reset at the start of every @run()@ keeps the body alive across the suspend/resume boundary
+* *PF-47*: Malformed @Range@ headers (missing @bytes=@ prefix, non-numeric values, etc.) no longer NPE inside @ChunkedWriteHandler@; @ByteRangeInput@ now initialises @byteRanges@ to an empty array on parse failure and @isEndOfInput()@ guards against null
+* *PF-48*: Suffix-range parsing (e.g. @Range: bytes=-N@) is fixed; the previous formula returned @N+1@ bytes (off by one). Now correctly returns the last @N@ bytes
+* *PF-49*: @HttpServerPipelineFactory.classes@ migrated to @ConcurrentHashMap@; the previous shared @HashMap.computeIfAbsent@ raced under concurrent @initChannel@ calls
+* *PF-50*: Pipeline FQCNs from @play.netty.pipeline@ / @play.ssl.netty.pipeline@ are now trimmed before @Class.forName@; previously a leading space (e.g. after a comma) killed pipeline construction
+* *PF-51*: PEM SSL trust manager now passes a @load(null, null)@-initialised empty keystore to @TrustManagerFactory.init()@; the previous uninitialised keystore threw @KeyStoreException@ on JDK 17+
+* *PF-52*: @multipart/byteranges@ responses now emit a properly-formatted document — fixed the @Content-Range@ header (was @ContentRange@), added inter-part CRLF separators, and emitted the closing @--boundary--@ delimiter
+* *PF-53*: @configuration.textile@ now documents @play.netty.maxContentLength@ (semantic change), @play.netty.spoolThresholdBytes@ (new), and the @play.threads.virtual.*@ family
 
 h2. Performance and operational notes
 
@@ -109,9 +112,9 @@ h2. Verification
 
 This release was verified by:
 
-* @ant clean unittest@: 295/295 tests pass
+* @ant clean unittest@: 299/299 tests pass
 * Manual smoke gates: HTTP GET, small in-memory POST, large (5 MB) spooled POST, WebSocket handshake + ping/pong/text/binary frame round-trip, sustained load (5,200 hits) under @-Dio.netty.leakDetection.level=PARANOID@ with zero @LEAK:@ markers
-* Multi-agent post-migration code audit (refcount, concurrency, protocol, performance, API/test-coverage) — ten findings, three ship-blockers fixed (PF-34/35/36), seven follow-ups tracked
+* Multi-agent post-migration code audit (refcount, concurrency, protocol, performance, API/test-coverage) plus external Codex review — twenty findings total, all addressed in this release
 
 h2. Upgrade checklist
 
