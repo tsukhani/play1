@@ -392,17 +392,34 @@
         <delete dir="test-classes" />
     </target>
 
-    <target name="unittest" depends="compile-unittest">
+    <target name="agent-jar" depends="version,compile">
+        <echo message="${version}" file="src/play/version" />
+        <echo message="${version}" file="classes/play/version" />
+        <jar destfile="play-${version}.jar" basedir="classes">
+            <manifest>
+                <attribute name="Premain-Class" value="play.classloading.HotswapAgent"/>
+                <attribute name="Can-Redefine-Classes" value="true" />
+            </manifest>
+        </jar>
+    </target>
+
+    <target name="unittest" depends="version,agent-jar,compile-unittest">
+        <mkdir dir="${basedir}/tests-tmp" />
         <junitlauncher haltonfailure="false" failureproperty="junit.failure" printSummary="true">
             <classpath refid="classpath.test" />
             <testclasses>
                 <fileset dir="test-classes" includes="**/*Test.class" excludes="integration/*Test.class" />
+                <fork>
+                    <jvmarg value="-javaagent:${basedir}/play-${version}.jar" />
+                    <sysproperty key="tests-tmp" value="${basedir}/tests-tmp" />
+                </fork>
             </testclasses>
             <classpath>
                 <pathelement location="test-classes"/>
                 <path refid="classpath.test"/>
             </classpath>
         </junitlauncher>
+        <delete dir="${basedir}/tests-tmp" />
         <fail if="junit.failure" message="Unit test(s) failed. See reports!"/>
     </target>
 
