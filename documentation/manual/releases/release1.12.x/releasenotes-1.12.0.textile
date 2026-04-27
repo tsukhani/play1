@@ -1,0 +1,123 @@
+h1. Play 1.12.0 -- Release notes
+
+Play 1.12.0 is a major release whose headline change is a complete migration of the server transport layer from Netty 3.10.6.Final (June 2016, EOL) to Netty 4.2.12.Final. This brings the framework onto the line of Netty that the JVM ecosystem actively maintains (gRPC-Java, Vert.x, Reactor Netty, Elasticsearch all run on 4.x), closes known unpatched CVEs in the 3.x line (HTTP request smuggling, header validation), and unlocks the Netty 4.2 HTTP/2 codec for future work.
+
+The migration was tracked by epic *PF-3* and broken into staged tickets: PF-30 (umbrella) → PF-31 (dep swap + non-WebSocket HTTP) → PF-32 (large-body disk-spooling) → PF-33 (WebSocket migration + retire deprecated ctors) → PF-34/35/36 (post-migration audit fixes).
+
+h2. Breaking changes
+
+h3. Public API: ChannelHandlerContext-typed constructors removed
+
+The deprecated Netty-typed constructors on @play.mvc.Http.Inbound@ and @play.libs.F.BlockingEventStream@ (marked @@Deprecated@ in PF-30 Phase 1) have been removed:
+
+* @Http.Inbound(ChannelHandlerContext)@ — removed
+* @F.BlockingEventStream(ChannelHandlerContext)@ — removed
+* @F.BlockingEventStream(int, ChannelHandlerContext)@ — removed
+
+*Migration path* for apps that subclass @Http.Inbound@ or use @BlockingEventStream@ directly:
+
+bc. // Before (Play 1.11.x and earlier):
+new Http.Inbound(ctx) { ... }   // ctx was an org.jboss.netty.channel.ChannelHandlerContext
+
+// After (Play 1.12.x):
+new Http.Inbound(playChannel) { ... }   // playChannel is a play.libs.PlayChannel
+
+Most apps don't construct @Http.Inbound@ directly — the framework gives you one via @Http.Inbound.current()@ or as a controller method param. Those apps are unaffected. Apps that wrote test fakes for @Http.Inbound@ should switch to the @PlayChannel@-typed ctor.
+
+h3. Pipeline configuration: handler class names changed
+
+The default value of @play.netty.pipeline@ and @play.ssl.netty.pipeline@ now uses Netty 4 class names. If your @application.conf@ sets either property explicitly, update the FQCNs:
+
+* @org.jboss.netty.handler.codec.http.HttpRequestDecoder@ → @io.netty.handler.codec.http.HttpRequestDecoder@
+* @org.jboss.netty.handler.codec.http.HttpResponseEncoder@ → @io.netty.handler.codec.http.HttpResponseEncoder@
+* @org.jboss.netty.handler.codec.http.HttpContentCompressor@ → @io.netty.handler.codec.http.HttpContentCompressor@
+* @org.jboss.netty.handler.stream.ChunkedWriteHandler@ → @io.netty.handler.stream.ChunkedWriteHandler@
+* @play.server.FlashPolicyHandler@ → *removed* (Adobe Flash EOL since December 2020)
+* @play.server.StreamChunkAggregator@ → unchanged (rewritten for Netty 4 message model)
+
+h3. @play.netty.maxContentLength@ semantic change
+
+In 1.11.x this property was a per-chunk size cap inside @HttpChunkAggregator@. In 1.12.x it is a *hard request-body cap*: requests above the cap are rejected with *413 Request Entity Too Large* and the connection is closed. Default is @-1@ (unlimited). Set it explicitly if you want to enforce a per-deployment limit.
+
+h3. New configuration: @play.netty.spoolThresholdBytes@
+
+Bodies smaller than this threshold are aggregated in memory; bodies above it are spooled to a temp file under @Play.tmpDir@. Default 1 MB. Tuning guidance:
+
+* Upload-heavy workloads (concurrent file uploads): drop to 64 KB to cap heap pressure
+* Low-concurrency JSON APIs: raise to 4 MB if you want to keep more in memory
+
+The temp file is cleaned up automatically when the request completes (success or exception); on connection drop mid-upload, the partial file is deleted by the aggregator's @channelInactive@ handler.
+
+h3. Removed classes
+
+* @play.server.FlashPolicyHandler@ — Flash EOL December 2020
+* @play.server.FileChannelBuffer@ — was a Netty 3 @ChannelBuffer@ wrapper; replaced by the spool-file flow inside the new @StreamChunkAggregator@
+
+h2. Known limitations
+
+h3. WebSocket continuation frames not currently reassembled
+
+Fragmented WebSocket messages (a @TextWebSocketFrame@ or @BinaryWebSocketFrame@ with @isFinalFragment=false@ followed by N @ContinuationWebSocketFrame@) deliver only the initial fragment to the controller; continuations are logged and dropped. Tracked under the post-migration audit; will be addressed by installing Netty's built-in @WebSocketFrameAggregator@ in a follow-up release. Most simple text/binary messages fit in a single frame, but large messages (>64 KB) from compliant clients may be silently truncated until that fix lands.
+
+h3. Server-initiated WebSocket close emits status 1006
+
+The current implementation calls @ctx.channel().disconnect()@ without sending a @CloseWebSocketFrame@ first; clients observe status 1006 ("Abnormal Closure") rather than 1000 ("Normal Closure"). Tracked under the post-migration audit. Functionally a graceful close, but it triggers reconnect-on-error logic in some clients.
+
+h2. What's new in Play 1.12.0
+
+* *PF-30 / PF-31 / PF-32 / PF-33*: Migrate server transport from Netty 3.10.6.Final to Netty 4.2.12.Final
+* *PF-32*: New @play.netty.spoolThresholdBytes@ config to control in-memory vs disk-spooled body aggregation
+* *PF-33*: WebSocket per-channel state moved from a static @Map<ChannelHandlerContext, Inbound>@ to Netty 4 @AttributeKey@ — better GC behaviour and no static-map accumulation
+* *PF-31*: @ant unittest@ target gained a @-javaagent@ + tests-tmp fork so it actually exercises the framework's bytecode-instrumentation agent (previously broken; many tests reported false failures)
+* *PF-31*: New @agent-jar@ Ant target builds the agent jar without the heavyweight clean+modules cycle, speeding up local test iteration
+
+h2. What's fixed in Play 1.12.0 (post-migration audit)
+
+The migration shipped a multi-agent code review that surfaced ten findings; three were ship-blockers and were fixed before release (PF-34/35/36). The remaining seven are tracked as follow-ups under epic PF-3 (PF-37 through PF-43).
+
+* *PF-34*: Fix WebSocket @Http.Outbound.close()@ / @futureClose()@ data race — the EventLoop callback now synchronises on the same monitor as @close()@ and @isOpen()@, eliminating a JMM hazard where the close promise could be silently skipped
+* *PF-35*: Fix @ByteBuf@ leak in @serve500@ — three call sites previously allocated an @Unpooled.copiedBuffer@ that was never released; now use the @byte[]@ overload of @writeBytes@ directly
+* *PF-36*: Fix HEAD requests on error paths sending a body — RFC 7230 §3.3.2 violation; @serve404@, @serve500@, and @serveStatic@ error fallback now respect HEAD by passing @Unpooled.EMPTY_BUFFER@ as response content while preserving @Content-Length@
+
+h2. Out of scope (deferred follow-ups)
+
+Tracked under epic PF-3:
+
+* *PF-37*: @StreamChunkAggregator@ TE-stripping breaks @gzip, chunked@ — only @chunked@ should be stripped
+* *PF-38*: WebSocket continuation frames silently dropped (see Known limitations)
+* *PF-39*: Server-initiated close emits 1006 instead of 1000 (see Known limitations)
+* *PF-40*: @LazyChunkedInput@ may double-encode chunked transfer-encoding (needs wire-level test to confirm)
+* *PF-41*: @FileService@ keep-alive close listener attached to wrong future + double flush
+* *PF-42*: @FileService@ leaks a @RandomAccessFile@ when channel is closed before write begins
+* *PF-43*: @PlayHandler.staticPathsCache@ @HashMap@ data race in PROD mode
+
+h2. Performance and operational notes
+
+h3. Boot-time bind failures are now loud
+
+In 1.11.x, a port-already-in-use bind failure could pass silently in some configurations. 1.12.0's @ServerBootstrap.bind(addr).syncUninterruptibly()@ produces a clean stack trace pointing at @Server.<init>@. If you previously relied on Play silently falling through on bind conflicts, that no longer happens.
+
+h3. Refcount discipline
+
+Netty 4 reference-counted @ByteBuf@s are the framework's biggest behavioural change. Direct memory leaks are the #1 source of subtle Netty 4 production bugs. We recommend running production-equivalent load tests under @-Dio.netty.leakDetection.level=PARANOID@ before promoting to PROD; this is the gate that surfaces missed @release()@ calls.
+
+h3. Threading model
+
+The Netty event loop ↔ virtual threads boundary is unchanged. Virtual threads remain opt-in via @play.threads.virtual=true@; the migration did not modify the @Invoker@ or its handoff seam.
+
+h2. Verification
+
+This release was verified by:
+
+* @ant clean unittest@: 295/295 tests pass
+* Manual smoke gates: HTTP GET, small in-memory POST, large (5 MB) spooled POST, WebSocket handshake + ping/pong/text/binary frame round-trip, sustained load (5,200 hits) under @-Dio.netty.leakDetection.level=PARANOID@ with zero @LEAK:@ markers
+* Multi-agent post-migration code audit (refcount, concurrency, protocol, performance, API/test-coverage) — ten findings, three ship-blockers fixed (PF-34/35/36), seven follow-ups tracked
+
+h2. Upgrade checklist
+
+# Audit your @application.conf@ for explicit @play.netty.pipeline@ / @play.ssl.netty.pipeline@ values that reference @org.jboss.netty.*@ class names — update FQCNs to @io.netty.*@
+# Remove any reference to @play.server.FlashPolicyHandler@ (deleted)
+# If your code subclasses @Http.Inbound@ or constructs @F.BlockingEventStream@ with a @ChannelHandlerContext@, migrate to the @PlayChannel@-typed ctor
+# Decide whether to set @play.netty.maxContentLength@ explicitly (it now hard-rejects with 413 instead of being a chunk-size cap)
+# Optionally tune @play.netty.spoolThresholdBytes@ for your workload pattern
+# Run your test suite under @-Dio.netty.leakDetection.level=PARANOID@ to catch any application-side @ByteBuf@ refcount issues

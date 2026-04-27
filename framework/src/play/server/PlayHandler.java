@@ -711,9 +711,12 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
         try {
             String errorHtml = TemplateLoader.load("errors/404." + format).render(binding);
             byte[] bytes = errorHtml.getBytes(Response.current().encoding);
-            ByteBuf buf = Unpooled.copiedBuffer(bytes);
+            // RFC 7230 §3.3.2: HEAD response must not include a body, but Content-Length should
+            // still reflect what the equivalent GET would return.
+            boolean isHead = nettyRequest.method().equals(HttpMethod.HEAD);
+            ByteBuf body = isHead ? Unpooled.EMPTY_BUFFER : Unpooled.copiedBuffer(bytes);
             FullHttpResponse nettyResponse = new DefaultFullHttpResponse(
-                    HttpVersion.HTTP_1_1, HttpResponseStatus.NOT_FOUND, buf);
+                    HttpVersion.HTTP_1_1, HttpResponseStatus.NOT_FOUND, body);
             if (exposePlayServer) {
                 nettyResponse.headers().set(SERVER, signature);
             }
@@ -763,6 +766,9 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
             nettyResponse.headers().set(SERVER, signature);
         }
 
+        // RFC 7230 §3.3.2: skip body bytes for HEAD requests (Content-Length still set).
+        final boolean isHead = nettyRequest.method().equals(HttpMethod.HEAD);
+
         Request request = Request.current();
         Response response = Response.current();
 
@@ -808,9 +814,10 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
                 String errorHtml = TemplateLoader.load("errors/500." + format).render(binding);
 
                 byte[] bytes = errorHtml.getBytes(encoding);
-                ByteBuf buf =Unpooled.copiedBuffer(bytes);
                 setContentLength(nettyResponse, bytes.length);
-                nettyResponse.content().clear().writeBytes(buf);
+                if (!isHead) {
+                    nettyResponse.content().clear().writeBytes(bytes);
+                }
                 ChannelFuture writeFuture = ctx.channel().writeAndFlush(nettyResponse);
                 writeFuture.addListener(ChannelFutureListener.CLOSE);
                 Logger.error(e, "Internal Server Error (500) for request %s", request.method + " " + request.url);
@@ -820,9 +827,10 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
                 try {
                     String errorHtml = generateStaticErrorPage(e);
                     byte[] bytes = errorHtml.getBytes(encoding);
-                    ByteBuf buf =Unpooled.copiedBuffer(bytes);
                     setContentLength(nettyResponse, bytes.length);
-                    nettyResponse.content().clear().writeBytes(buf);
+                    if (!isHead) {
+                        nettyResponse.content().clear().writeBytes(bytes);
+                    }
                     ChannelFuture writeFuture = ctx.channel().writeAndFlush(nettyResponse);
                     writeFuture.addListener(ChannelFutureListener.CLOSE);
                 } catch (UnsupportedEncodingException fex) {
@@ -833,9 +841,10 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
             try {
                 String errorHtml = "Internal Error (check logs)";
                 byte[] bytes = errorHtml.getBytes(encoding);
-                ByteBuf buf =Unpooled.copiedBuffer(bytes);
                 setContentLength(nettyResponse, bytes.length);
-                nettyResponse.content().clear().writeBytes(buf);
+                if (!isHead) {
+                    nettyResponse.content().clear().writeBytes(bytes);
+                }
                 ChannelFuture writeFuture = ctx.channel().writeAndFlush(nettyResponse);
                 writeFuture.addListener(ChannelFutureListener.CLOSE);
             } catch (Exception fex) {
@@ -926,9 +935,11 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
             try {
                 String errorHtml = "Internal Error (check logs)";
                 byte[] bytes = errorHtml.getBytes(response.encoding);
-                ByteBuf buf = Unpooled.copiedBuffer(bytes);
+                // RFC 7230 §3.3.2: skip body for HEAD; CL still set.
+                boolean isHead = nettyRequest.method().equals(HttpMethod.HEAD);
+                ByteBuf body = isHead ? Unpooled.EMPTY_BUFFER : Unpooled.copiedBuffer(bytes);
                 FullHttpResponse errorResponse = new DefaultFullHttpResponse(
-                        HttpVersion.HTTP_1_1, HttpResponseStatus.INTERNAL_SERVER_ERROR, buf);
+                        HttpVersion.HTTP_1_1, HttpResponseStatus.INTERNAL_SERVER_ERROR, body);
                 setContentLength(errorResponse, bytes.length);
                 ChannelFuture future = ctx.channel().writeAndFlush(errorResponse);
                 future.addListener(ChannelFutureListener.CLOSE);
@@ -1157,7 +1168,11 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
                 }
             }
 
-            void futureClose() {
+            // PF-34: synchronized so the EventLoop callback (writeAndClose's listener) reads
+            // closeTask under the same monitor as close() / isOpen() — fixes a JMM data race
+            // where the listener could observe a stale null closeTask and silently skip
+            // invoking the close promise, leaving the WebSocket connection orphaned.
+            synchronized void futureClose() {
                 if (closeTask != null && writeFutures.isEmpty()) {
                     closeTask.invoke(null);
                 }
@@ -1184,14 +1199,20 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
                 return ctx.channel().isOpen() && closeTask == null;
             }
 
+            // PF-34: synchronized helper so the onRedeem callback (which may fire from any
+            // thread) mutates closeTask under the same monitor as close() / isOpen() /
+            // futureClose(). Java synchronized methods lock on the instance's monitor;
+            // reentrant when onRedeem fires inline from close().
+            synchronized void finalizeClose() {
+                writeFutures.clear();
+                ctx.channel().disconnect();
+                closeTask = null;
+            }
+
             @Override
             public synchronized void close() {
                 closeTask = new Promise<>();
-                closeTask.onRedeem(completed -> {
-                    writeFutures.clear();
-                    ctx.channel().disconnect();
-                    closeTask = null;
-                });
+                closeTask.onRedeem(completed -> finalizeClose());
                 futureClose();
             }
         };
