@@ -11,7 +11,17 @@ import io.netty.handler.codec.http.cookie.Cookie;
 import io.netty.handler.codec.http.cookie.DefaultCookie;
 import io.netty.handler.codec.http.cookie.ServerCookieDecoder;
 import io.netty.handler.codec.http.cookie.ServerCookieEncoder;
+import io.netty.handler.codec.http.websocketx.BinaryWebSocketFrame;
+import io.netty.handler.codec.http.websocketx.CloseWebSocketFrame;
+import io.netty.handler.codec.http.websocketx.ContinuationWebSocketFrame;
+import io.netty.handler.codec.http.websocketx.PingWebSocketFrame;
+import io.netty.handler.codec.http.websocketx.PongWebSocketFrame;
+import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
 import io.netty.handler.codec.http.websocketx.WebSocketFrame;
+import io.netty.handler.codec.http.websocketx.WebSocketServerHandshaker;
+import io.netty.handler.codec.http.websocketx.WebSocketServerHandshakerFactory;
+import io.netty.buffer.ByteBufUtil;
+import io.netty.util.AttributeKey;
 import io.netty.handler.stream.ChunkedInput;
 import io.netty.handler.stream.ChunkedStream;
 import io.netty.handler.stream.ChunkedWriteHandler;
@@ -130,10 +140,9 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
                 return;
             }
 
-            // Websocket frame — stubbed in Stage A (PF-31). Restored in PF-33.
-            if (msg instanceof WebSocketFrame) {
-                Logger.warn("WebSocket frames not supported in Stage A; closing channel");
-                ctx.close();
+            // Websocket frame — dispatch to the per-channel Inbound established at handshake.
+            if (msg instanceof WebSocketFrame frame) {
+                websocketFrameReceived(ctx, frame);
                 return;
             }
         } finally {
@@ -1086,22 +1095,213 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
         }
     }
 
-    // ~~~~~~~~~~~ Websocket — Stage A (PF-31) stub.
-    // PF-33 restores the full handshake + frame handling against the Netty 4
-    // websocketx API. For now any upgrade attempt receives 501 Not Implemented.
+    // ~~~~~~~~~~~ Websocket
+    // Per-channel state stored as Netty 4 channel attributes (no static Map needed).
+    static final AttributeKey<Http.Inbound> WS_INBOUND = AttributeKey.valueOf("play.ws.inbound");
+    static final AttributeKey<WebSocketServerHandshaker> WS_HANDSHAKER = AttributeKey.valueOf("play.ws.handshaker");
+
+    private String getWebSocketLocation(FullHttpRequest req) {
+        String host = req.headers().get(HttpHeaderNames.HOST);
+        return "ws://" + (host != null ? host : "") + req.uri();
+    }
 
     private void websocketHandshake(final ChannelHandlerContext ctx, FullHttpRequest req) throws Exception {
-        Logger.warn("WebSocket request received but Stage A (PF-31) does not yet support WebSocket on Netty 4. " +
-                "Tracked by PF-33. Responding with 501.");
-        FullHttpResponse resp = new DefaultFullHttpResponse(
-                HttpVersion.HTTP_1_1, HttpResponseStatus.NOT_IMPLEMENTED, Unpooled.EMPTY_BUFFER);
-        setContentLength(resp, 0);
-        ctx.writeAndFlush(resp).addListener(ChannelFutureListener.CLOSE);
+        int maxFrame = Integer.parseInt(Play.configuration.getProperty("play.netty.maxContentLength", "65345"));
+        if (maxFrame < 0) maxFrame = 65345;
+
+        WebSocketServerHandshakerFactory wsFactory = new WebSocketServerHandshakerFactory(
+                getWebSocketLocation(req), null, false, maxFrame);
+        WebSocketServerHandshaker handshaker = wsFactory.newHandshaker(req);
+        if (handshaker == null) {
+            WebSocketServerHandshakerFactory.sendUnsupportedVersionResponse(ctx.channel());
+            return;
+        }
+
+        // Route resolution: if no route is configured for the WebSocket request, send
+        // 404 instead of completing the upgrade handshake.
+        Http.Request request = parseRequest(ctx, req);
+        request.method = "WS";
+        Map<String, String> route = Router.route(request.method, request.path);
+        if (!route.containsKey("action")) {
+            FullHttpResponse notFound = new DefaultFullHttpResponse(
+                    HttpVersion.HTTP_1_1, HttpResponseStatus.NOT_FOUND, Unpooled.EMPTY_BUFFER);
+            setContentLength(notFound, 0);
+            ctx.writeAndFlush(notFound).addListener(ChannelFutureListener.CLOSE);
+            return;
+        }
+
+        // Complete the handshake. The handshaker rewrites the pipeline: HTTP codec out,
+        // WebSocket frame codec in. After this, ctx.channelRead receives WebSocketFrame.
+        handshaker.handshake(ctx.channel(), req);
+        ctx.channel().attr(WS_HANDSHAKER).set(handshaker);
+
+        final Http.Inbound inbound = new Http.Inbound(new play.libs.NettyPlayChannel(ctx)) {
+            @Override
+            public boolean isOpen() {
+                return ctx.channel().isOpen();
+            }
+        };
+        ctx.channel().attr(WS_INBOUND).set(inbound);
+
+        final Http.Outbound outbound = new Http.Outbound() {
+            final List<ChannelFuture> writeFutures = Collections.synchronizedList(new ArrayList<ChannelFuture>());
+            Promise<Void> closeTask;
+
+            synchronized void writeAndClose(ChannelFuture writeFuture) {
+                if (!writeFuture.isDone()) {
+                    writeFutures.add(writeFuture);
+                    writeFuture.addListener(cf -> {
+                        writeFutures.remove(cf);
+                        futureClose();
+                    });
+                }
+            }
+
+            void futureClose() {
+                if (closeTask != null && writeFutures.isEmpty()) {
+                    closeTask.invoke(null);
+                }
+            }
+
+            @Override
+            public void send(String data) {
+                if (!isOpen()) {
+                    throw new IllegalStateException("The outbound channel is closed");
+                }
+                writeAndClose(ctx.writeAndFlush(new TextWebSocketFrame(data)));
+            }
+
+            @Override
+            public void send(byte opcode, byte[] data, int offset, int length) {
+                if (!isOpen()) {
+                    throw new IllegalStateException("The outbound channel is closed");
+                }
+                writeAndClose(ctx.writeAndFlush(new BinaryWebSocketFrame(Unpooled.wrappedBuffer(data, offset, length))));
+            }
+
+            @Override
+            public synchronized boolean isOpen() {
+                return ctx.channel().isOpen() && closeTask == null;
+            }
+
+            @Override
+            public synchronized void close() {
+                closeTask = new Promise<>();
+                closeTask.onRedeem(completed -> {
+                    writeFutures.clear();
+                    ctx.channel().disconnect();
+                    closeTask = null;
+                });
+                futureClose();
+            }
+        };
+
+        Logger.trace("WebSocket invoking");
+        Invoker.invoke(new WebSocketInvocation(route, request, inbound, outbound, ctx));
+    }
+
+    private void websocketFrameReceived(ChannelHandlerContext ctx, WebSocketFrame frame) {
+        // Close: ack via handshaker (which writes the close response and closes the channel).
+        if (frame instanceof CloseWebSocketFrame closeFrame) {
+            WebSocketServerHandshaker handshaker = ctx.channel().attr(WS_HANDSHAKER).get();
+            if (handshaker != null) {
+                handshaker.close(ctx.channel(), closeFrame.retain());
+            } else {
+                ctx.close();
+            }
+            return;
+        }
+        // Ping: respond with pong carrying the same payload.
+        if (frame instanceof PingWebSocketFrame) {
+            ctx.writeAndFlush(new PongWebSocketFrame(frame.content().retain()));
+            return;
+        }
+        // Pong: nothing to do.
+        if (frame instanceof PongWebSocketFrame) {
+            return;
+        }
+
+        Http.Inbound inbound = ctx.channel().attr(WS_INBOUND).get();
+        if (inbound == null) {
+            Logger.warn("WebSocket frame received with no Inbound bound; dropping");
+            return;
+        }
+
+        // Continuation frames: not currently reassembled by Play. Most simple text/binary
+        // messages fit in a single frame; multi-frame messages are a separate enhancement.
+        if (frame instanceof ContinuationWebSocketFrame) {
+            Logger.warn("WebSocket continuation frames are not currently reassembled by Play");
+            return;
+        }
+        if (frame instanceof BinaryWebSocketFrame) {
+            byte[] bytes = ByteBufUtil.getBytes(frame.content());
+            inbound._received(new Http.WebSocketFrame(bytes));
+            return;
+        }
+        if (frame instanceof TextWebSocketFrame textFrame) {
+            inbound._received(new Http.WebSocketFrame(textFrame.text()));
+        }
     }
 
     @Override
     public void channelInactive(ChannelHandlerContext ctx) throws Exception {
-        // Stage A: no per-channel WebSocket state to clean up.
+        Http.Inbound inbound = ctx.channel().attr(WS_INBOUND).getAndSet(null);
+        if (inbound != null) {
+            inbound.close();
+        }
+        ctx.channel().attr(WS_HANDSHAKER).set(null);
         super.channelInactive(ctx);
+    }
+
+    public static class WebSocketInvocation extends Invoker.Invocation {
+
+        Map<String, String> route;
+        Http.Request request;
+        Http.Inbound inbound;
+        Http.Outbound outbound;
+        ChannelHandlerContext ctx;
+
+        public WebSocketInvocation(Map<String, String> route, Http.Request request, Http.Inbound inbound,
+                Http.Outbound outbound, ChannelHandlerContext ctx) {
+            this.route = route;
+            this.request = request;
+            this.inbound = inbound;
+            this.outbound = outbound;
+            this.ctx = ctx;
+        }
+
+        @Override
+        public boolean init() {
+            Http.Request.current.set(request);
+            Http.Inbound.current.set(inbound);
+            Http.Outbound.current.set(outbound);
+            return super.init();
+        }
+
+        @Override
+        public InvocationContext getInvocationContext() {
+            WebSocketInvoker.resolve(request);
+            return new InvocationContext(Http.invocationType, request.invokedMethod.getAnnotations(),
+                    request.invokedMethod.getDeclaringClass().getAnnotations());
+        }
+
+        @Override
+        public void execute() throws Exception {
+            WebSocketInvoker.invoke(request, inbound, outbound);
+        }
+
+        @Override
+        public void onException(Throwable e) {
+            Logger.error(e, "Internal Server Error in WebSocket (closing the socket) for request %s",
+                    request.method + " " + request.url);
+            ctx.channel().close();
+            super.onException(e);
+        }
+
+        @Override
+        public void onSuccess() throws Exception {
+            outbound.close();
+            super.onSuccess();
+        }
     }
 }

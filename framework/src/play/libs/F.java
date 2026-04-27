@@ -19,8 +19,6 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
-import io.netty.channel.ChannelHandlerContext;
-
 import play.Logger;
 
 public class F {
@@ -537,25 +535,6 @@ public class F {
         final LinkedBlockingQueue<T> events;
         final List<Promise<T>> waiting = Collections.synchronizedList(new ArrayList<Promise<T>>());
         final PlayChannel channel;
-
-
-        /**
-         * @deprecated Use {@link #BlockingEventStream(PlayChannel)}. Netty types
-         *             will be removed from the public API in a future release.
-         */
-        @Deprecated
-        public BlockingEventStream(ChannelHandlerContext ctx) {
-            this(100, new NettyPlayChannel(ctx));
-        }
-
-        /**
-         * @deprecated Use {@link #BlockingEventStream(int, PlayChannel)}. Netty types
-         *             will be removed from the public API in a future release.
-         */
-        @Deprecated
-        public BlockingEventStream(int maxBufferSize, ChannelHandlerContext ctx) {
-            this(maxBufferSize, new NettyPlayChannel(ctx));
-        }
 
         public BlockingEventStream(PlayChannel channel) {
             this(100, channel);

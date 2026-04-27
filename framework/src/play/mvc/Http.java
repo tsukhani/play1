@@ -15,8 +15,6 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import io.netty.channel.ChannelHandlerContext;
-
 import com.google.gson.Gson;
 
 import play.Logger;
@@ -27,7 +25,6 @@ import play.libs.F;
 import play.libs.F.BlockingEventStream;
 import play.libs.F.Option;
 import play.libs.F.Promise;
-import play.libs.NettyPlayChannel;
 import play.libs.PlayChannel;
 import play.libs.Time;
 import play.utils.HTTP;
@@ -891,15 +888,6 @@ public class Http {
 
         public static final ThreadLocal<Inbound> current = new ThreadLocal<>();
         final BlockingEventStream<WebSocketEvent> stream;
-
-        /**
-         * @deprecated Use {@link #Inbound(PlayChannel)}. Netty types will be
-         *             removed from the public API in a future release.
-         */
-        @Deprecated
-        public Inbound(ChannelHandlerContext ctx) {
-            this(new NettyPlayChannel(ctx));
-        }
 
         public Inbound(PlayChannel channel) {
             stream = new BlockingEventStream<>(channel);
