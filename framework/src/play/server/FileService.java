@@ -163,7 +163,12 @@ public class FileService {
             nettyResponse.headers().add("Accept-Ranges", "bytes");
             if (unsatisfiable) {
                 nettyResponse.setStatus(HttpResponseStatus.REQUESTED_RANGE_NOT_SATISFIABLE);
-                nettyResponse.headers().set("Content-Range", "bytes " + 0 + "-" + (fileLength - 1) + "/" + fileLength);
+                // PF-63: per RFC 7233 §4.2 a 416 response MUST send Content-Range as
+                // "bytes */<complete-length>", not a numeric range. The previous form became
+                // "bytes 0--1/0" for empty files (start=0, end=fileLength-1=-1) which is
+                // outright invalid; for non-empty files it claimed the whole file as the
+                // unsatisfied range, which a strict cache or proxy could reject.
+                nettyResponse.headers().set("Content-Range", "bytes */" + fileLength);
                 nettyResponse.headers().set("Content-length", 0);
             } else {
                 nettyResponse.setStatus(HttpResponseStatus.PARTIAL_CONTENT);
@@ -177,6 +182,14 @@ public class FileService {
                 long length = 0;
                 for (ByteRange range : byteRanges) {
                     length += range.computeTotalLength();
+                }
+                // PF-57: include the closing boundary "\r\n--<sep>--\r\n" in the multipart
+                // content length. readChunk() emits these bytes as part of the response body,
+                // so leaving them out short-counts Content-Length and corrupts framing for the
+                // *next* response on a keep-alive connection (the trailer bytes get treated as
+                // the start of the next message).
+                if (byteRanges.length > 1) {
+                    length += closingBoundaryBytes().length;
                 }
                 nettyResponse.headers().set("Content-length", length);
             }
@@ -224,18 +237,25 @@ public class FileService {
         @Override
         public boolean isEndOfInput() throws Exception {
             // PF-47: byteRanges can be empty when initRanges() failed to parse a malformed
-            // Range header (e.g. "bytes=abc-def" or a missing "bytes=" prefix). Treat that as
-            // "no more input" instead of dereferencing a null/zero-length array.
+            // Range header. Treat as "no more input" rather than NPE on null array deref.
             if (byteRanges == null) {
                 return true;
             }
-            if (currentByteRange < byteRanges.length
-                    && byteRanges[currentByteRange].remaining() > 0) {
-                return false;
+            // PF-58: scan across every range from the current cursor to the end. The previous
+            // version checked only byteRanges[currentByteRange], which returned true if the
+            // current range happened to be empty even when later ranges still owed bytes.
+            // Concretely: a part body that fills exactly chunkSize leaves the loop in readChunk
+            // without advancing currentByteRange (the increment only fires on the *next*
+            // iteration), so isEndOfInput would observe remaining()==0 on the just-finished
+            // range and report end-of-input — ChunkedWriteHandler would stop the response with
+            // half the multipart document missing.
+            for (int i = currentByteRange; i < byteRanges.length; i++) {
+                if (byteRanges[i] != null && byteRanges[i].remaining() > 0) {
+                    return false;
+                }
             }
             // PF-52: in multi-range mode, we still owe the closing boundary bytes.
-            if (byteRanges.length > 1 && currentByteRange >= byteRanges.length
-                    && closingBoundaryWritten < closingBoundaryBytes().length) {
+            if (byteRanges.length > 1 && closingBoundaryWritten < closingBoundaryBytes().length) {
                 return false;
             }
             return true;
@@ -418,7 +438,12 @@ public class FileService {
             }
 
             public int servedHeader = 0;
-            public int servedRange = 0;
+            // PF-64: a single byte range can exceed 2 GiB (4 K video, large archive downloads).
+            // The previous int width silently overflowed past 2^31-1, corrupting both the
+            // remaining() arithmetic and the raf.seek(start + servedRange) call — the seek
+            // would jump backwards and the response would either error out or loop on the
+            // same chunk indefinitely.
+            public long servedRange = 0L;
 
             public ByteRange(long start, long end, long fileLength, String contentType, boolean includeHeader) {
                 this.start = start;

@@ -19,8 +19,19 @@ public class SslHttpServerPipelineFactory extends HttpServerPipelineFactory {
     private final String pipelineConfig = Play.configuration.getProperty("play.ssl.netty.pipeline",
             "io.netty.handler.codec.http.HttpRequestDecoder,play.server.StreamChunkAggregator,io.netty.handler.codec.http.HttpResponseEncoder,io.netty.handler.stream.ChunkedWriteHandler,play.server.ssl.SslPlayHandler");
 
-    private static final int DEFAULT_AGGREGATOR_MAX = Integer.parseInt(
-            Play.configuration.getProperty("play.netty.maxContentLength", "1048576"));
+    // PF-65: see HttpServerPipelineFactory#sanitizeAggregatorMax — promote -1 to Integer.MAX_VALUE
+    // so the documented "unlimited" sentinel doesn't crash an explicitly-wired HttpObjectAggregator.
+    private static final int DEFAULT_AGGREGATOR_MAX = sanitizeAggregatorMax();
+
+    private static int sanitizeAggregatorMax() {
+        int v;
+        try {
+            v = Integer.parseInt(Play.configuration.getProperty("play.netty.maxContentLength", "1048576"));
+        } catch (NumberFormatException nfe) {
+            v = 1048576;
+        }
+        return v < 0 ? Integer.MAX_VALUE : v;
+    }
 
     @Override
     protected void initChannel(Channel ch) throws Exception {

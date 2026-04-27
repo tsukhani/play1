@@ -114,19 +114,36 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
                 }
 
                 // Plain old HttpRequest
+                Request request = null;
+                Response response = null;
+                boolean handedOffToInvoker = false;
                 try {
+                    // PF-60 step 1: install a placeholder so any code path that touches
+                    // Request.current() before parsing completes (cookie decode, response
+                    // initialisation) sees a non-null sentinel rather than NPE'ing. We replace
+                    // it with the parsed Request below.
                     Http.Request.current.set(new Http.Request());
 
-                    final Response response = new Response();
+                    response = new Response();
                     Http.Response.current.set(response);
 
-                    final Request request = parseRequest(ctx, nettyRequest);
+                    request = parseRequest(ctx, nettyRequest);
+
+                    // PF-60 step 2: point the IO-thread Request.current at the parsed request
+                    // before invoking plugins. The previous code left it pointing at the blank
+                    // placeholder, so plugins that called Http.Request.current() from inside
+                    // rawInvocation got an empty Request — the wrong cookies, headers, body,
+                    // params. NettyInvocation re-installs both on the worker thread later via
+                    // its own init(), so the same correctness applies on both threads.
+                    Http.Request.current.set(request);
 
                     request.args.put("acceptedAtNanos", System.nanoTime());
 
                     response.out = new ByteArrayOutputStream();
                     response.direct = null;
-                    response.onWriteChunk(result -> writeChunk(request, response, ctx, nettyRequest, result));
+                    final Request reqRef = request;
+                    final Response respRef = response;
+                    response.onWriteChunk(result -> writeChunk(reqRef, respRef, ctx, nettyRequest, result));
 
                     boolean raw = Play.pluginCollection.rawInvocation(request, response);
                     if (raw) {
@@ -141,11 +158,29 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
                         }
                     } else {
                         Invoker.invoke(new NettyInvocation(request, response, ctx, nettyRequest));
+                        handedOffToInvoker = true;
                     }
 
                 } catch (Exception ex) {
                     Logger.warn(ex, "Exception on request. serving 500 back");
                     serve500(ex, ctx, nettyRequest);
+                } finally {
+                    // PF-61: the IO thread set Request/Response thread-locals; the worker thread
+                    // that the Invoker handed off to has its own init()/_finally cycle for those
+                    // (see NettyInvocation._finally below), but the IO thread keeps its values
+                    // pointing at this request until the next message overwrites them. Clearing
+                    // here releases references so a long-idle keep-alive connection doesn't pin
+                    // the previous Request/Response/parsed body in memory. We must NOT clear
+                    // before the Invoker has had a chance to re-install the locals on the worker
+                    // thread — but Invoker.invoke() copies the InvocationContext synchronously
+                    // before scheduling, so by the time control returns here the worker side is
+                    // safely set up.
+                    Http.Request.current.remove();
+                    Http.Response.current.remove();
+                    if (!handedOffToInvoker) {
+                        // Raw / error paths only: the worker thread never ran, so no other
+                        // ThreadLocals were set; nothing else to clean.
+                    }
                 }
                 return;
             }
@@ -279,6 +314,29 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
                 }
                 if (Logger.isTraceEnabled()) {
                     Logger.trace("run: end");
+                }
+            }
+        }
+
+        @Override
+        public void _finally() {
+            try {
+                super._finally();
+            } finally {
+                // PF-61: clear the worker-thread ThreadLocals init() set above. Without this,
+                // a pooled platform thread retains the previous Request/Response (and parsed
+                // body) until its next invocation reassigns them — under low traffic the GC root
+                // can survive minutes. Skip cleanup on suspend: the resumed run() needs the same
+                // request/response to be visible to controller code waiting on the suspend
+                // future.
+                if (!suspended) {
+                    Request.current.remove();
+                    Response.current.remove();
+                    Scope.Params.current.remove();
+                    Scope.RenderArgs.current.remove();
+                    Scope.RouteArgs.current.remove();
+                    Scope.Session.current.remove();
+                    Scope.Flash.current.remove();
                 }
             }
         }
@@ -603,63 +661,79 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
             }
         }
 
-        String host = nettyRequest.headers().get(HOST);
-        boolean isLoopback = false;
+        // PF-59: from this point until the spool is stashed on the request, any thrown exception
+        // would orphan the FileInputStream and the temp file (the channel attribute has already
+        // been cleared). Anything that can throw — Host parsing for non-numeric ports, header
+        // copy, cookie decode — sits inside this try; on failure we close the stream and delete
+        // the file before rethrowing. Without this guard, a single malformed Host header (e.g.
+        // "example.com:abc") leaks one temp file per request.
         try {
-            isLoopback = ((InetSocketAddress) ctx.channel().remoteAddress()).getAddress().isLoopbackAddress()
-                    && host.matches("^127\\.0\\.0\\.1:?[0-9]*$");
-        } catch (Exception e) {
-            // ignore it
-        }
+            String host = nettyRequest.headers().get(HOST);
+            boolean isLoopback = false;
+            try {
+                isLoopback = ((InetSocketAddress) ctx.channel().remoteAddress()).getAddress().isLoopbackAddress()
+                        && host.matches("^127\\.0\\.0\\.1:?[0-9]*$");
+            } catch (Exception e) {
+                // ignore it
+            }
 
-        int port = 0;
-        String domain = null;
-        if (host == null) {
-            host = "";
-            port = 80;
-            domain = "";
-        }
-        // Check for IPv6 address
-        else if (host.startsWith("[")) {
-            // There is no port
-            if (host.endsWith("]")) {
-                domain = host;
+            int port = 0;
+            String domain = null;
+            if (host == null) {
+                host = "";
                 port = 80;
-            } else {
-                // There is a port so take from the last colon
-                int portStart = host.lastIndexOf(':');
-                if (portStart > 0 && (portStart + 1) < host.length()) {
-                    domain = host.substring(0, portStart);
-                    port = Integer.parseInt(host.substring(portStart + 1));
+                domain = "";
+            }
+            // Check for IPv6 address
+            else if (host.startsWith("[")) {
+                // There is no port
+                if (host.endsWith("]")) {
+                    domain = host;
+                    port = 80;
+                } else {
+                    // There is a port so take from the last colon
+                    int portStart = host.lastIndexOf(':');
+                    if (portStart > 0 && (portStart + 1) < host.length()) {
+                        domain = host.substring(0, portStart);
+                        port = Integer.parseInt(host.substring(portStart + 1));
+                    }
                 }
             }
-        }
-        // Non IPv6 but has port
-        else if (host.contains(":")) {
-            String[] hosts = host.split(":");
-            port = Integer.parseInt(hosts[1]);
-            domain = hosts[0];
-        } else {
-            port = 80;
-            domain = host;
-        }
+            // Non IPv6 but has port
+            else if (host.contains(":")) {
+                String[] hosts = host.split(":");
+                port = Integer.parseInt(hosts[1]);
+                domain = hosts[0];
+            } else {
+                port = 80;
+                domain = host;
+            }
 
-        boolean secure = false;
+            boolean secure = false;
 
-        Request request = Request.createRequest(remoteAddress, method, path, querystring, contentType, body, uri, host,
-                isLoopback, port, domain, secure, getHeaders(nettyRequest), getCookies(nettyRequest));
+            Request request = Request.createRequest(remoteAddress, method, path, querystring, contentType, body, uri, host,
+                    isLoopback, port, domain, secure, getHeaders(nettyRequest), getCookies(nettyRequest));
 
-        // If body is backed by a temp file, stash both the stream and the file so
-        // NettyInvocation can close + delete them after the controller returns.
-        if (spooled != null) {
-            request.args.put(SPOOL_FILE_ATTR, spooled);
-            request.args.put(SPOOL_STREAM_ATTR, body);
+            // If body is backed by a temp file, stash both the stream and the file so
+            // NettyInvocation can close + delete them after the controller returns.
+            if (spooled != null) {
+                request.args.put(SPOOL_FILE_ATTR, spooled);
+                request.args.put(SPOOL_STREAM_ATTR, body);
+            }
+
+            if (Logger.isTraceEnabled()) {
+                Logger.trace("parseRequest: end");
+            }
+            return request;
+        } catch (RuntimeException | Error parseError) {
+            if (spooled != null) {
+                try { body.close(); } catch (IOException ignored) {}
+                if (!spooled.delete()) {
+                    spooled.deleteOnExit();
+                }
+            }
+            throw parseError;
         }
-
-        if (Logger.isTraceEnabled()) {
-            Logger.trace("parseRequest: end");
-        }
-        return request;
     }
 
     static final String SPOOL_FILE_ATTR = "__play.spoolFile";
@@ -808,9 +882,17 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
 
             // Flush some cookies
             try {
-
+                // PF-62: only emit cookies the application has explicitly opted in to via
+                // {@code sendOnError = true}. ServletWrapper.serve500 has always followed this
+                // rule (see play.server.ServletWrapper:382); the Netty path was permissive and
+                // sent every cookie, which can persist partial Session/Flash/Lang state from a
+                // failed action — exactly the scenario the sendOnError flag was designed to
+                // gate. Aligning the two transports closes that divergence.
                 Map<String, Http.Cookie> cookies = response.cookies;
                 for (Http.Cookie cookie : cookies.values()) {
+                    if (!cookie.sendOnError) {
+                        continue;
+                    }
                     Cookie c = new DefaultCookie(cookie.name, cookie.value);
                     c.setSecure(cookie.secure);
                     c.setPath(cookie.path);
@@ -1151,8 +1233,25 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
     }
 
     private void websocketHandshake(final ChannelHandlerContext ctx, FullHttpRequest req) throws Exception {
-        int maxFrame = Integer.parseInt(Play.configuration.getProperty("play.netty.maxContentLength", "65345"));
-        if (maxFrame < 0) maxFrame = 65345;
+        // PF-66: derive the WebSocket frame/message cap from play.netty.maxContentLength so HTTP
+        // and WebSocket payload limits stay consistent. A {@code -1} (documented as "unlimited"
+        // for HTTP) maps to {@link Integer#MAX_VALUE} here — the previous code coerced negative
+        // values to a hard 65345 even when the operator clearly asked for no limit, which is
+        // contradictory between the two transports. A 0 or unparseable value falls back to the
+        // historical 65345 (Netty's default).
+        int maxFrame;
+        try {
+            int v = Integer.parseInt(Play.configuration.getProperty("play.netty.maxContentLength", "65345"));
+            if (v < 0) {
+                maxFrame = Integer.MAX_VALUE;
+            } else if (v == 0) {
+                maxFrame = 65345;
+            } else {
+                maxFrame = v;
+            }
+        } catch (NumberFormatException nfe) {
+            maxFrame = 65345;
+        }
 
         WebSocketServerHandshakerFactory wsFactory = new WebSocketServerHandshakerFactory(
                 getWebSocketLocation(req), null, false, maxFrame);
@@ -1378,6 +1477,20 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
         public void onSuccess() throws Exception {
             outbound.close();
             super.onSuccess();
+        }
+
+        @Override
+        public void _finally() {
+            try {
+                super._finally();
+            } finally {
+                // PF-61: same rationale as NettyInvocation — drop the worker-thread refs to
+                // Request/Inbound/Outbound so a long-lived platform pool thread doesn't pin
+                // the previous WebSocket session in memory between dispatches.
+                Http.Request.current.remove();
+                Http.Inbound.current.remove();
+                Http.Outbound.current.remove();
+            }
         }
     }
 }

@@ -3,6 +3,7 @@ package play.server;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.CompositeByteBuf;
 import io.netty.buffer.Unpooled;
+import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.handler.codec.http.DefaultFullHttpRequest;
@@ -13,6 +14,7 @@ import io.netty.handler.codec.http.HttpContent;
 import io.netty.handler.codec.http.HttpHeaderNames;
 import io.netty.handler.codec.http.HttpRequest;
 import io.netty.handler.codec.http.HttpResponseStatus;
+import io.netty.handler.codec.http.HttpUtil;
 import io.netty.handler.codec.http.HttpVersion;
 import io.netty.handler.codec.http.LastHttpContent;
 import io.netty.util.AttributeKey;
@@ -89,9 +91,40 @@ public class StreamChunkAggregator extends ChannelInboundHandlerAdapter {
         }
 
         if (msg instanceof HttpRequest req) {
+            // PF-56: refuse messages with a decoder failure. Without this guard the aggregator
+            // would happily concatenate partial body bytes from a malformed chunked stream and
+            // hand the controller a fresh "successful" FullHttpRequest. Per RFC 7230 §3.4 we
+            // respond with 400 Bad Request and close the connection.
+            if (req.decoderResult().isFailure()) {
+                Logger.warn("HttpRequest decoder failure: %s", req.decoderResult().cause());
+                ReferenceCountUtil.release(msg);
+                rejectBadRequest(ctx);
+                return;
+            }
+
             resetState();
             pendingRequest = req;
             inMemoryBody = ctx.alloc().compositeBuffer();
+
+            // PF-55: handle Expect: 100-continue. Strict upload clients (curl --expect100,
+            // Apache HttpClient) wait for a 100 response before sending the body, and will
+            // hang forever if we silently swallow the request. If a Content-Length is present
+            // and exceeds the configured cap, fail fast with 413; otherwise acknowledge with
+            // 100 Continue so the client streams the body.
+            if (HttpUtil.is100ContinueExpected(req)) {
+                long declaredLength = HttpUtil.getContentLength(req, -1L);
+                if (maxContentLength >= 0 && declaredLength > maxContentLength) {
+                    Logger.warn("Expect: 100-continue with declared CL %d > maxContentLength %d; rejecting", declaredLength, maxContentLength);
+                    rejectOversize(ctx);
+                    return;
+                }
+                FullHttpResponse cont = new DefaultFullHttpResponse(
+                        HttpVersion.HTTP_1_1, HttpResponseStatus.CONTINUE, Unpooled.EMPTY_BUFFER);
+                // Write via the channel so the message traverses HttpResponseEncoder. ctx.write
+                // here would skip the encoder (it's tail-ward of this handler) and ship a raw
+                // FullHttpResponse object to the socket.
+                ctx.channel().writeAndFlush(cont);
+            }
             return;
         }
 
@@ -103,6 +136,14 @@ public class StreamChunkAggregator extends ChannelInboundHandlerAdapter {
                 if (chunk instanceof LastHttpContent) {
                     resetState();
                 }
+                return;
+            }
+
+            // PF-56: a decoder failure mid-stream (e.g. malformed chunk size) must abort the
+            // request rather than be swallowed silently.
+            if (chunk.decoderResult().isFailure()) {
+                Logger.warn("HttpContent decoder failure: %s", chunk.decoderResult().cause());
+                rejectBadRequest(ctx);
                 return;
             }
 
@@ -229,7 +270,41 @@ public class StreamChunkAggregator extends ChannelInboundHandlerAdapter {
                 HttpVersion.HTTP_1_1, HttpResponseStatus.REQUEST_ENTITY_TOO_LARGE, Unpooled.EMPTY_BUFFER);
         resp.headers().set(HttpHeaderNames.CONTENT_LENGTH, "0");
         resp.headers().set(HttpHeaderNames.CONNECTION, "close");
-        ctx.writeAndFlush(resp).addListener(future -> ctx.close());
+        // PF-54: write through the channel (tail-most), not the handler context. Outbound from
+        // this handler's ctx flows head-ward and SKIPS HttpResponseEncoder, which sits tail-ward
+        // of us in the pipeline; the FullHttpResponse would reach the SocketChannel without HTTP
+        // framing and the client would see a connection close instead of a valid 413. Writing via
+        // ctx.channel() starts at the tail and traverses every outbound handler including the
+        // encoder.
+        ctx.channel().writeAndFlush(resp).addListener(ChannelFutureListener.CLOSE);
+    }
+
+    /**
+     * PF-56: respond with {@code 400 Bad Request} for messages whose decoder result is a failure
+     * (malformed start-line, invalid chunk size, header line too long if a downstream limit is
+     * configured, etc.) and close the connection. Same channel/encoder reasoning as
+     * {@link #rejectOversize}.
+     */
+    private void rejectBadRequest(ChannelHandlerContext ctx) {
+        rejected = true;
+        if (spoolFile != null) {
+            File f = spoolFile;
+            cleanupSpool();
+            if (!f.delete()) {
+                f.deleteOnExit();
+            }
+        } else {
+            cleanupSpool();
+        }
+        if (inMemoryBody != null) {
+            inMemoryBody.release();
+            inMemoryBody = null;
+        }
+        FullHttpResponse resp = new DefaultFullHttpResponse(
+                HttpVersion.HTTP_1_1, HttpResponseStatus.BAD_REQUEST, Unpooled.EMPTY_BUFFER);
+        resp.headers().set(HttpHeaderNames.CONTENT_LENGTH, "0");
+        resp.headers().set(HttpHeaderNames.CONNECTION, "close");
+        ctx.channel().writeAndFlush(resp).addListener(ChannelFutureListener.CLOSE);
     }
 
     private void resetState() {

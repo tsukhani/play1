@@ -2,7 +2,7 @@ h1. Play 1.12.0 -- Release notes
 
 Play 1.12.0 is a major release whose headline change is a complete migration of the server transport layer from Netty 3.10.6.Final (June 2016, EOL) to Netty 4.2.12.Final. This brings the framework onto the line of Netty that the JVM ecosystem actively maintains (gRPC-Java, Vert.x, Reactor Netty, Elasticsearch all run on 4.x), closes known unpatched CVEs in the 3.x line (HTTP request smuggling, header validation), and unlocks the Netty 4.2 HTTP/2 codec for future work.
 
-The migration was tracked by epic *PF-3* and broken into staged tickets: PF-30 (umbrella) → PF-31 (dep swap + non-WebSocket HTTP) → PF-32 (large-body disk-spooling) → PF-33 (WebSocket migration + retire deprecated ctors) → PF-34/35/36 (initial audit ship-blockers) → PF-37 through PF-53 (full post-migration audit + external Codex review).
+The migration was tracked by epic *PF-3* and broken into staged tickets: PF-30 (umbrella) → PF-31 (dep swap + non-WebSocket HTTP) → PF-32 (large-body disk-spooling) → PF-33 (WebSocket migration + retire deprecated ctors) → PF-34/35/36 (initial audit ship-blockers) → PF-37 through PF-53 (post-migration audit + first Codex review) → PF-54 through PF-66 (second Codex review covering aggregator/encoder traversal, Expect: 100-continue, decoder-failure handling, multipart framing, 2 GiB range overflow, ThreadLocal cleanup, and configuration sanitization).
 
 h2. Breaking changes
 
@@ -94,6 +94,25 @@ External Codex review fixes:
 * *PF-52*: @multipart/byteranges@ responses now emit a properly-formatted document — fixed the @Content-Range@ header (was @ContentRange@), added inter-part CRLF separators, and emitted the closing @--boundary--@ delimiter
 * *PF-53*: @configuration.textile@ now documents @play.netty.maxContentLength@ (semantic change), @play.netty.spoolThresholdBytes@ (new), and the @play.threads.virtual.*@ family
 
+Second-round Codex audit (P1 ship-blockers):
+
+* *PF-54*: @rejectOversize@ now writes via @ctx.channel().writeAndFlush(...)@ so the 413 response traverses @HttpResponseEncoder@. Outbound from the aggregator's handler context flowed head-ward and skipped the encoder entirely, shipping a raw @FullHttpResponse@ object that never reached the wire as HTTP — clients saw a connection close instead of 413
+* *PF-55*: @StreamChunkAggregator@ now handles @Expect: 100-continue@ — strict upload clients (curl @--expect100@, Apache HttpClient with @ExpectContinue=true@) waited forever before sending the body. We respond with 100 Continue immediately, or 413 if @Content-Length@ exceeds @play.netty.maxContentLength@
+* *PF-56*: @StreamChunkAggregator@ now checks @decoderResult().isFailure()@ on incoming @HttpRequest@ and @HttpContent@ messages and responds with 400 Bad Request + connection close. Without this guard the aggregator would happily concatenate partial bytes from a malformed chunked stream and dispatch it as a fresh "successful" @FullHttpRequest@
+* *PF-57*: Multi-range @Content-Length@ now includes the closing @--boundary--@ trailer that @readChunk()@ emits. Without it, the trailer bytes overran @Content-Length@ and corrupted the framing of the *next* response on a keep-alive connection
+* *PF-58*: @ByteRangeInput.isEndOfInput()@ now scans every range from the cursor to the end. The previous check observed only @byteRanges[currentByteRange]@; if a part body filled exactly @chunkSize@, @ChunkedWriteHandler@ saw remaining()==0 on the just-finished range and stopped the response with later parts (and the closing boundary) unsent
+
+Second-round Codex audit (P2):
+
+* *PF-59*: @parseRequest@ now wraps the post-spool-acquisition path in a try/catch that closes the @FileInputStream@ and unlinks the temp file before rethrowing. A non-numeric port in the @Host@ header (e.g. @Host: example.com:abc@) had been leaking one temp file per request because the spool channel attribute was already cleared by @getAndSet(null)@ before the parse error fired
+* *PF-60*: IO-thread @Http.Request.current@ is now updated to the parsed @Request@ before plugin @rawInvocation@ runs. Previously it pointed at the blank placeholder ctor, so plugins that read @Http.Request.current()@ from inside @rawInvocation@ saw the wrong cookies, headers, body, and params
+* *PF-61*: @NettyInvocation._finally@ and @WebSocketInvocation._finally@ now @remove()@ the @Request@/@Response@/@Scope@/@Inbound@/@Outbound@ ThreadLocals; the IO-thread @channelRead@ does the same in its outer @finally@. A long-idle keep-alive connection (or a worker thread between dispatches) no longer pins the previous request's parsed body in memory until the next message overwrites the slot
+* *PF-62*: 500 path now respects @cookie.sendOnError@ — only cookies the application opted in to are emitted on a failed action. @ServletWrapper.serve500@ has always followed this rule (see @play.server.ServletWrapper:382@); the Netty path was permissive and could persist partial Session/Flash/Lang state across a failed action
+* *PF-63*: 416 responses now send @Content-Range: bytes */<fileLength>@ per RFC 7233 §4.2. The previous @bytes 0-(fileLength-1)/fileLength@ form was non-spec and degenerated to the actively-invalid @bytes 0--1/0@ for empty files
+* *PF-64*: @ByteRange.servedRange@ widened from @int@ to @long@ so single-range responses past 2 GiB (4 K video, large archives) don't overflow the counter — overflow had corrupted both @remaining()@ and the @raf.seek(start + servedRange)@ call, jumping the file pointer backwards and either erroring out or looping on the same chunk
+* *PF-65*: @HttpServerPipelineFactory@ and @SslHttpServerPipelineFactory@ now sanitize @play.netty.maxContentLength@ before passing it to a user-wired @HttpObjectAggregator@. Netty's ctor rejects negatives with @IllegalArgumentException@, so the documented "unlimited" sentinel @-1@ was silently dropping the explicit aggregator from the pipeline. We promote any negative value to @Integer.MAX_VALUE@
+* *PF-66*: WebSocket frame/message cap now treats @-1@ as @Integer.MAX_VALUE@ for symmetry with the HTTP request body cap. The previous code coerced negative values to a hard 65345, which contradicted the documented "unlimited" semantic for HTTP
+
 h2. Performance and operational notes
 
 h3. Boot-time bind failures are now loud
@@ -114,7 +133,7 @@ This release was verified by:
 
 * @ant clean unittest@: 299/299 tests pass
 * Manual smoke gates: HTTP GET, small in-memory POST, large (5 MB) spooled POST, WebSocket handshake + ping/pong/text/binary frame round-trip, sustained load (5,200 hits) under @-Dio.netty.leakDetection.level=PARANOID@ with zero @LEAK:@ markers
-* Multi-agent post-migration code audit (refcount, concurrency, protocol, performance, API/test-coverage) plus external Codex review — twenty findings total, all addressed in this release
+* Multi-agent post-migration code audit (refcount, concurrency, protocol, performance, API/test-coverage) plus two external Codex reviews — thirty-three findings total (PF-34 through PF-66), all addressed in this release
 
 h2. Upgrade checklist
 

@@ -28,9 +28,29 @@ public class HttpServerPipelineFactory extends ChannelInitializer<Channel> {
     private final String pipelineConfig = Play.configuration.getProperty("play.netty.pipeline",
             "io.netty.handler.codec.http.HttpRequestDecoder,play.server.StreamChunkAggregator,io.netty.handler.codec.http.HttpResponseEncoder,io.netty.handler.stream.ChunkedWriteHandler,play.server.PlayHandler");
 
-    /** Fallback for stock {@link HttpObjectAggregator} if a user wires it explicitly. */
-    private static final int DEFAULT_AGGREGATOR_MAX = Integer.parseInt(
+    /**
+     * Fallback for stock {@link HttpObjectAggregator} if a user wires it explicitly.
+     *
+     * <p>PF-65: the documented "unlimited" sentinel for {@code play.netty.maxContentLength} is
+     * {@code -1}, which our own {@link StreamChunkAggregator} interprets correctly. Netty's
+     * {@code HttpObjectAggregator} ctor however rejects any negative value
+     * ({@code IllegalArgumentException: "maxContentLength must be a non-negative number"}),
+     * causing the user's explicitly-wired aggregator to fail construction and silently fall out
+     * of the pipeline. Promote any negative value to {@link Integer#MAX_VALUE} so the unlimited
+     * semantic carries through without breaking the handler.
+     */
+    private static final int DEFAULT_AGGREGATOR_MAX = sanitizeAggregatorMax(
             Play.configuration.getProperty("play.netty.maxContentLength", "1048576"));
+
+    private static int sanitizeAggregatorMax(String configured) {
+        int v;
+        try {
+            v = Integer.parseInt(configured);
+        } catch (NumberFormatException nfe) {
+            v = 1048576;
+        }
+        return v < 0 ? Integer.MAX_VALUE : v;
+    }
 
     @Override
     protected void initChannel(Channel ch) throws Exception {
