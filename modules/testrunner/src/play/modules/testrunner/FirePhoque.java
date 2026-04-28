@@ -221,6 +221,17 @@ public class FirePhoque {
                 }
             }
             firephoque.openWindow(new URL(app + "/@tests/end?result=" + (ok ? "passed" : "failed")), "headless");
+            // FirePhoque is a one-shot process whose only job is driving the test run
+            // and writing result-marker files. HtmlUnit's WebClient leaks non-daemon
+            // threads (HTTP connection-pool keep-alive, Rhino's setTimeout scheduler)
+            // that block JVM exit for ~60-120s after main() returns even with close().
+            // autotest.py reads pass/fail from test-result/result.{passed,failed}, not
+            // from this process's exit code, so a hard exit here unblocks the wrapper
+            // immediately. Bypasses the try-with-resources close() since System.exit
+            // does not unwind stack frames — the slow WebClient teardown is skipped
+            // entirely; in-flight keep-alive connections get RST'd, which the Play
+            // server tolerates fine.
+            System.exit(0);
         }
     }
 }
