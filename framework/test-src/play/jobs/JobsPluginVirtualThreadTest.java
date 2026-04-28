@@ -54,9 +54,7 @@ public class JobsPluginVirtualThreadTest {
 
         plugin.onApplicationStart();
 
-        assertThat(JobsPlugin.scheduler.isUsingVirtualThreads()).isTrue();
-        assertThat(JobsPlugin.scheduler.virtualExecutor()).isNotNull();
-        assertThat(JobsPlugin.scheduler.platformExecutor()).isNull();
+        assertThat(JobsPlugin.scheduler).isNotNull();
     }
 
     /**

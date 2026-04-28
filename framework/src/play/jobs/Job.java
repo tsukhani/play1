@@ -256,9 +256,9 @@ public class Job<V> extends Invoker.Invocation implements Callable<V> {
     @Override
     public void _finally() {
         super._finally();
-        // Compare against the active executor (whichever the facade is using).
-        if (executor == JobsPlugin.scheduler.platformExecutor()
-                || executor == JobsPlugin.scheduler.virtualExecutor()) {
+        // Reschedule only if this job's executor reference is still the active scheduler
+        // (i.e. we haven't been hot-reloaded onto a fresh executor).
+        if (executor == JobsPlugin.scheduler) {
             JobsPlugin.scheduleForCRON(this);
         }
     }

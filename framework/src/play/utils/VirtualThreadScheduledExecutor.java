@@ -210,6 +210,30 @@ public class VirtualThreadScheduledExecutor {
     }
 
     /**
+     * Orderly shutdown — block accepting new work, wait up to {@code timeoutMs} for
+     * in-flight tasks to complete, then escalate to {@link #shutdownNow} if anything
+     * is still running. Lets background jobs mid-DB-transaction commit cleanly during
+     * a hot reload or app stop instead of being interrupted and corrupting data.
+     *
+     * @return true if everything terminated within the timeout, false if shutdownNow
+     *         had to fire.
+     */
+    public boolean shutdownGracefully(long timeoutMs) {
+        try {
+            shutdown();
+            if (!awaitTermination(timeoutMs, TimeUnit.MILLISECONDS)) {
+                shutdownNow();
+                return false;
+            }
+            return true;
+        } catch (InterruptedException ie) {
+            shutdownNow();
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
+    /**
      * Shut down both the scheduler and the virtual thread executor.
      *
      * @return list of tasks that never commenced execution (from the scheduler)

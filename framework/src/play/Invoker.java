@@ -3,13 +3,9 @@ package play;
 import java.lang.annotation.Annotation;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
-import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -26,8 +22,6 @@ import play.exceptions.UnexpectedException;
 import play.i18n.Lang;
 import play.libs.F;
 import play.libs.F.Promise;
-import play.utils.ExecutorFacade;
-import play.utils.PThreadFactory;
 import play.utils.VirtualThreadConfig;
 import play.utils.VirtualThreadScheduledExecutor;
 
@@ -37,32 +31,31 @@ import play.utils.VirtualThreadScheduledExecutor;
 public class Invoker {
 
     /**
-     * Unified scheduling facade. All internal call sites route dispatches through this;
-     * the {@link #executor} / {@link #virtualExecutor} / {@link #usingVirtualThreads}
-     * fields below are deprecated mirrors kept for binary compatibility with third-party
-     * plugins.
+     * Virtual-thread scheduling executor. Recreated by {@link #init()} on each
+     * application start; nulled by {@link #stop()} during shutdown.
      */
-    public static final ExecutorFacade scheduler = new ExecutorFacade();
+    public static volatile VirtualThreadScheduledExecutor scheduler;
 
     /**
-     * @deprecated Use {@link #scheduler} (or {@link ExecutorFacade#platformExecutor()})
-     *     for status reporting. Direct mutation of this field is unsupported and will
-     *     desynchronize from the facade. Will be removed in a future release.
+     * @deprecated Always null on this fork — Invoker now runs exclusively on virtual
+     *     threads. Kept for one transition release so plugins reading this field
+     *     don't fail to load; reading it returns null. Will be removed.
      */
     @Deprecated
     public static volatile ScheduledThreadPoolExecutor executor = null;
 
     /**
-     * @deprecated Use {@link #scheduler} (or {@link ExecutorFacade#virtualExecutor()}).
+     * @deprecated Use {@link #scheduler} directly. Mirrors {@link #scheduler} for the
+     *     transition; will be removed.
      */
     @Deprecated
     public static volatile VirtualThreadScheduledExecutor virtualExecutor = null;
 
     /**
-     * @deprecated Use {@link ExecutorFacade#isUsingVirtualThreads()} on {@link #scheduler}.
+     * @deprecated Always {@code true} on this fork. Will be removed.
      */
     @Deprecated
-    public static volatile boolean usingVirtualThreads = false;
+    public static volatile boolean usingVirtualThreads = true;
 
     /**
      * Audit H2-counter: number of invocations currently executing (queued or running).
@@ -106,10 +99,6 @@ public class Invoker {
      */
     public static Future<?> invoke(Invocation invocation) {
         ensureExecutor();
-        if (!scheduler.isUsingVirtualThreads()) {
-            Monitor monitor = MonitorFactory.getMonitor("Invoker queue size", "elmts.");
-            monitor.add(scheduler.platformExecutor().getQueue().size());
-        }
         invocation.waitInQueue = MonitorFactory.start("Waiting for execution");
         return submitTracked(invocation);
     }
@@ -125,14 +114,9 @@ public class Invoker {
      */
     public static Future<?> invoke(Invocation invocation, long millis) {
         ensureExecutor();
-        if (!scheduler.isUsingVirtualThreads()) {
-            Monitor monitor = MonitorFactory.getMonitor("Invocation queue", "elmts.");
-            monitor.add(scheduler.platformExecutor().getQueue().size());
-        }
-        // Audit H2-counter: track delayed dispatches too. We wrap so the counter
-        // decrements on completion and totalInvocations bumps when the task fires.
-        // Pre-increment totalInvocations / inflightInvocations here so observability
-        // is consistent with the immediate path (i.e. counted at submission time).
+        // Audit H2-counter: track delayed dispatches too. Pre-increment so observability
+        // is consistent with the immediate path (i.e. counted at submission time);
+        // decrement after the wrapper runs.
         totalInvocations.incrementAndGet();
         inflightInvocations.incrementAndGet();
         return scheduler.schedule(() -> {
@@ -168,21 +152,10 @@ public class Invoker {
     }
 
     static void resetClassloaders() {
-        if (scheduler.isUsingVirtualThreads()) {
-            // Virtual threads cannot be enumerated with Thread.enumerate().
-            // Each virtual thread sets its context classloader at the start of an invocation
-            // (in Invocation.init() and Invocation.before()), so stale classloaders are
-            // naturally replaced on the next invocation.
-            return;
-        }
-        ScheduledThreadPoolExecutor pool = scheduler.platformExecutor();
-        if (pool == null) return;
-        Thread[] executorThreads = new Thread[pool.getPoolSize()];
-        Thread.enumerate(executorThreads);
-        for (Thread thread : executorThreads) {
-            if (thread != null && thread.getContextClassLoader() instanceof ApplicationClassloader)
-                thread.setContextClassLoader(ClassLoader.getSystemClassLoader());
-        }
+        // Virtual threads cannot be enumerated with Thread.enumerate(). Each virtual
+        // thread sets its context classloader at the start of an invocation
+        // (in Invocation.init() and Invocation.before()), so stale classloaders are
+        // naturally replaced on the next invocation. Nothing to do here under VT-only.
     }
 
     /**
@@ -454,14 +427,10 @@ public class Invoker {
      * init() will replace it with the properly configured executor.
      */
     private static synchronized void ensureExecutor() {
-        if (scheduler.virtualExecutor() != null) {
-            return;
-        }
+        if (scheduler != null) return;
         VirtualThreadScheduledExecutor v = new VirtualThreadScheduledExecutor("play");
-        scheduler.useVirtual(v);
+        scheduler = v;
         virtualExecutor = v;
-        executor = null;
-        usingVirtualThreads = true;
     }
 
     /**
@@ -475,21 +444,20 @@ public class Invoker {
     public static synchronized void init() {
         stop();
         VirtualThreadScheduledExecutor v = new VirtualThreadScheduledExecutor("play");
-        scheduler.useVirtual(v);
+        scheduler = v;
         virtualExecutor = v;
-        executor = null;
-        usingVirtualThreads = true;
         Logger.info("Invoker using virtual threads");
     }
 
     /**
-     * Shut down whichever executor is currently active and release its threads.
-     * Called from {@link Play#stop()} and from {@link #init()} so that DEV restarts and
-     * test teardowns don't accumulate scheduler thread pools or pending delayed tasks.
+     * Shut down the active executor and release its threads. Called from
+     * {@link Play#stop()} and from {@link #init()} so that DEV restarts and test
+     * teardowns don't accumulate scheduler thread pools or pending delayed work.
      */
     public static synchronized void stop() {
-        scheduler.shutdownNow();
-        executor = null;
+        VirtualThreadScheduledExecutor s = scheduler;
+        if (s != null) s.shutdownNow();
+        scheduler = null;
         virtualExecutor = null;
     }
 
@@ -531,30 +499,20 @@ public class Invoker {
     }
 
     /**
-     * Utility that track tasks completion in order to resume suspended requests.
+     * Utility for resuming suspended requests when a Future completes. The VT-only
+     * dispatch model lets each waiter park on its own virtual thread (cheap), so this
+     * collapses to: subscribe to Promise redeem, or submit a VT that blocks on
+     * {@code task.get()} and then re-submits the invocation.
      */
-    static class WaitForTasksCompletion extends Thread {
-
-        // volatile: this is the classic double-checked-lock instance field. The synchronized
-        // block in waitFor() guarantees publication for a fresh instance, but a *read* of the
-        // field from another thread (a future caller checking `instance != null` outside the
-        // lock) needs volatile to see the published Thread reference.
-        static volatile WaitForTasksCompletion instance;
-        final Map<Future<?>, Invocation> queue = new ConcurrentHashMap<>();
-
-        public WaitForTasksCompletion() {
-            setName("WaitForTasksCompletion");
-            setDaemon(true);
-        }
+    static class WaitForTasksCompletion {
 
         public static <V> void waitFor(Future<V> task, final Invocation invocation) {
             if (task instanceof Promise) {
                 Promise<V> smartFuture = (Promise<V>) task;
                 smartFuture.onRedeem(result -> resumeQuietly(invocation));
-            } else if (scheduler.isUsingVirtualThreads()) {
-                // Block a cheap virtual thread on the future instead of polling. Avoids the
-                // 50 ms scan loop and gives sub-millisecond resume latency. Virtual threads
-                // make the per-future thread allocation negligible.
+            } else {
+                // Block a virtual thread on the future. Sub-millisecond resume latency;
+                // the per-future VT is essentially free under Loom.
                 scheduler.submit(() -> {
                     try {
                         task.get();
@@ -563,31 +521,16 @@ public class Invoker {
                     } catch (Exception ignored) {
                         // The invocation will inspect task state itself; we just resume it.
                     }
-                    // Audit H3: the inner submit can throw RejectedExecutionException if the
-                    // scheduler shut down between task.get() returning and us trying to resume.
-                    // Without this guard the RTE kills the wrapper VT silently and the request
-                    // never resumes. Log at WARN with what context we can attach (the
-                    // wrapper VT is exiting anyway, so don't rethrow).
                     resumeQuietly(invocation);
                 });
-            } else {
-                synchronized (WaitForTasksCompletion.class) {
-                    if (instance == null) {
-                        instance = new WaitForTasksCompletion();
-                        Logger.warn("Start WaitForTasksCompletion");
-                        instance.start();
-                    }
-                    instance.queue.put(task, invocation);
-                }
             }
         }
 
         /**
          * Audit H3: submit a suspended-then-ready invocation back through the scheduler,
-         * swallowing {@link RejectedExecutionException} (logged at WARN). Used by both the
-         * Promise.onRedeem callback and the VT-mode wrapper after task.get() returns.
-         * Routes through {@link #submitTracked(Runnable)} so suspended-resume invocations
-         * are counted by the H2-counter observability fields.
+         * swallowing {@link RejectedExecutionException} (logged at WARN). Routes through
+         * {@link #submitTracked(Runnable)} so suspended-resume invocations are counted
+         * by the H2-counter observability fields.
          */
         private static void resumeQuietly(Invocation invocation) {
             try {
@@ -601,28 +544,6 @@ public class Invoker {
                     ctx = "unavailable";
                 }
                 Logger.warn("Cannot resume suspended invocation after scheduler shutdown (%s)", ctx);
-            }
-        }
-
-        @Override
-        public void run() {
-            while (!Thread.currentThread().isInterrupted()) {
-                try {
-                    if (!queue.isEmpty()) {
-                        for (Future<?> task : new HashSet<>(queue.keySet())) {
-                            if (task.isDone()) {
-                                Invocation invocation = queue.remove(task);
-                                resumeQuietly(invocation);
-                            }
-                        }
-                    }
-                    Thread.sleep(50);
-                } catch (InterruptedException ex) {
-                    // Restore interrupt and exit; the loop's interrupt-check will not re-enter.
-                    Thread.currentThread().interrupt();
-                    Logger.info("WaitForTasksCompletion interrupted, exiting");
-                    return;
-                }
             }
         }
     }

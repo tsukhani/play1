@@ -10,7 +10,6 @@ import play.libs.CronExpression;
 import play.libs.Expression;
 import play.libs.Time;
 import play.mvc.Http.Request;
-import play.utils.ExecutorFacade;
 import play.utils.VirtualThreadScheduledExecutor;
 
 import java.io.PrintWriter;
@@ -25,21 +24,20 @@ import java.util.concurrent.*;
 public class JobsPlugin extends PlayPlugin {
 
     /**
-     * Unified scheduling facade. Internal call sites route dispatches through this; the
-     * executor / virtualExecutor / usingVirtualThreads fields below are deprecated mirrors
-     * kept for binary compatibility with third-party plugins (e.g. PlayStatusPlugin, Job).
+     * Virtual-thread scheduling executor for background jobs. Recreated on every
+     * {@link #onApplicationStart()}; nulled on {@link #onApplicationStop()}.
      */
-    public static final ExecutorFacade scheduler = new ExecutorFacade();
+    public static volatile VirtualThreadScheduledExecutor scheduler;
 
-    /** @deprecated Use {@link #scheduler} (or {@link ExecutorFacade#platformExecutor()}). */
+    /** @deprecated Always null on this fork; kept for plugin binary compat. Will be removed. */
     @Deprecated
     public static volatile ScheduledThreadPoolExecutor executor;
-    /** @deprecated Use {@link #scheduler} (or {@link ExecutorFacade#virtualExecutor()}). */
+    /** @deprecated Mirrors {@link #scheduler}. Will be removed. */
     @Deprecated
     public static volatile VirtualThreadScheduledExecutor virtualExecutor;
-    /** @deprecated Use {@link ExecutorFacade#isUsingVirtualThreads()} on {@link #scheduler}. */
+    /** @deprecated Always {@code true} on this fork. Will be removed. */
     @Deprecated
-    public static volatile boolean usingVirtualThreads = false;
+    public static volatile boolean usingVirtualThreads = true;
     // CopyOnWriteArrayList: writes happen at app start/stop only; reads come from getStatus()
     // and afterInvocation() while requests are in flight. Plain ArrayList is unsafe under VT.
     public static final List<Job<?>> scheduledJobs = new CopyOnWriteArrayList<>();
@@ -49,7 +47,7 @@ public class JobsPlugin extends PlayPlugin {
     public String getStatus() {
         StringWriter sw = new StringWriter();
         PrintWriter out = new PrintWriter(sw);
-        if (scheduler.virtualExecutor() == null) {
+        if (scheduler == null) {
             out.println("Jobs execution pool:");
             out.println("~~~~~~~~~~~~~~~~~~~");
             out.println("(not yet started)");
@@ -191,10 +189,8 @@ public class JobsPlugin extends PlayPlugin {
     @Override
     public void onApplicationStart() {
         VirtualThreadScheduledExecutor v = new VirtualThreadScheduledExecutor("jobs");
-        scheduler.useVirtual(v);
+        scheduler = v;
         virtualExecutor = v;
-        executor = null;
-        usingVirtualThreads = true;
         Logger.info("Jobs using virtual threads");
         scheduledJobs.clear();
     }
@@ -231,11 +227,9 @@ public class JobsPlugin extends PlayPlugin {
             }
             job.nextPlannedExecution = nextDate;
             scheduler.schedule((Callable<V>) job, nextDate.getTime() - now.getTime(), TimeUnit.MILLISECONDS);
-            // Job.executor is used only for identity comparison; mirror the underlying executor
-            // so existing code (Job.java line 271) keeps working.
-            job.executor = scheduler.isUsingVirtualThreads()
-                    ? scheduler.virtualExecutor()
-                    : scheduler.platformExecutor();
+            // Job.executor is used only for identity comparison; mirror the scheduler so
+            // existing code (Job.java line 271) keeps working.
+            job.executor = scheduler;
         } catch (Exception ex) {
             throw new UnexpectedException(ex);
         }
@@ -269,36 +263,27 @@ public class JobsPlugin extends PlayPlugin {
             }
         }
 
-        // Audit M5: asymmetric on purpose.
+        // The inner STPE inside VirtualThreadScheduledExecutor holds short-lived dispatch
+        // lambdas (not user tasks); they check scheduler state on entry and no-op when
+        // shutdown, so deferred dispatches drop naturally. Orphan periodic handles are
+        // cancelled by VTScheduledExecutor.shutdown's H1 path. No queue-clearing needed.
         //
-        // Platform mode: the inner ScheduledThreadPoolExecutor's queue holds the actual
-        // user tasks (Job runs and after-request actions). Clearing it before shutdown
-        // ensures a hot-reload doesn't leave stale Runnables waiting to fire.
-        //
-        // Virtual-thread mode: the inner STPE inside VirtualThreadScheduledExecutor does
-        // NOT hold user tasks — it holds short-lived dispatch lambdas that hand work off
-        // to the per-task VT executor. Those dispatch lambdas check scheduler state on
-        // entry and no-op when the scheduler is shut down (see VirtualThreadScheduledExecutor
-        // line ~142), so deferred dispatches drop on the floor naturally. Orphan periodic
-        // handles are cancelled separately. Clearing here would be redundant.
-        if (!scheduler.isUsingVirtualThreads() && scheduler.platformExecutor() != null) {
-            scheduler.platformExecutor().getQueue().clear();
-        }
-        // Audit M27: try graceful shutdown first so in-flight jobs (including ones
-        // mid-DB-transaction) can finish their commit before we send interrupts.
-        // Falls back to shutdownNow() after the timeout — long-running runaway
-        // jobs still get interrupted, but the common case of "this job has 200ms
-        // left to commit" no longer corrupts data on hot reload / app stop.
+        // Audit M27: try graceful shutdown first so in-flight jobs (including ones mid-
+        // DB-transaction) can finish their commit before we send interrupts. Falls back
+        // to shutdownNow() after the timeout — long-running runaway jobs still get
+        // interrupted, but the common case of "200ms left to commit" no longer corrupts
+        // data on hot reload / app stop.
         long stopTimeoutMs;
         try {
             stopTimeoutMs = Long.parseLong(Play.configuration.getProperty("play.jobs.stop.timeout", "30000"));
         } catch (NumberFormatException e) {
             stopTimeoutMs = 30000;
         }
-        if (!scheduler.shutdownGracefully(stopTimeoutMs)) {
+        VirtualThreadScheduledExecutor s = scheduler;
+        if (s != null && !s.shutdownGracefully(stopTimeoutMs)) {
             Logger.warn("Jobs scheduler did not terminate within %d ms; forced shutdown", stopTimeoutMs);
         }
-        executor = null;
+        scheduler = null;
         virtualExecutor = null;
     }
 

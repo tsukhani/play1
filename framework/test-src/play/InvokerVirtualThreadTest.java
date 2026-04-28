@@ -33,17 +33,15 @@ public class InvokerVirtualThreadTest {
 
     @Test
     void initCreatesVirtualExecutorUnconditionally() {
-        // Platform-thread invoker mode no longer exists; configuration toggles
-        // are no-ops. Verifies the unconditional VT path lands the executor in
-        // the facade regardless of any legacy property the operator may have set.
+        // Platform-thread invoker mode no longer exists; configuration toggles are
+        // no-ops. Verifies init() lands a VirtualThreadScheduledExecutor regardless
+        // of any legacy property the operator may have set.
         Play.configuration.setProperty("play.threads.virtual", "false");
         Play.configuration.setProperty("play.threads.virtual.invoker", "false");
 
         Invoker.init();
 
-        assertThat(Invoker.scheduler.isUsingVirtualThreads()).isTrue();
-        assertThat(Invoker.scheduler.virtualExecutor()).isNotNull();
-        assertThat(Invoker.scheduler.platformExecutor()).isNull();
+        assertThat(Invoker.scheduler).isNotNull();
     }
 
     @Test
