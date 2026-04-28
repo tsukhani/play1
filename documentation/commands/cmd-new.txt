@@ -4,7 +4,7 @@
 ~ 
 ~ Synopsis:
 ~ ~~~~~~~~~
-~ play new app_path [--with module_list]
+~ play new app_path [--with module_list] [--frontend]
 ~
 ~ Description:
 ~ ~~~~~~~~~~~~
@@ -26,4 +26,12 @@
 ~
 ~ This modules must be available in the framework local modules repository.
 ~ (using play install)
+~
+~ --frontend:
+~ Scaffold a Nuxt 3 + Tailwind CSS frontend in <app_path>/frontend alongside
+~ the Play backend. Adds an ApiController with a /api/status endpoint and
+~ wires the route into conf/routes. Currently only Nuxt is supported.
+~ For example: play new myApp --frontend
+~
+~ Start the frontend afterwards with: cd myApp/frontend && pnpm install && pnpm dev
 ~
