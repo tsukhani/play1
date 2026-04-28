@@ -16,9 +16,14 @@ import java.util.stream.Collectors;
 
 /**
  * @author Vlad Mihalcea
- * 
+ *
  * Taken from https://vladmihalcea.com/2015/11/26/how-to-bootstrap-hibernate-without-the-persistence-xml-file/
  */
+// jakarta.persistence.spi.PersistenceUnitTransactionType is deprecated for removal in JPA 3.2
+// (replaced by jakarta.persistence.PersistenceUnitTransactionType), but the SPI interface
+// PersistenceUnitInfo.getTransactionType() still returns the spi-package version. We have to
+// implement the interface as-defined; suppression goes away when JPA 4.0 updates the SPI.
+@SuppressWarnings("removal")
 public class PersistenceUnitInfoImpl implements PersistenceUnitInfo {
 
     private final String persistenceUnitName;
