@@ -54,7 +54,6 @@ public class ApplicationClassloader extends ClassLoader {
      */
     public ProtectionDomain protectionDomain;
 
-    private final Object lock = new Object();
 
     public ApplicationClassloader() {
         super(ApplicationClassloader.class.getClassLoader());
@@ -81,7 +80,16 @@ public class ApplicationClassloader extends ClassLoader {
             return c;
         }
 
-        synchronized (lock) {
+        // getClassLoadingLock returns a per-name lock object (since Java 7); this lets
+        // concurrent loads of *different* classes run in parallel instead of serializing on
+        // a single global monitor — important under virtual threads where many requests
+        // may simultaneously trigger first-time class loading.
+        synchronized (getClassLoadingLock(name)) {
+            // re-check inside the lock to prevent two threads racing past findLoadedClass
+            Class<?> already = findLoadedClass(name);
+            if (already != null) {
+                return already;
+            }
             // First check if it's an application Class
             Class<?> applicationClass = loadApplicationClass(name);
             if (applicationClass != null) {

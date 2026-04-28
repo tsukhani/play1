@@ -6,6 +6,18 @@ The migration was tracked by epic *PF-3* and broken into staged tickets: PF-30 (
 
 h2. Breaking changes
 
+h3. Java 25 is now the minimum supported runtime
+
+Play 1.12.x compiles and runs on *Java 25 or later*. Earlier LTS lines (Java 17, Java 21) are no longer supported. The bytecode is emitted at @release="25"@ in @framework/build.xml@ and the bundled modules, so attempting to start a 1.12.x build under an older JVM will fail with @UnsupportedClassVersionError@ before any application code runs.
+
+This unlocks unconditional use of language and library features that were previewed or preview-only on earlier LTS lines, and lets the framework's virtual-thread integration assume the JEP 491 fix (no platform-thread pinning under @synchronized@) is in effect.
+
+If you need to stay on Java 17 or 21, pin to Play 1.11.x.
+
+h3. Application compiler defaults to @java.source=25@
+
+The hot-reload application compiler (@play.classloading.ApplicationCompiler@) now defaults @java.source@ to *25* (was @17@ in 1.11.x). Any value from @17@ through @25@ is accepted; the compiler still rejects JDKs older than 17 at startup. Apps that do not set @java.source@ explicitly in @application.conf@ will gain access to Java 25 language features (record patterns, sealed types, virtual-thread APIs, etc.) without further configuration. Apps that need to stay on an earlier syntax level should pin @java.source@ explicitly.
+
 h3. Public API: ChannelHandlerContext-typed constructors removed
 
 The deprecated Netty-typed constructors on @play.mvc.Http.Inbound@ and @play.libs.F.BlockingEventStream@ (marked @@Deprecated@ in PF-30 Phase 1) have been removed:
@@ -142,4 +154,5 @@ h2. Upgrade checklist
 # If your code subclasses @Http.Inbound@ or constructs @F.BlockingEventStream@ with a @ChannelHandlerContext@, migrate to the @PlayChannel@-typed ctor
 # Decide whether to set @play.netty.maxContentLength@ explicitly (it now hard-rejects with 413 instead of being a chunk-size cap)
 # Optionally tune @play.netty.spoolThresholdBytes@ for your workload pattern
+# If your app needs to stay on an earlier Java syntax level (e.g. 17), pin @java.source@ explicitly in @application.conf@ — the compiler default is now @25@
 # Run your test suite under @-Dio.netty.leakDetection.level=PARANOID@ to catch any application-side @ByteBuf@ refcount issues

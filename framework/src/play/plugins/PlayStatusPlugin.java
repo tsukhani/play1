@@ -20,6 +20,7 @@ import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.text.SimpleDateFormat;
 import java.util.*;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
 
 import static java.util.Arrays.asList;
 
@@ -160,13 +161,14 @@ public class PlayStatusPlugin extends PlayPlugin {
         out.println();
         out.println("Requests execution pool:");
         out.println("~~~~~~~~~~~~~~~~~~~~~~~~");
-        if (Invoker.usingVirtualThreads) {
+        if (Invoker.scheduler.isUsingVirtualThreads()) {
             out.println("Mode: virtual threads");
         } else {
-            out.println("Pool size: " + Invoker.executor.getPoolSize());
-            out.println("Active count: " + Invoker.executor.getActiveCount());
-            out.println("Scheduled task count: " + Invoker.executor.getTaskCount());
-            out.println("Queue size: " + Invoker.executor.getQueue().size());
+            ScheduledThreadPoolExecutor pool = Invoker.scheduler.platformExecutor();
+            out.println("Pool size: " + pool.getPoolSize());
+            out.println("Active count: " + pool.getActiveCount());
+            out.println("Scheduled task count: " + pool.getTaskCount());
+            out.println("Queue size: " + pool.getQueue().size());
         }
         out.println();
         try {
@@ -219,13 +221,14 @@ public class PlayStatusPlugin extends PlayPlugin {
 
         {
             JsonObject pool = new JsonObject();
-            if (Invoker.usingVirtualThreads) {
+            if (Invoker.scheduler.isUsingVirtualThreads()) {
                 pool.addProperty("mode", "virtual-threads");
             } else {
-                pool.addProperty("size", Invoker.executor.getPoolSize());
-                pool.addProperty("active", Invoker.executor.getActiveCount());
-                pool.addProperty("scheduled", Invoker.executor.getTaskCount());
-                pool.addProperty("queue", Invoker.executor.getQueue().size());
+                ScheduledThreadPoolExecutor invokerPool = Invoker.scheduler.platformExecutor();
+                pool.addProperty("size", invokerPool.getPoolSize());
+                pool.addProperty("active", invokerPool.getActiveCount());
+                pool.addProperty("scheduled", invokerPool.getTaskCount());
+                pool.addProperty("queue", invokerPool.getQueue().size());
             }
             status.add("pool", pool);
         }

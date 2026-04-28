@@ -11,10 +11,10 @@ import io.netty.handler.codec.http.HttpHeaderValues;
 import io.netty.handler.codec.http.HttpMethod;
 import io.netty.handler.codec.http.HttpRequest;
 import io.netty.handler.codec.http.HttpResponse;
+import io.netty.handler.codec.http.HttpChunkedInput;
 import io.netty.handler.codec.http.HttpResponseStatus;
 import io.netty.handler.codec.http.HttpUtil;
 import io.netty.handler.codec.http.HttpVersion;
-import io.netty.handler.codec.http.LastHttpContent;
 import io.netty.handler.stream.ChunkedFile;
 import io.netty.handler.stream.ChunkedInput;
 
@@ -77,12 +77,14 @@ public class FileService {
                         MimeTypes.getContentType(localFile.getName(), "text/plain"),
                         channel, nettyRequest, nettyResponse);
                 if (channel.isOpen()) {
-                    // PF-41: write the body without a flush, then writeAndFlush the trailer. The
-                    // single trailing flush is the future we attach the keep-alive close listener to,
-                    // so the channel is not closed before the chunked body has drained.
+                    // Wrap as HttpChunkedInput so ChunkedWriteHandler emits HttpContent (not raw
+                    // ByteBuf) — required for HttpContentCompressor to compress the body. The
+                    // wrapper appends LastHttpContent itself when drained, so the explicit trailer
+                    // write that PF-41 added is no longer needed; writeAndFlush's future still
+                    // completes only after the entire chunked stream has drained, preserving the
+                    // keep-alive close-listener semantics.
                     channel.write(nettyResponse);
-                    channel.write(chunkedInput);
-                    writeFuture = channel.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT);
+                    writeFuture = channel.writeAndFlush(new HttpChunkedInput(chunkedInput));
                 } else {
                     // PF-42: chunkedInput owns the RandomAccessFile via ChunkedFile / ByteRangeInput;
                     // closing the input also closes the file. Without this, the RAF leaks every
@@ -172,6 +174,12 @@ public class FileService {
                 nettyResponse.headers().set("Content-length", 0);
             } else {
                 nettyResponse.setStatus(HttpResponseStatus.PARTIAL_CONTENT);
+                // Force Content-Encoding: identity on byte-range responses. The Range / Content-Range
+                // offsets refer to the *uncompressed* entity; if HttpContentCompressor were allowed
+                // to gzip/br the body, the offsets would no longer match the wire bytes and the
+                // client would reassemble garbage. Netty's compressor honours a pre-set
+                // Content-Encoding and skips compression in that case.
+                nettyResponse.headers().set(HttpHeaderNames.CONTENT_ENCODING, HttpHeaderValues.IDENTITY);
                 if (byteRanges.length == 1) {
                     ByteRange range = byteRanges[0];
                     nettyResponse.headers().set("Content-Range",

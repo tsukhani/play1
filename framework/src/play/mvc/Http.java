@@ -310,89 +310,82 @@ public class Http {
         }
 
         /**
-         * All creation / initiating of new requests should use this method. The purpose of this is to "show" what is
-         * needed when creating new Requests.
-         * 
-         * @param _remoteAddress
-         *            The remote IP address
-         * @param _method
-         *            the Method
-         * @param _path
-         *            path
-         * @param _querystring
-         *            The query String
-         * @param _contentType
-         *            The content Type
-         * @param _body
-         *            The request body
-         * @param _url
-         *            The request URL
-         * @param _host
-         *            The request host
-         * @param _isLoopback
-         *            Indicate if the request comes from loopback interface
-         * @param _port
-         *            The request port
-         * @param _domain
-         *            The request domain
-         * @param _secure
-         *            Indicate is request is secure or not
-         * @param _headers
-         *            The request headers
-         * @param _cookies
-         *            The request cookies
-         * 
-         * @return the newly created Request object
+         * Immutable parameter object grouping the inputs needed to construct a {@link Request}.
+         * Introduced to replace the 14-parameter {@link #createRequest} overload, which was hard
+         * to call correctly (positional drift, easy to mis-order similar-typed args). Server
+         * adapters (Netty, servlet, Grizzly) build one of these and pass it in.
          */
-        public static Request createRequest(String _remoteAddress, String _method, String _path, String _querystring, String _contentType,
-                InputStream _body, String _url, String _host, boolean _isLoopback, int _port, String _domain, boolean _secure,
-                Map<String, Http.Header> _headers, Map<String, Http.Cookie> _cookies) {
+        public record RequestData(
+                String remoteAddress,
+                String method,
+                String path,
+                String querystring,
+                String contentType,
+                InputStream body,
+                String url,
+                String host,
+                boolean isLoopback,
+                int port,
+                String domain,
+                boolean secure,
+                Map<String, Http.Header> headers,
+                Map<String, Http.Cookie> cookies) {}
+
+        /**
+         * Build a {@link Request} from a {@link RequestData} parameter object. This is the
+         * recommended construction path; it parses content-type, populates X-Forwarded-*,
+         * resolves format and initializes authorization.
+         */
+        public static Request createRequest(RequestData data) {
             Request newRequest = new Request();
 
-            newRequest.remoteAddress = _remoteAddress;
-            newRequest.method = _method;
-            newRequest.path = _path;
-            newRequest.querystring = _querystring;
+            newRequest.remoteAddress = data.remoteAddress();
+            newRequest.method = data.method();
+            newRequest.path = data.path();
+            newRequest.querystring = data.querystring();
 
             // must try to extract encoding-info from contentType
-            if (_contentType == null) {
+            if (data.contentType() == null) {
                 newRequest.contentType = "text/html";
             } else {
-
-                HTTP.ContentTypeWithEncoding contentTypeEncoding = HTTP.parseContentType(_contentType);
-                newRequest.contentType = contentTypeEncoding.contentType;
+                HTTP.ContentTypeWithEncoding contentTypeEncoding = HTTP.parseContentType(data.contentType());
+                newRequest.contentType = contentTypeEncoding.contentType();
                 // check for encoding-info
-                if (contentTypeEncoding.encoding != null) {
-                    // encoding-info was found in request
-                    newRequest.encoding = contentTypeEncoding.encoding;
+                if (contentTypeEncoding.encoding() != null) {
+                    newRequest.encoding = contentTypeEncoding.encoding();
                 }
             }
 
-            newRequest.body = _body;
-            newRequest.url = _url;
-            newRequest.host = _host;
-            newRequest.isLoopback = _isLoopback;
-            newRequest.port = _port;
-            newRequest.domain = _domain;
-            newRequest.secure = _secure;
+            newRequest.body = data.body();
+            newRequest.url = data.url();
+            newRequest.host = data.host();
+            newRequest.isLoopback = data.isLoopback();
+            newRequest.port = data.port();
+            newRequest.domain = data.domain();
+            newRequest.secure = data.secure();
 
-            if (_headers == null) {
-                _headers = new HashMap<>(16);
-            }
-            newRequest.headers = _headers;
-
-            if (_cookies == null) {
-                _cookies = new HashMap<>(16);
-            }
-            newRequest.cookies = _cookies;
+            newRequest.headers = data.headers() != null ? data.headers() : new HashMap<>(16);
+            newRequest.cookies = data.cookies() != null ? data.cookies() : new HashMap<>(16);
 
             newRequest.parseXForwarded();
-
             newRequest.resolveFormat();
-
             newRequest.authorizationInit();
 
             return newRequest;
+        }
+
+        /**
+         * Legacy 14-parameter constructor kept for backward compatibility with third-party
+         * adapter modules (e.g. PlayGrizzlyAdapter). New code should use {@link #createRequest(RequestData)}.
+         *
+         * @deprecated Use {@link #createRequest(RequestData)} for clearer call sites.
+         */
+        @Deprecated
+        public static Request createRequest(String _remoteAddress, String _method, String _path, String _querystring, String _contentType,
+                InputStream _body, String _url, String _host, boolean _isLoopback, int _port, String _domain, boolean _secure,
+                Map<String, Http.Header> _headers, Map<String, Http.Cookie> _cookies) {
+            return createRequest(new RequestData(_remoteAddress, _method, _path, _querystring, _contentType,
+                    _body, _url, _host, _isLoopback, _port, _domain, _secure, _headers, _cookies));
         }
 
         protected void parseXForwarded() {
@@ -795,7 +788,7 @@ public class Http {
         public void cacheFor(String etag, String duration, long lastModified) {
             int maxAge = Time.parseDuration(duration);
             setHeader("Cache-Control", "max-age=" + maxAge);
-            setHeader("Last-Modified", Utils.getHttpDateFormatter().format(new Date(lastModified)));
+            setHeader("Last-Modified", Utils.formatHttpDate(new Date(lastModified)));
             setHeader("Etag", etag);
         }
 

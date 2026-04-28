@@ -77,11 +77,7 @@ public class Job<V> extends Invoker.Invocation implements Callable<V> {
      */
     public Promise<V> now() {
         Promise<V> smartFuture = new Promise<>();
-        if (JobsPlugin.usingVirtualThreads) {
-            JobsPlugin.virtualExecutor.submit(getJobCallingCallable(smartFuture));
-        } else {
-            JobsPlugin.executor.submit(getJobCallingCallable(smartFuture));
-        }
+        JobsPlugin.scheduler.submit(getJobCallingCallable(smartFuture));
         return smartFuture;
     }
 
@@ -127,11 +123,7 @@ public class Job<V> extends Invoker.Invocation implements Callable<V> {
      */
     public Promise<V> in(int seconds) {
         Promise<V> smartFuture = new Promise<>();
-        if (JobsPlugin.usingVirtualThreads) {
-            JobsPlugin.virtualExecutor.schedule(getJobCallingCallable(smartFuture), seconds, TimeUnit.SECONDS);
-        } else {
-            JobsPlugin.executor.schedule(getJobCallingCallable(smartFuture), seconds, TimeUnit.SECONDS);
-        }
+        JobsPlugin.scheduler.schedule(getJobCallingCallable(smartFuture), seconds, TimeUnit.SECONDS);
         return smartFuture;
     }
 
@@ -169,11 +161,7 @@ public class Job<V> extends Invoker.Invocation implements Callable<V> {
      *            time in seconds
      */
     public void every(int seconds) {
-        if (JobsPlugin.usingVirtualThreads) {
-            JobsPlugin.virtualExecutor.scheduleWithFixedDelay(this, seconds, seconds, TimeUnit.SECONDS);
-        } else {
-            JobsPlugin.executor.scheduleWithFixedDelay(this, seconds, seconds, TimeUnit.SECONDS);
-        }
+        JobsPlugin.scheduler.scheduleWithFixedDelay(this, seconds, seconds, TimeUnit.SECONDS);
         JobsPlugin.scheduledJobs.add(this);
     }
 
@@ -268,7 +256,9 @@ public class Job<V> extends Invoker.Invocation implements Callable<V> {
     @Override
     public void _finally() {
         super._finally();
-        if (executor == JobsPlugin.executor || executor == JobsPlugin.virtualExecutor) {
+        // Compare against the active executor (whichever the facade is using).
+        if (executor == JobsPlugin.scheduler.platformExecutor()
+                || executor == JobsPlugin.scheduler.virtualExecutor()) {
             JobsPlugin.scheduleForCRON(this);
         }
     }

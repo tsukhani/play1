@@ -93,7 +93,7 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
 
     static {
         exposePlayServer = !"false".equals(Play.configuration.getProperty("http.exposePlayServer"));
-        allowedHttpMethodOverride = Stream.of(Play.configuration.getProperty("http.allowed.method.override", "").split(",")).collect(Collectors.toSet());
+        allowedHttpMethodOverride = Stream.of(Play.configuration.getProperty("http.allowed.method.override", "").split(",")).collect(Collectors.toUnmodifiableSet());
     }
 
     @Override
@@ -426,7 +426,7 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
             }
         }
 
-        nettyResponse.headers().set(DATE, Utils.getHttpDateFormatter().format(new Date()));
+        nettyResponse.headers().set(DATE, Utils.formatHttpDate(new Date()));
 
         Map<String, Http.Cookie> cookies = response.cookies;
 
@@ -526,12 +526,12 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
         File file = null;
         ChunkedInput<?> stream = null;
         InputStream is = null;
-        if (obj instanceof File) {
-            file = (File) obj;
-        } else if (obj instanceof InputStream) {
-            is = (InputStream) obj;
-        } else if (obj instanceof ChunkedInput) {
-            stream = (ChunkedInput<?>) obj;
+        if (obj instanceof File f) {
+            file = f;
+        } else if (obj instanceof InputStream in) {
+            is = in;
+        } else if (obj instanceof ChunkedInput<?> ci) {
+            stream = ci;
         }
 
         boolean keepAlive = isKeepAlive(nettyRequest);
@@ -547,13 +547,26 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
                 FileService.serve(file, nettyRequest, nettyResponse, ctx, request, response, ctx.channel());
             }
         } else if (is != null) {
-            ctx.channel().write(nettyResponse);
             ChannelFuture writeFuture;
             if (!nettyRequest.method().equals(HttpMethod.HEAD)
                     && !nettyResponse.status().equals(HttpResponseStatus.NOT_MODIFIED)) {
-                ctx.channel().write(new ChunkedStream(is));
-                writeFuture = ctx.channel().writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT);
+                // HttpUtil.setTransferEncodingChunked(true) sets Transfer-Encoding: chunked AND
+                // strips any Content-Length, which is the right framing for an unknown-length
+                // streamed body. Required because HttpContentCompressor only sets it when
+                // actually compressing — without this, non-Accept-Encoding clients would have
+                // no message-boundary signal on HTTP/1.1 keep-alive connections.
+                HttpUtil.setTransferEncodingChunked(nettyResponse, true);
+                ctx.channel().write(nettyResponse);
+                // Wrap as HttpChunkedInput so ChunkedWriteHandler emits HttpContent (not raw
+                // ByteBuf) — required for HttpContentCompressor to compress streaming bodies
+                // (SSE, InputStream-returning controllers). The wrapper appends LastHttpContent
+                // itself when drained, so no separate trailer write is needed; writeAndFlush's
+                // future still completes only after the entire stream has drained, preserving
+                // the keep-alive close-listener semantics.
+                writeFuture = ctx.channel().writeAndFlush(new HttpChunkedInput(new ChunkedStream(is)));
             } else {
+                // HEAD / 304: headers only, no body. Close the input we won't read.
+                ctx.channel().write(nettyResponse);
                 is.close();
                 writeFuture = ctx.channel().writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT);
             }
@@ -561,13 +574,20 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
                 writeFuture.addListener(ChannelFutureListener.CLOSE);
             }
         } else if (stream != null) {
-            ctx.channel().write(nettyResponse);
             ChannelFuture writeFuture;
             if (!nettyRequest.method().equals(HttpMethod.HEAD)
                     && !nettyResponse.status().equals(HttpResponseStatus.NOT_MODIFIED)) {
-                ctx.channel().write(stream);
-                writeFuture = ctx.channel().writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT);
+                HttpUtil.setTransferEncodingChunked(nettyResponse, true);
+                ctx.channel().write(nettyResponse);
+                // Cast: the ChunkedInput<?> handed in by Response.direct is in practice always
+                // a ChunkedInput<ByteBuf> (LazyChunkedInput, ChunkedStream, ChunkedFile, etc.).
+                // ChunkedWriteHandler likewise can only emit raw ByteBuf for non-HttpContent
+                // inputs, so the existing pipeline already implicitly assumed this.
+                @SuppressWarnings("unchecked")
+                ChunkedInput<ByteBuf> byteBufStream = (ChunkedInput<ByteBuf>) stream;
+                writeFuture = ctx.channel().writeAndFlush(new HttpChunkedInput(byteBufStream));
             } else {
+                ctx.channel().write(nettyResponse);
                 stream.close();
                 writeFuture = ctx.channel().writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT);
             }
@@ -619,8 +639,8 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
         String encoding = Play.defaultWebEncoding;
         if (contentType != null) {
             HTTP.ContentTypeWithEncoding contentTypeEncoding = HTTP.parseContentType(contentType);
-            if (contentTypeEncoding.encoding != null) {
-                encoding = contentTypeEncoding.encoding;
+            if (contentTypeEncoding.encoding() != null) {
+                encoding = contentTypeEncoding.encoding();
             }
         }
 
@@ -711,8 +731,9 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
 
             boolean secure = false;
 
-            Request request = Request.createRequest(remoteAddress, method, path, querystring, contentType, body, uri, host,
-                    isLoopback, port, domain, secure, getHeaders(nettyRequest), getCookies(nettyRequest));
+            Request request = Request.createRequest(new Request.RequestData(
+                    remoteAddress, method, path, querystring, contentType, body, uri, host,
+                    isLoopback, port, domain, secure, getHeaders(nettyRequest), getCookies(nettyRequest)));
 
             // If body is backed by a temp file, stash both the stream and the file so
             // NettyInvocation can close + delete them after the controller returns.
@@ -756,14 +777,10 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
 
     protected static Map<String, Http.Header> getHeaders(HttpRequest nettyRequest) {
         Map<String, Http.Header> headers = new HashMap<>(16);
-
         for (String key : nettyRequest.headers().names()) {
-            Http.Header hd = new Http.Header();
-            hd.name = key.toLowerCase();
-            hd.values = new ArrayList<>(nettyRequest.headers().getAll(key));
-            headers.put(hd.name, hd);
+            String lower = key.toLowerCase();
+            headers.put(lower, new Http.Header(lower, new ArrayList<>(nettyRequest.headers().getAll(key))));
         }
-
         return headers;
     }
 
@@ -834,25 +851,7 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
     }
 
     protected static Map<String, Object> getBindingForErrors(Exception e, boolean isError) {
-
-        Map<String, Object> binding = new HashMap<>();
-        if (!isError) {
-            binding.put("result", e);
-        } else {
-            binding.put("exception", e);
-        }
-        binding.put("session", Scope.Session.current());
-        binding.put("request", Http.Request.current());
-        binding.put("flash", Scope.Flash.current());
-        binding.put("params", Scope.Params.current());
-        binding.put("play", new Play());
-        try {
-            binding.put("errors", Validation.errors());
-        } catch (Exception ex) {
-            // Logger.error(ex, "Error when getting Validation errors");
-        }
-
-        return binding;
+        return ErrorBindings.forError(e, isError);
     }
 
     // TODO: add request and response as parameter
@@ -1093,7 +1092,7 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
             }
 
         } else {
-            httpResponse.headers().set(LAST_MODIFIED, Utils.getHttpDateFormatter().format(new Date(last)));
+            httpResponse.headers().set(LAST_MODIFIED, Utils.formatHttpDate(new Date(last)));
             if (useEtag) {
                 httpResponse.headers().set(ETAG, etag);
             }
@@ -1297,10 +1296,21 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
         ctx.channel().attr(WS_INBOUND).set(inbound);
 
         final Http.Outbound outbound = new Http.Outbound() {
-            final List<ChannelFuture> writeFutures = Collections.synchronizedList(new ArrayList<ChannelFuture>());
-            Promise<Void> closeTask;
+            // CopyOnWriteArrayList: writes happen at every send(); the EventLoop listener
+            // removes from the list on completion. Lock-free reads/iteration mean the I/O
+            // thread never contends with virtual-thread controllers calling send().
+            final List<ChannelFuture> writeFutures = new java.util.concurrent.CopyOnWriteArrayList<>();
+            // ReentrantLock instead of `synchronized this`: under virtual threads, a
+            // synchronized block bracketing Netty channel operations historically pinned
+            // the carrier and serialized the EventLoop listener against VT controllers.
+            // ReentrantLock supports the same reentrancy semantics close() relies on
+            // (close → futureClose → closeTask.invoke → onRedeem → finalizeClose).
+            final java.util.concurrent.locks.ReentrantLock outboundLock = new java.util.concurrent.locks.ReentrantLock();
+            // volatile so isOpen() can read without taking the lock — keeps the hot
+            // open-channel check off the critical path.
+            volatile Promise<Void> closeTask;
 
-            synchronized void writeAndClose(ChannelFuture writeFuture) {
+            void writeAndClose(ChannelFuture writeFuture) {
                 if (!writeFuture.isDone()) {
                     writeFutures.add(writeFuture);
                     writeFuture.addListener(cf -> {
@@ -1310,13 +1320,16 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
                 }
             }
 
-            // PF-34: synchronized so the EventLoop callback (writeAndClose's listener) reads
-            // closeTask under the same monitor as close() / isOpen() — fixes a JMM data race
-            // where the listener could observe a stale null closeTask and silently skip
-            // invoking the close promise, leaving the WebSocket connection orphaned.
-            synchronized void futureClose() {
-                if (closeTask != null && writeFutures.isEmpty()) {
-                    closeTask.invoke(null);
+            // Lock guards the closeTask read+invoke pair so a concurrent close() can't
+            // null the field out from under us. Reentrant: close() holds the lock too.
+            void futureClose() {
+                outboundLock.lock();
+                try {
+                    if (closeTask != null && writeFutures.isEmpty()) {
+                        closeTask.invoke(null);
+                    }
+                } finally {
+                    outboundLock.unlock();
                 }
             }
 
@@ -1337,35 +1350,41 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
             }
 
             @Override
-            public synchronized boolean isOpen() {
+            public boolean isOpen() {
                 return ctx.channel().isOpen() && closeTask == null;
             }
 
-            // PF-34: synchronized helper so the onRedeem callback (which may fire from any
-            // thread) mutates closeTask under the same monitor as close() / isOpen() /
-            // futureClose(). Java synchronized methods lock on the instance's monitor;
-            // reentrant when onRedeem fires inline from close().
             // PF-39: emit a CloseWebSocketFrame with status 1000 (Normal Closure) before
             // closing the TCP connection. Without it, peers observe status 1006 (Abnormal
             // Closure) and may trigger reconnect-on-error logic. Use the handshaker.close()
             // helper so the framing is RFC 6455 compliant; fall back to a plain disconnect
             // if the handshaker is missing (channel already torn down).
-            synchronized void finalizeClose() {
-                writeFutures.clear();
-                WebSocketServerHandshaker hs = ctx.channel().attr(WS_HANDSHAKER).get();
-                if (hs != null && ctx.channel().isOpen()) {
-                    hs.close(ctx.channel(), new CloseWebSocketFrame(WebSocketCloseStatus.NORMAL_CLOSURE));
-                } else {
-                    ctx.channel().disconnect();
+            void finalizeClose() {
+                outboundLock.lock();
+                try {
+                    writeFutures.clear();
+                    WebSocketServerHandshaker hs = ctx.channel().attr(WS_HANDSHAKER).get();
+                    if (hs != null && ctx.channel().isOpen()) {
+                        hs.close(ctx.channel(), new CloseWebSocketFrame(WebSocketCloseStatus.NORMAL_CLOSURE));
+                    } else {
+                        ctx.channel().disconnect();
+                    }
+                    closeTask = null;
+                } finally {
+                    outboundLock.unlock();
                 }
-                closeTask = null;
             }
 
             @Override
-            public synchronized void close() {
-                closeTask = new Promise<>();
-                closeTask.onRedeem(completed -> finalizeClose());
-                futureClose();
+            public void close() {
+                outboundLock.lock();
+                try {
+                    closeTask = new Promise<>();
+                    closeTask.onRedeem(completed -> finalizeClose());
+                    futureClose();
+                } finally {
+                    outboundLock.unlock();
+                }
             }
         };
 

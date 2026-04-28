@@ -24,6 +24,7 @@ import play.exceptions.UnexpectedException;
 import play.i18n.Lang;
 import play.libs.F;
 import play.libs.F.Promise;
+import play.utils.ExecutorFacade;
 import play.utils.PThreadFactory;
 import play.utils.VirtualThreadConfig;
 import play.utils.VirtualThreadScheduledExecutor;
@@ -34,21 +35,32 @@ import play.utils.VirtualThreadScheduledExecutor;
 public class Invoker {
 
     /**
-     * Main executor for requests invocations (platform thread mode).
-     * Null when virtual threads are enabled.
+     * Unified scheduling facade. All internal call sites route dispatches through this;
+     * the {@link #executor} / {@link #virtualExecutor} / {@link #usingVirtualThreads}
+     * fields below are deprecated mirrors kept for binary compatibility with third-party
+     * plugins.
      */
-    public static ScheduledThreadPoolExecutor executor = null;
+    public static final ExecutorFacade scheduler = new ExecutorFacade();
 
     /**
-     * Virtual thread executor for requests invocations.
-     * Null when platform threads are used.
+     * @deprecated Use {@link #scheduler} (or {@link ExecutorFacade#platformExecutor()})
+     *     for status reporting. Direct mutation of this field is unsupported and will
+     *     desynchronize from the facade. Will be removed in a future release.
      */
-    public static VirtualThreadScheduledExecutor virtualExecutor = null;
+    @Deprecated
+    public static volatile ScheduledThreadPoolExecutor executor = null;
 
     /**
-     * Whether the invoker is using virtual threads.
+     * @deprecated Use {@link #scheduler} (or {@link ExecutorFacade#virtualExecutor()}).
      */
-    public static boolean usingVirtualThreads = false;
+    @Deprecated
+    public static volatile VirtualThreadScheduledExecutor virtualExecutor = null;
+
+    /**
+     * @deprecated Use {@link ExecutorFacade#isUsingVirtualThreads()} on {@link #scheduler}.
+     */
+    @Deprecated
+    public static volatile boolean usingVirtualThreads = false;
 
     /**
      * Run the code in a new thread took from a thread pool.
@@ -58,15 +70,13 @@ public class Invoker {
      * @return The future object, to know when the task is completed
      */
     public static Future<?> invoke(Invocation invocation) {
-        if (usingVirtualThreads) {
-            invocation.waitInQueue = MonitorFactory.start("Waiting for execution");
-            return virtualExecutor.submit(invocation);
+        if (!scheduler.isUsingVirtualThreads()) {
+            ensureExecutor();
+            Monitor monitor = MonitorFactory.getMonitor("Invoker queue size", "elmts.");
+            monitor.add(scheduler.platformExecutor().getQueue().size());
         }
-        ensureExecutor();
-        Monitor monitor = MonitorFactory.getMonitor("Invoker queue size", "elmts.");
-        monitor.add(executor.getQueue().size());
         invocation.waitInQueue = MonitorFactory.start("Waiting for execution");
-        return executor.submit(invocation);
+        return scheduler.submit(invocation);
     }
 
     /**
@@ -79,13 +89,12 @@ public class Invoker {
      * @return The future object, to know when the task is completed
      */
     public static Future<?> invoke(Invocation invocation, long millis) {
-        if (usingVirtualThreads) {
-            return virtualExecutor.schedule(invocation, millis, TimeUnit.MILLISECONDS);
+        if (!scheduler.isUsingVirtualThreads()) {
+            ensureExecutor();
+            Monitor monitor = MonitorFactory.getMonitor("Invocation queue", "elmts.");
+            monitor.add(scheduler.platformExecutor().getQueue().size());
         }
-        ensureExecutor();
-        Monitor monitor = MonitorFactory.getMonitor("Invocation queue", "elmts.");
-        monitor.add(executor.getQueue().size());
-        return executor.schedule(invocation, millis, TimeUnit.MILLISECONDS);
+        return scheduler.schedule(invocation, millis, TimeUnit.MILLISECONDS);
     }
 
     /**
@@ -116,14 +125,16 @@ public class Invoker {
     }
 
     static void resetClassloaders() {
-        if (usingVirtualThreads) {
+        if (scheduler.isUsingVirtualThreads()) {
             // Virtual threads cannot be enumerated with Thread.enumerate().
             // Each virtual thread sets its context classloader at the start of an invocation
             // (in Invocation.init() and Invocation.before()), so stale classloaders are
             // naturally replaced on the next invocation.
             return;
         }
-        Thread[] executorThreads = new Thread[executor.getPoolSize()];
+        ScheduledThreadPoolExecutor pool = scheduler.platformExecutor();
+        if (pool == null) return;
+        Thread[] executorThreads = new Thread[pool.getPoolSize()];
         Thread.enumerate(executorThreads);
         for (Thread thread : executorThreads) {
             if (thread != null && thread.getContextClassLoader() instanceof ApplicationClassloader)
@@ -202,14 +213,9 @@ public class Invoker {
 
         @Override
         public String toString() {
-            StringBuilder builder = new StringBuilder();
-            builder.append("InvocationType: ");
-            builder.append(invocationType);
-            builder.append(". annotations: ");
-            for (Annotation annotation : annotations) {
-                builder.append(annotation.toString()).append(",");
-            }
-            return builder.toString();
+            return "InvocationType: %s. annotations: %s".formatted(
+                    invocationType,
+                    annotations.stream().map(Object::toString).collect(java.util.stream.Collectors.joining(",")));
         }
     }
 
@@ -294,8 +300,8 @@ public class Invoker {
          */
         public void onException(Throwable e) {
             Play.pluginCollection.onInvocationException(e);
-            if (e instanceof PlayException) {
-                throw (PlayException) e;
+            if (e instanceof PlayException pe) {
+                throw pe;
             }
             throw new UnexpectedException(e);
         }
@@ -398,27 +404,50 @@ public class Invoker {
      * init() will replace it with the properly configured executor.
      */
     private static synchronized void ensureExecutor() {
-        if (executor == null) {
-            executor = new ScheduledThreadPoolExecutor(1, new PThreadFactory("play"), new ThreadPoolExecutor.AbortPolicy());
+        if (scheduler.platformExecutor() == null && !scheduler.isUsingVirtualThreads()) {
+            ScheduledThreadPoolExecutor p = new ScheduledThreadPoolExecutor(1, new PThreadFactory("play"), new ThreadPoolExecutor.AbortPolicy());
+            scheduler.usePlatform(p);
+            executor = p;
         }
     }
 
     /**
      * Initialize the invoker executor. Must be called after configuration is loaded.
+     * Shuts down any pre-existing executor first so DEV-mode hot reloads don't leak
+     * scheduler threads or stale delayed work across restarts.
+     *
+     * Synchronized on the same monitor as {@link #stop()} so DEV-mode hot reloads cannot
+     * interleave a swap with a concurrent shutdown.
      */
-    public static void init() {
+    public static synchronized void init() {
+        stop();
         if (VirtualThreadConfig.isInvokerEnabled()) {
-            usingVirtualThreads = true;
-            virtualExecutor = new VirtualThreadScheduledExecutor("play");
+            VirtualThreadScheduledExecutor v = new VirtualThreadScheduledExecutor("play");
+            scheduler.useVirtual(v);
+            virtualExecutor = v;
             executor = null;
+            usingVirtualThreads = true;
             Logger.info("Invoker using virtual threads");
         } else {
-            usingVirtualThreads = false;
-            virtualExecutor = null;
             int core = Integer.parseInt(Play.configuration.getProperty("play.pool",
-                    Play.mode == Mode.DEV ? "1" : ((Runtime.getRuntime().availableProcessors() + 1) + "")));
-            executor = new ScheduledThreadPoolExecutor(core, new PThreadFactory("play"), new ThreadPoolExecutor.AbortPolicy());
+                    Play.mode == Mode.DEV ? "1" : String.valueOf(Runtime.getRuntime().availableProcessors() + 1)));
+            ScheduledThreadPoolExecutor p = new ScheduledThreadPoolExecutor(core, new PThreadFactory("play"), new ThreadPoolExecutor.AbortPolicy());
+            scheduler.usePlatform(p);
+            executor = p;
+            virtualExecutor = null;
+            usingVirtualThreads = false;
         }
+    }
+
+    /**
+     * Shut down whichever executor is currently active and release its threads.
+     * Called from {@link Play#stop()} and from {@link #init()} so that DEV restarts and
+     * test teardowns don't accumulate scheduler thread pools or pending delayed tasks.
+     */
+    public static synchronized void stop() {
+        scheduler.shutdownNow();
+        executor = null;
+        virtualExecutor = null;
     }
 
     /**
@@ -463,7 +492,11 @@ public class Invoker {
      */
     static class WaitForTasksCompletion extends Thread {
 
-        static WaitForTasksCompletion instance;
+        // volatile: this is the classic double-checked-lock instance field. The synchronized
+        // block in waitFor() guarantees publication for a fresh instance, but a *read* of the
+        // field from another thread (a future caller checking `instance != null` outside the
+        // lock) needs volatile to see the published Thread reference.
+        static volatile WaitForTasksCompletion instance;
         final Map<Future<?>, Invocation> queue = new ConcurrentHashMap<>();
 
         public WaitForTasksCompletion() {
@@ -474,12 +507,20 @@ public class Invoker {
         public static <V> void waitFor(Future<V> task, final Invocation invocation) {
             if (task instanceof Promise) {
                 Promise<V> smartFuture = (Promise<V>) task;
-                smartFuture.onRedeem(result -> {
-                    if (usingVirtualThreads) {
-                        virtualExecutor.submit(invocation);
-                    } else {
-                        executor.submit(invocation);
+                smartFuture.onRedeem(result -> scheduler.submit(invocation));
+            } else if (scheduler.isUsingVirtualThreads()) {
+                // Block a cheap virtual thread on the future instead of polling. Avoids the
+                // 50 ms scan loop and gives sub-millisecond resume latency. Virtual threads
+                // make the per-future thread allocation negligible.
+                scheduler.submit(() -> {
+                    try {
+                        task.get();
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                    } catch (Exception ignored) {
+                        // The invocation will inspect task state itself; we just resume it.
                     }
+                    scheduler.submit(invocation);
                 });
             } else {
                 synchronized (WaitForTasksCompletion.class) {
@@ -495,23 +536,22 @@ public class Invoker {
 
         @Override
         public void run() {
-            while (true) {
+            while (!Thread.currentThread().isInterrupted()) {
                 try {
                     if (!queue.isEmpty()) {
                         for (Future<?> task : new HashSet<>(queue.keySet())) {
                             if (task.isDone()) {
                                 Invocation invocation = queue.remove(task);
-                                if (usingVirtualThreads) {
-                                    virtualExecutor.submit(invocation);
-                                } else {
-                                    executor.submit(invocation);
-                                }
+                                scheduler.submit(invocation);
                             }
                         }
                     }
                     Thread.sleep(50);
                 } catch (InterruptedException ex) {
-                    Logger.warn(ex, "While waiting for task completions");
+                    // Restore interrupt and exit; the loop's interrupt-check will not re-enter.
+                    Thread.currentThread().interrupt();
+                    Logger.info("WaitForTasksCompletion interrupted, exiting");
+                    return;
                 }
             }
         }

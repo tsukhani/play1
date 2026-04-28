@@ -633,8 +633,12 @@ public class ActionInvoker {
             } else {
                 params.putAll(Scope.Params.current().all());
             }
-            Logger.trace("getActionMethodArgs name [" + paramsNames[i] + "] annotation ["
-                    + Utils.join(method.getParameterAnnotations()[i], " ") + "]");
+            // Guarded so Utils.join's allocation is skipped when trace is off (this loop runs
+            // once per action parameter on every invocation).
+            if (Logger.isTraceEnabled()) {
+                Logger.trace("getActionMethodArgs name [%s] annotation [%s]",
+                        paramsNames[i], Utils.join(method.getParameterAnnotations()[i], " "));
+            }
 
             RootParamNode root = ParamNode.convert(params);
             rArgs[i] = Binder.bind(root, paramsNames[i], method.getParameterTypes()[i], method.getGenericParameterTypes()[i],

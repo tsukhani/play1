@@ -341,7 +341,9 @@ public class Play {
         try {
             URL versionUrl = Play.class.getResource("/play/version");
             // Read the content of the file
-            Play.version = new LineNumberReader(new InputStreamReader(versionUrl.openStream())).readLine();
+            try (LineNumberReader versionReader = new LineNumberReader(new InputStreamReader(versionUrl.openStream(), StandardCharsets.UTF_8))) {
+                Play.version = versionReader.readLine();
+            }
 
             // This is used only by the embedded server (Mina, Netty, Jetty etc)
             URI uri = new URI(versionUrl.toString().replace(" ", "%20"));
@@ -616,6 +618,7 @@ public class Play {
             Cache.stop();
             Router.lastLoading = 0L;
             Invoker.resetClassloaders();
+            Invoker.stop();
         }
     }
 
@@ -707,13 +710,15 @@ public class Play {
         Enumeration<URL> urls = null;
         try {
             urls = Play.class.getClassLoader().getResources("play.static");
-        } catch (Exception e) {
+        } catch (IOException e) {
+            // Surface classloader resource-discovery errors so a missing/corrupt jar isn't
+            // diagnosed by silent absence of plugin static-init.
+            Logger.warn(e, "Cannot enumerate play.static resources; skipping plugin static-init");
         }
         while (urls != null && urls.hasMoreElements()) {
             URL url = urls.nextElement();
-            try {
-                BufferedReader reader = new BufferedReader(new InputStreamReader(url.openStream(), StandardCharsets.UTF_8));
-                String line = null;
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(url.openStream(), StandardCharsets.UTF_8))) {
+                String line;
                 while ((line = reader.readLine()) != null) {
                     try {
                         Class.forName(line);
@@ -743,22 +748,20 @@ public class Play {
      *            the application path virtual file
      */
     public static void loadModules(VirtualFile appRoot) {
-        if (System.getenv("MODULES") != null) {
+        String modulesEnv = System.getenv("MODULES");
+        if (modulesEnv != null && !modulesEnv.trim().isEmpty()) {
             // Modules path is prepended with a env property
-            if (System.getenv("MODULES") != null && System.getenv("MODULES").trim().length() > 0) {
-
-                for (String m : System.getenv("MODULES").split(File.pathSeparator)) {
-                    File modulePath = new File(m);
-                    if (!modulePath.exists() || !modulePath.isDirectory()) {
-                        Logger.error("Module %s will not be loaded because %s does not exist", modulePath.getName(),
-                                modulePath.getAbsolutePath());
-                    } else {
-                        String modulePathName = modulePath.getName();
-                        String moduleName = modulePathName.contains("-")
-                                ? modulePathName.substring(0, modulePathName.lastIndexOf('-'))
-                                : modulePathName;
-                        addModule(appRoot, moduleName, modulePath);
-                    }
+            for (String m : modulesEnv.split(File.pathSeparator)) {
+                File modulePath = new File(m);
+                if (!modulePath.exists() || !modulePath.isDirectory()) {
+                    Logger.error("Module %s will not be loaded because %s does not exist", modulePath.getName(),
+                            modulePath.getAbsolutePath());
+                } else {
+                    String modulePathName = modulePath.getName();
+                    String moduleName = modulePathName.contains("-")
+                            ? modulePathName.substring(0, modulePathName.lastIndexOf('-'))
+                            : modulePathName;
+                    addModule(appRoot, moduleName, modulePath);
                 }
             }
         }

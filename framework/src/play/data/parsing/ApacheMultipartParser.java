@@ -528,8 +528,8 @@ public class ApacheMultipartParser extends DataParser {
                         String _contentType = fileItem.getContentType();
                         if (_contentType != null) {
                             HTTP.ContentTypeWithEncoding contentTypeEncoding = HTTP.parseContentType(_contentType);
-                            if (contentTypeEncoding.encoding != null) {
-                                _encoding = contentTypeEncoding.encoding;
+                            if (contentTypeEncoding.encoding() != null) {
+                                _encoding = contentTypeEncoding.encoding();
                             }
                         }
 

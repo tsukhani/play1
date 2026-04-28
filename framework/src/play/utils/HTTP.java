@@ -14,15 +14,7 @@ import static org.apache.commons.lang3.StringUtils.isEmpty;
 
 public class HTTP {
 
-    public static class ContentTypeWithEncoding {
-        public final String contentType;
-        public final String encoding;
-
-        public ContentTypeWithEncoding(String contentType, String encoding) {
-            this.contentType = contentType;
-            this.encoding = encoding;
-        }
-    }
+    public record ContentTypeWithEncoding(String contentType, String encoding) {}
 
     public static ContentTypeWithEncoding parseContentType(String contentType) {
         if (contentType == null) {
@@ -106,7 +98,7 @@ public class HTTP {
 
         if (!isEmpty(ifModifiedSince)) {
             try {
-                Date browserDate = Utils.getHttpDateFormatter().parse(ifModifiedSince);
+                Date browserDate = Utils.parseHttpDate(ifModifiedSince);
                 return browserDate.getTime() < last;
             } catch (ParseException ex) {
                 Logger.warn("Can't parse 'If-Modified-Since' header date: %s", ex.getMessage());

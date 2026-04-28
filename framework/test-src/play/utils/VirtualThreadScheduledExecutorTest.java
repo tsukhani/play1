@@ -5,7 +5,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -13,6 +15,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 public class VirtualThreadScheduledExecutorTest {
 
@@ -101,6 +104,88 @@ public class VirtualThreadScheduledExecutorTest {
         assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
         assertThat(count.get()).isGreaterThanOrEqualTo(3);
         assertThat(allVirtual.get()).isTrue();
+    }
+
+    @Test
+    void scheduleWithFixedDelaySuppressesFurtherExecutionsOnThrow() throws Exception {
+        // Matches ScheduledThreadPoolExecutor#scheduleWithFixedDelay: a throwing run
+        // terminates the periodic task. get() then reports the cause via ExecutionException.
+        AtomicInteger runs = new AtomicInteger(0);
+        ScheduledFuture<?> future = executor.scheduleWithFixedDelay(() -> {
+            runs.incrementAndGet();
+            throw new IllegalStateException("boom");
+        }, 0, 50, TimeUnit.MILLISECONDS);
+
+        assertThatThrownBy(() -> future.get(2, TimeUnit.SECONDS))
+                .isInstanceOf(ExecutionException.class)
+                .hasRootCauseInstanceOf(IllegalStateException.class);
+
+        // Allow time for any (incorrect) reschedules to fire — there should be exactly one run.
+        int runsAtFailure = runs.get();
+        Thread.sleep(300);
+        assertThat(runs.get()).isEqualTo(runsAtFailure);
+        assertThat(future.isDone()).isTrue();
+        assertThat(future.isCancelled()).isFalse(); // abnormal termination, not user cancel
+    }
+
+    @Test
+    void cancelPropagatesInterruptToInFlightVirtualThread() throws Exception {
+        // After the scheduler hands work to the virtual executor, cancel(true) must
+        // interrupt the running virtual thread — not just mark the wrapper cancelled
+        // while side-effects continue.
+        CountDownLatch started = new CountDownLatch(1);
+        AtomicBoolean wasInterrupted = new AtomicBoolean(false);
+        AtomicBoolean ranToCompletion = new AtomicBoolean(false);
+
+        ScheduledFuture<?> future = executor.schedule(() -> {
+            started.countDown();
+            try {
+                Thread.sleep(5_000); // long enough that the test always cancels first
+            } catch (InterruptedException ie) {
+                wasInterrupted.set(true);
+                Thread.currentThread().interrupt();
+                return;
+            }
+            ranToCompletion.set(true);
+        }, 0, TimeUnit.MILLISECONDS);
+
+        assertThat(started.await(2, TimeUnit.SECONDS)).isTrue();
+        future.cancel(true);
+
+        // Give the interrupt time to land. Without the fix, the sleep would never be
+        // interrupted and ranToCompletion would eventually flip true.
+        Thread.sleep(200);
+        assertThat(wasInterrupted.get()).isTrue();
+        assertThat(ranToCompletion.get()).isFalse();
+    }
+
+    @Test
+    void scheduleWithFixedDelayCancelInterruptsActiveRun() throws Exception {
+        CountDownLatch started = new CountDownLatch(1);
+        AtomicBoolean wasInterrupted = new AtomicBoolean(false);
+        AtomicInteger runs = new AtomicInteger(0);
+
+        ScheduledFuture<?> handle = executor.scheduleWithFixedDelay(() -> {
+            runs.incrementAndGet();
+            started.countDown();
+            try {
+                Thread.sleep(5_000);
+            } catch (InterruptedException ie) {
+                wasInterrupted.set(true);
+                Thread.currentThread().interrupt();
+            }
+        }, 0, 100, TimeUnit.MILLISECONDS);
+
+        assertThat(started.await(2, TimeUnit.SECONDS)).isTrue();
+        handle.cancel(true);
+
+        Thread.sleep(200);
+        assertThat(wasInterrupted.get()).isTrue();
+        assertThat(handle.isCancelled()).isTrue();
+        // No further runs should have been scheduled after cancellation.
+        int runsAtCancel = runs.get();
+        Thread.sleep(300);
+        assertThat(runs.get()).isEqualTo(runsAtCancel);
     }
 
     @Test

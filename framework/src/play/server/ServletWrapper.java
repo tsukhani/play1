@@ -74,7 +74,7 @@ public class ServletWrapper extends HttpServlet implements ServletContextListene
      */
     private static final Set<String> allowedHttpMethodOverride;
     static {
-        allowedHttpMethodOverride = Stream.of(Play.configuration.getProperty("http.allowed.method.override", "").split(",")).collect(Collectors.toSet());
+        allowedHttpMethodOverride = Stream.of(Play.configuration.getProperty("http.allowed.method.override", "").split(",")).collect(Collectors.toUnmodifiableSet());
     }
 
     @Override
@@ -209,7 +209,7 @@ public class ServletWrapper extends HttpServlet implements ServletContextListene
                 } else {
                     long last = file.lastModified();
                     String etag = "\"" + last + "-" + file.hashCode() + "\"";
-                    String lastDate = Utils.getHttpDateFormatter().format(new Date(last));
+                    String lastDate = Utils.formatHttpDate(new Date(last));
                     if (!isModified(etag, last, servletRequest)) {
                         servletResponse.setHeader("Etag", etag);
                         servletResponse.setStatus(304);
@@ -261,7 +261,11 @@ public class ServletWrapper extends HttpServlet implements ServletContextListene
         String host = httpServletRequest.getHeader("host");
         int port = 0;
         String domain = null;
-        if (host.contains(":")) {
+        if (host == null) {
+            host = "";
+            port = 80;
+            domain = "";
+        } else if (host.contains(":")) {
             port = Integer.parseInt(host.split(":")[1]);
             domain = host.split(":")[0];
         } else {
@@ -274,7 +278,7 @@ public class ServletWrapper extends HttpServlet implements ServletContextListene
         boolean isLoopback = host.matches("^127\\.0\\.0\\.1:?[0-9]*$");
 
 
-        Request request = Request.createRequest(
+        Request request = Request.createRequest(new Request.RequestData(
                 remoteAddress,
                 method,
                 path,
@@ -288,7 +292,7 @@ public class ServletWrapper extends HttpServlet implements ServletContextListene
                 domain,
                 secure,
                 getHeaders(httpServletRequest),
-                getCookies(httpServletRequest));
+                getCookies(httpServletRequest)));
 
 
         Request.current.set(request);
@@ -299,20 +303,10 @@ public class ServletWrapper extends HttpServlet implements ServletContextListene
 
     protected static Map<String, Http.Header> getHeaders(HttpServletRequest httpServletRequest) {
         Map<String, Http.Header> headers = new HashMap<>(16);
-
-        Enumeration<String> headersNames = httpServletRequest.getHeaderNames();
-        while (headersNames.hasMoreElements()) {
-            Http.Header hd = new Http.Header();
-            hd.name = headersNames.nextElement();
-            hd.values = new ArrayList<>();
-            Enumeration<String> enumValues = httpServletRequest.getHeaders(hd.name);
-            while (enumValues.hasMoreElements()) {
-                String value = enumValues.nextElement();
-                hd.values.add(value);
-            }
-            headers.put(hd.name.toLowerCase(), hd);
+        for (String name : Collections.list(httpServletRequest.getHeaderNames())) {
+            String lower = name.toLowerCase();
+            headers.put(lower, new Http.Header(lower, Collections.list(httpServletRequest.getHeaders(name))));
         }
-
         return headers;
     }
 
@@ -339,18 +333,7 @@ public class ServletWrapper extends HttpServlet implements ServletContextListene
         Logger.warn("404 -> %s %s (%s)", servletRequest.getMethod(), servletRequest.getRequestURI(), e.getMessage());
         servletResponse.setStatus(404);
         servletResponse.setContentType("text/html");
-        Map<String, Object> binding = new HashMap<>();
-        binding.put("result", e);
-        binding.put("session", Scope.Session.current());
-        binding.put("request", Http.Request.current());
-        binding.put("flash", Scope.Flash.current());
-        binding.put("params", Scope.Params.current());
-        binding.put("play", new Play());
-        try {
-            binding.put("errors", Validation.errors());
-        } catch (Exception ex) {
-            Logger.error(ex, "Failed to bind errors");
-        }
+        Map<String, Object> binding = ErrorBindings.forError(e, false);
         String format = Request.current().format;
         servletResponse.setStatus(404);
         // Do we have an ajax request? If we have then we want to display some text even if it is html that is requested
@@ -371,7 +354,6 @@ public class ServletWrapper extends HttpServlet implements ServletContextListene
 
     public void serve500(Exception e, HttpServletRequest request, HttpServletResponse response) {
         try {
-            Map<String, Object> binding = new HashMap<>();
             if (!(e instanceof PlayException)) {
                 e = new play.exceptions.UnexpectedException(e);
             }
@@ -392,17 +374,7 @@ public class ServletWrapper extends HttpServlet implements ServletContextListene
             } catch (Exception exx) {
                 Logger.error(exx, "Failed to flush cookies");
             }
-            binding.put("exception", e);
-            binding.put("session", Scope.Session.current());
-            binding.put("request", Http.Request.current());
-            binding.put("flash", Scope.Flash.current());
-            binding.put("params", Scope.Params.current());
-            binding.put("play", new Play());
-            try {
-                binding.put("errors", Validation.errors());
-            } catch (Exception ex) {
-                Logger.error(ex, "Failed to bind errors");
-            }
+            Map<String, Object> binding = ErrorBindings.forError(e, true);
             response.setStatus(500);
             String format = "html";
             if (Request.current() != null) {

@@ -4,10 +4,9 @@ import java.io.File;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Paths;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 import play.Logger;
@@ -18,12 +17,14 @@ import play.vfs.VirtualFile;
 
 public class TemplateLoader {
 
-    protected static final Map<String, BaseTemplate> templates = new HashMap<>();
+    // ConcurrentHashMap so concurrent compute()/clear()/remove() from request threads
+    // (and especially virtual-thread workers) don't corrupt the cache or duplicate compilation.
+    protected static final Map<String, BaseTemplate> templates = new ConcurrentHashMap<>();
     /**
      * See getUniqueNumberForTemplateFile() for more info
      */
     private static final AtomicLong nextUniqueNumber = new AtomicLong(1000);// we start on 1000
-    private static final Map<String, String> templateFile2UniqueNumber = Collections.synchronizedMap(new HashMap<String, String>());
+    private static final Map<String, String> templateFile2UniqueNumber = new ConcurrentHashMap<>();
 
     /**
      * All loaded templates is cached in the templates-list using a key. This key is included as part of the classname
@@ -41,14 +42,10 @@ public class TemplateLoader {
         // If we did some encoding on the path, the result would be at least as long as the path.
         // Therefor we assign a unique number to each path the first time we see it, and store it..
         // This way, all seen paths gets a unique number. This number is our UniqueValidClassnamePart..
-
-        String uniqueNumber = templateFile2UniqueNumber.get(path);
-        if (uniqueNumber == null) {
-            // this is the first time we see this path - must assign a unique number to it.
-            uniqueNumber = Long.toString(nextUniqueNumber.getAndIncrement());
-            templateFile2UniqueNumber.put(path, uniqueNumber);
-        }
-        return uniqueNumber;
+        // computeIfAbsent makes the get-then-put compound atomic; without it, concurrent first-access
+        // for the same path can burn counter values (and under VT this contends across millions of carriers).
+        return templateFile2UniqueNumber.computeIfAbsent(
+                path, k -> Long.toString(nextUniqueNumber.getAndIncrement()));
     }
 
     /**

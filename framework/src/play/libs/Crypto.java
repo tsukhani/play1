@@ -121,7 +121,7 @@ public class Crypto {
     public static String passwordHash(String input, HashType hashType) {
         try {
             MessageDigest m = MessageDigest.getInstance(hashType.toString());
-            byte[] out = m.digest(input.getBytes());
+            byte[] out = m.digest(input.getBytes(UTF_8));
             return new String(Base64.encodeBase64(out));
         } catch (NoSuchAlgorithmException e) {
             throw new RuntimeException(e);
@@ -188,8 +188,7 @@ public class Crypto {
      */
     public static String encryptAES(String value) {
         try {
-            byte[] keyBytes = Arrays.copyOf(
-                    Play.configuration.getProperty("application.secret").getBytes(StandardCharsets.UTF_8), 16);
+            byte[] keyBytes = Arrays.copyOf(Play.secretKey.getBytes(UTF_8), 16);
             SecretKeySpec skeySpec = new SecretKeySpec(keyBytes, "AES");
 
             SecureRandom random = new SecureRandom();
@@ -211,7 +210,12 @@ public class Crypto {
     }
 
     /**
-     * Encrypt a String with the AES encryption standard. Private key must have a length of 16 bytes
+     * Encrypt a String with the AES encryption standard. Private key must have a length of 16 bytes.
+     *
+     * @deprecated This variant resolves to {@code AES/ECB/PKCS5Padding}, which is deterministic
+     *             and unsafe for any payload longer than one block. Use {@link #encryptAES(String)}
+     *             which uses {@code AES/GCM/NoPadding} with a random IV. Will be removed in a
+     *             future release.
      *
      * @param value
      *            The String to encrypt
@@ -219,13 +223,14 @@ public class Crypto {
      *            The key used to encrypt
      * @return An hexadecimal encrypted string
      */
+    @Deprecated
     public static String encryptAES(String value, String privateKey) {
         try {
-            byte[] raw = privateKey.getBytes();
+            byte[] raw = privateKey.getBytes(UTF_8);
             SecretKeySpec skeySpec = new SecretKeySpec(raw, "AES");
             Cipher cipher = Cipher.getInstance("AES");
             cipher.init(Cipher.ENCRYPT_MODE, skeySpec);
-            return Codec.byteToHexString(cipher.doFinal(value.getBytes()));
+            return Codec.byteToHexString(cipher.doFinal(value.getBytes(UTF_8)));
         } catch (Exception ex) {
             throw new UnexpectedException(ex);
         }
@@ -240,8 +245,7 @@ public class Crypto {
      */
     public static String decryptAES(String value) {
         try {
-            byte[] keyBytes = Arrays.copyOf(
-                    Play.configuration.getProperty("application.secret").getBytes(StandardCharsets.UTF_8), 16);
+            byte[] keyBytes = Arrays.copyOf(Play.secretKey.getBytes(UTF_8), 16);
             SecretKeySpec skeySpec = new SecretKeySpec(keyBytes, "AES");
 
             byte[] combined = Base64.decodeBase64(value.getBytes(StandardCharsets.UTF_8));
@@ -259,7 +263,10 @@ public class Crypto {
     }
 
     /**
-     * Decrypt a String with the AES encryption standard. Private key must have a length of 16 bytes
+     * Decrypt a String with the AES encryption standard. Private key must have a length of 16 bytes.
+     *
+     * @deprecated Companion to the deprecated {@link #encryptAES(String, String)}. Use
+     *             {@link #decryptAES(String)} for ciphertexts produced by the GCM variant.
      *
      * @param value
      *            An hexadecimal encrypted string
@@ -267,13 +274,14 @@ public class Crypto {
      *            The key used to encrypt
      * @return The decrypted String
      */
+    @Deprecated
     public static String decryptAES(String value, String privateKey) {
         try {
-            byte[] raw = privateKey.getBytes();
+            byte[] raw = privateKey.getBytes(UTF_8);
             SecretKeySpec skeySpec = new SecretKeySpec(raw, "AES");
             Cipher cipher = Cipher.getInstance("AES");
             cipher.init(Cipher.DECRYPT_MODE, skeySpec);
-            return new String(cipher.doFinal(Codec.hexStringToByte(value)));
+            return new String(cipher.doFinal(Codec.hexStringToByte(value)), UTF_8);
         } catch (Exception ex) {
             throw new UnexpectedException(ex);
         }

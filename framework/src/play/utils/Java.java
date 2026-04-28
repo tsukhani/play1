@@ -17,8 +17,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.FutureTask;
 
 import javassist.ClassPool;
@@ -165,14 +165,8 @@ public class Java {
     }
 
     public static Object invokeChildOrStatic(Class<?> clazz, String method, Object... args) throws Exception {
-        Class<?> invokedClass = null;
         List<Class> assignableClasses = Play.classloader.getAssignableClasses(clazz);
-        if (assignableClasses.size() == 0) {
-            invokedClass = clazz;
-        } else {
-            invokedClass = assignableClasses.get(0);
-        }
-
+        Class<?> invokedClass = assignableClasses.isEmpty() ? clazz : assignableClasses.get(0);
         return Java.invokeStaticOrParent(invokedClass, method, args);
     }
 
@@ -233,37 +227,21 @@ public class Java {
     }
 
     public static String rawJavaType(Class<?> clazz) {
-        if (clazz.getName().equals("void")) {
-            return "V";
-        }
-        if (clazz.getName().equals("boolean")) {
-            return "Z";
-        }
-        if (clazz.getName().equals("byte")) {
-            return "B";
-        }
-        if (clazz.getName().equals("char")) {
-            return "C";
-        }
-        if (clazz.getName().equals("double")) {
-            return "D";
-        }
-        if (clazz.getName().equals("float")) {
-            return "F";
-        }
-        if (clazz.getName().equals("int")) {
-            return "I";
-        }
-        if (clazz.getName().equals("long")) {
-            return "J";
-        }
-        if (clazz.getName().equals("short")) {
-            return "S";
-        }
-        if (clazz.getName().startsWith("[")) {
-            return clazz.getName().replace('.', '/');
-        }
-        return "L" + (clazz.getName().replace('.', '/')) + ";";
+        String name = clazz.getName();
+        return switch (name) {
+            case "void"    -> "V";
+            case "boolean" -> "Z";
+            case "byte"    -> "B";
+            case "char"    -> "C";
+            case "double"  -> "D";
+            case "float"   -> "F";
+            case "int"     -> "I";
+            case "long"    -> "J";
+            case "short"   -> "S";
+            default -> name.startsWith("[")
+                    ? name.replace('.', '/')
+                    : "L" + name.replace('.', '/') + ";";
+        };
     }
 
     /**
@@ -306,30 +284,26 @@ public class Java {
         }
     }
 
-    /** cache */
-    private static final Map<Field, FieldWrapper> wrappers = new HashMap<>();
+    // ConcurrentHashMap so request-path callers (especially virtual-thread workers) can
+    // populate the cache atomically without HashMap structural-modification races. The
+    // computeIfAbsent collapses the previous get/put pair and avoids duplicating
+    // FieldWrapper construction on contended first access.
+    private static final Map<Field, FieldWrapper> wrappers = new ConcurrentHashMap<>();
 
     public static FieldWrapper getFieldWrapper(Field field) {
-        if (wrappers.get(field) == null) {
-            FieldWrapper fw = new FieldWrapper(field);
+        return wrappers.computeIfAbsent(field, f -> {
+            FieldWrapper fw = new FieldWrapper(f);
             if (play.Logger.isTraceEnabled()) {
                 play.Logger.trace("caching %s", fw);
             }
-            wrappers.put(field, fw);
-        }
-        return wrappers.get(field);
+            return fw;
+        });
     }
 
     public static byte[] serialize(Object o) throws IOException {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        ObjectOutputStream oo = new ObjectOutputStream(baos);
-        try {
+        try (ObjectOutputStream oo = new ObjectOutputStream(baos)) {
             oo.writeObject(o);
-            oo.flush();
-        } finally {
-            if (oo != null) {
-                oo.close();
-            }
         }
         return baos.toByteArray();
     }
@@ -470,34 +444,7 @@ class JavaWithCaching {
     /**
      * Class uses as key for storing info about the relation between a Class and an Annotation
      */
-    private static class ClassAndAnnotation {
-        private final Class<?> clazz;
-        private final Class<? extends Annotation> annotation;
-
-        private ClassAndAnnotation(Class<?> clazz, Class<? extends Annotation> annotation) {
-            this.clazz = clazz;
-            this.annotation = annotation;
-        }
-
-        @Override
-        public boolean equals(Object o) {
-            if (this == o)
-                return true;
-            if (o == null || getClass() != o.getClass())
-                return false;
-
-            ClassAndAnnotation that = (ClassAndAnnotation) o;
-
-            return Objects.equals(annotation, that.annotation) && Objects.equals(clazz, that.clazz);
-        }
-
-        @Override
-        public int hashCode() {
-            int result = clazz != null ? clazz.hashCode() : 0;
-            result = 31 * result + (annotation != null ? annotation.hashCode() : 0);
-            return result;
-        }
-    }
+    private record ClassAndAnnotation(Class<?> clazz, Class<? extends Annotation> annotation) {}
 
     // cache follows..
 
@@ -584,6 +531,7 @@ class JavaWithCaching {
                 return methods;
             }
             // have to resolve it..
+            final Class<?> originalClazz = clazz;
             methods = new ArrayList<>();
             // Clazz can be null if we are looking at an interface / annotation
             while (clazz != null && !clazz.equals(Object.class)) {
@@ -600,8 +548,8 @@ class JavaWithCaching {
                 clazz = clazz.getSuperclass();
             }
 
-            // store it in the cache.
-            class2AllMethodsWithAnnotations.put(clazz, methods);
+            // store it in the cache under the original class, not the loop's terminal value.
+            class2AllMethodsWithAnnotations.put(originalClazz, methods);
             return methods;
         }
     }

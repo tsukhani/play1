@@ -16,6 +16,21 @@ import play.mvc.Scope.Params;
 
 public class JPQL {
 
+    /**
+     * JPA entity names are valid Java identifiers (optionally qualified).
+     * Validating against this pattern at every JPQL boundary prevents JPQL injection
+     * if a controller ever passes a request-derived value as the entity name.
+     */
+    private static final java.util.regex.Pattern ENTITY_NAME_PATTERN =
+            java.util.regex.Pattern.compile("^[A-Za-z_$][A-Za-z0-9_$]*(\\.[A-Za-z_$][A-Za-z0-9_$]*)*$");
+
+    private static String validateEntity(String entity) {
+        if (entity == null || !ENTITY_NAME_PATTERN.matcher(entity).matches()) {
+            throw new IllegalArgumentException("Invalid JPA entity name: " + entity);
+        }
+        return entity;
+    }
+
     public EntityManager em(String dbName) {
         return JPA.em(dbName);
     }
@@ -29,7 +44,7 @@ public class JPQL {
     }
 
     public long count(String dbName, String entity) {
-        return em(dbName).createQuery("select count(*) from " + entity, Long.class).getSingleResult();
+        return em(dbName).createQuery("select count(*) from " + validateEntity(entity), Long.class).getSingleResult();
     }
 
     public long count(String entity, String query, Object[] params) {
@@ -47,7 +62,7 @@ public class JPQL {
     }
 
      public <T extends JPABase> List<T> findAll(String dbName, String entity) {
-        return em(dbName).createQuery("select e from " + entity + " e").getResultList();
+        return em(dbName).createQuery("select e from " + validateEntity(entity) + " e").getResultList();
     }
 
     public JPABase findById(String entity, Object id) throws Exception {
@@ -144,6 +159,7 @@ public class JPQL {
     }
 
     public String createFindByQuery(String dbName, String entityName, String entityClass, String query, Object... params) {
+        validateEntity(entityName);
         if (query == null || (query = query.strip()).isBlank()) {
             return "from " + entityName;
         }
@@ -168,6 +184,7 @@ public class JPQL {
     }
 
     public String createDeleteQuery(String entityName, String entityClass, String query, Object... params) {
+        validateEntity(entityName);
         if (query == null) {
             return "delete from " + entityName;
         }
@@ -189,25 +206,30 @@ public class JPQL {
     }
 
     public String createCountQuery(String dbName, String entityName, String entityClass, String query, Object... params) {
-        if (query.trim().toLowerCase().startsWith("select ")) {
+        validateEntity(entityName);
+        // Locale.ROOT: avoid Turkish-locale "i" → "ı" mangling on case-folding ASCII keywords.
+        String trimmedLower = query.trim().toLowerCase(Locale.ROOT);
+        if (trimmedLower.startsWith("select ")) {
             return query;
         }
         if (query.matches("^by[A-Z].*$")) {
             return "select count(*) from " + entityName + " where " + findByToJPQL(dbName, query);
         }
-        if (query.trim().toLowerCase().startsWith("from ")) {
+        if (trimmedLower.startsWith("from ")) {
             return "select count(*) " + query;
         }
-        if (query.trim().toLowerCase().startsWith("order by ")) {
+        if (trimmedLower.startsWith("order by ")) {
             return "select count(*) from " + entityName;
         }
-        if (query.trim().indexOf(' ') == -1 && query.trim().indexOf('=') == -1 && params != null && params.length == 1) {
+        String trimmed = query.trim();
+        boolean hasNoSpaceOrEq = trimmed.indexOf(' ') == -1 && trimmed.indexOf('=') == -1;
+        if (hasNoSpaceOrEq && params != null && params.length == 1) {
             query += " = ?1";
         }
-        if (query.trim().indexOf(' ') == -1 && query.trim().indexOf('=') == -1 && params == null) {
+        if (hasNoSpaceOrEq && params == null) {
             query += " = null";
         }
-        if (query.trim().length() == 0) {
+        if (trimmed.isEmpty()) {
             return "select count(*) from " + entityName;
         }
         return "select count(*) from " + entityName + " e where " + query;

@@ -2,19 +2,42 @@ package play.utils;
 
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Delayed;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+
+import play.Logger;
 
 /**
  * A scheduled executor that delegates scheduling to a small platform-thread
  * {@link ScheduledThreadPoolExecutor} and dispatches actual work to virtual threads.
  *
- * <p>This preserves the {@code schedule()} and {@code scheduleWithFixedDelay()} APIs
- * required by the Invoker and JobsPlugin while running actual task work on virtual threads.</p>
+ * <p>Scheduler threads are only occupied for the microsecond it takes to hand off to the
+ * virtual executor — they never block waiting for the dispatched work to complete.
+ * Without this property a handful of long-running scheduled tasks could exhaust the
+ * 2-thread scheduler pool and starve unrelated timers, suspended-request resumes, and
+ * cron jobs.</p>
+ *
+ * <p>The {@link ScheduledFuture} returned by {@code schedule()} still tracks completion
+ * of the dispatched work via a {@link CompletableFuture} wrapper, so {@code future.get()}
+ * blocks until the virtual thread has finished — the wait happens on the caller's thread,
+ * not on a scarce scheduler thread.</p>
+ *
+ * <p>Fixed-delay semantics for {@link #scheduleWithFixedDelay} are preserved via a
+ * self-rescheduling chain: each virtual-thread completion schedules the next run
+ * itself, so "next run starts after previous completes + delay" is honored without
+ * pinning a scheduler thread for the task duration.</p>
  */
 public class VirtualThreadScheduledExecutor {
 
@@ -42,34 +65,98 @@ public class VirtualThreadScheduledExecutor {
     }
 
     /**
-     * Schedule a callable for delayed execution. The delay is managed by a platform-thread
-     * scheduler, but the actual work runs on a virtual thread.
+     * Schedule a callable for delayed execution. The scheduler thread fires the dispatch
+     * to the virtual executor and returns immediately — it does NOT block on the work.
+     * The returned future still completes when the virtual thread finishes (so callers
+     * may {@code .get()} it), but the wait happens on the caller's thread.
+     *
+     * <p>{@code cancel(true)} on the returned future propagates the interrupt to the
+     * in-flight virtual thread (if one has been submitted) so callers can actually stop
+     * a long-running task — not just be told it was cancelled while it keeps producing
+     * side effects. The cancel-after-dispatch race is handled by re-checking the wrapper's
+     * cancelled state right after publishing the inner future.</p>
      */
     public <V> ScheduledFuture<V> schedule(Callable<V> callable, long delay, TimeUnit unit) {
-        return scheduler.schedule(() -> virtualExecutor.submit(callable).get(), delay, unit);
+        CompletableFuture<V> done = new CompletableFuture<>();
+        AtomicReference<Future<?>> innerRef = new AtomicReference<>();
+        ScheduledFuture<?> dispatch = scheduler.schedule(() -> {
+            try {
+                Future<?> inner = virtualExecutor.submit(() -> {
+                    try {
+                        done.complete(callable.call());
+                    } catch (Throwable t) {
+                        done.completeExceptionally(t);
+                    }
+                });
+                innerRef.set(inner);
+                // Close the race window: a cancel(true) that fired between submit() and
+                // set() would otherwise leave the virtual thread running. Replay the
+                // interrupt now if the wrapper was cancelled in that window.
+                if (done.isCancelled()) {
+                    inner.cancel(true);
+                }
+            } catch (RejectedExecutionException ree) {
+                done.completeExceptionally(ree);
+            }
+        }, delay, unit);
+        return new CompletionTrackingFuture<>(dispatch, done, innerRef);
     }
 
     /**
-     * Schedule a runnable for delayed execution. The delay is managed by a platform-thread
-     * scheduler, but the actual work runs on a virtual thread.
+     * Schedule a runnable for delayed execution. As with the callable variant, the
+     * scheduler thread dispatches and returns immediately; {@code .get()} on the returned
+     * future blocks the caller until the virtual thread finishes.
      */
     public ScheduledFuture<?> schedule(Runnable command, long delay, TimeUnit unit) {
-        return scheduler.schedule(() -> virtualExecutor.submit(command).get(), delay, unit);
+        return schedule(() -> {
+            command.run();
+            return null;
+        }, delay, unit);
     }
 
     /**
-     * Schedule a task with fixed delay. Each execution runs on a virtual thread.
-     * The fixed-delay semantics (next execution starts after the previous one completes + delay)
-     * are preserved by the platform-thread scheduler.
+     * Schedule a task with fixed delay. Each execution runs on a virtual thread and
+     * self-reschedules the next run on completion, so the scheduler thread is never held
+     * for the task duration. Fixed-delay semantics (next start = previous completion + delay)
+     * are preserved.
+     *
+     * <p>Failure semantics match {@link ScheduledThreadPoolExecutor#scheduleWithFixedDelay}:
+     * if a run throws {@link Throwable}, subsequent executions are *suppressed* and the
+     * returned future enters its terminal state with {@link Future#get()} reporting the
+     * cause via {@link ExecutionException}. Without this, a poisoned periodic job would
+     * loop forever, spamming logs and (worse) holding resources its caller assumed had
+     * been released when the future "failed".</p>
+     *
+     * <p>{@code cancel(true)} propagates interruption to the currently running virtual
+     * thread (if any) in addition to cancelling the next pending scheduler dispatch.</p>
      */
     public ScheduledFuture<?> scheduleWithFixedDelay(Runnable command, long initialDelay, long delay, TimeUnit unit) {
-        return scheduler.scheduleWithFixedDelay(() -> {
-            try {
-                virtualExecutor.submit(command).get();
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
-        }, initialDelay, delay, unit);
+        SelfReschedulingFuture handle = new SelfReschedulingFuture();
+        AtomicReference<Runnable> taskRef = new AtomicReference<>();
+        taskRef.set(() -> {
+            if (handle.isCancelled() || scheduler.isShutdown()) return;
+            Future<?> inner = virtualExecutor.submit(() -> {
+                try {
+                    command.run();
+                } catch (Throwable t) {
+                    // Match ScheduledThreadPoolExecutor: a throwing run terminates the
+                    // periodic task. Record the cause and stop rescheduling.
+                    Logger.error(t, "Scheduled task threw; suppressing further executions");
+                    handle.completeExceptionally(t);
+                    return;
+                }
+                if (!handle.isCancelled() && !scheduler.isShutdown()) {
+                    try {
+                        handle.setNext(scheduler.schedule(taskRef.get(), delay, unit));
+                    } catch (RejectedExecutionException ignored) {
+                        // scheduler shut down between checks; nothing to do
+                    }
+                }
+            });
+            handle.setActiveInner(inner);
+        });
+        handle.setNext(scheduler.schedule(taskRef.get(), initialDelay, unit));
+        return handle;
     }
 
     /**
@@ -89,5 +176,200 @@ public class VirtualThreadScheduledExecutor {
      */
     public java.util.concurrent.BlockingQueue<Runnable> getSchedulerQueue() {
         return scheduler.getQueue();
+    }
+
+    /**
+     * A {@link ScheduledFuture} whose {@code getDelay()} reflects the scheduler's pending
+     * dispatch time and whose {@code get()} blocks the caller (not the scheduler) until
+     * the dispatched virtual-thread work has finished.
+     *
+     * <p>{@code cancel(true)} interrupts the running virtual-thread work via
+     * {@code innerRef} so a long-running task is actually stopped, not just reported as
+     * cancelled while its side-effects continue.</p>
+     */
+    private static final class CompletionTrackingFuture<V> implements ScheduledFuture<V> {
+        private final ScheduledFuture<?> dispatch;
+        private final CompletableFuture<V> result;
+        private final AtomicReference<Future<?>> innerRef;
+
+        CompletionTrackingFuture(ScheduledFuture<?> dispatch, CompletableFuture<V> result,
+                                 AtomicReference<Future<?>> innerRef) {
+            this.dispatch = dispatch;
+            this.result = result;
+            this.innerRef = innerRef;
+        }
+
+        @Override
+        public long getDelay(TimeUnit unit) {
+            return dispatch.getDelay(unit);
+        }
+
+        @Override
+        public int compareTo(Delayed o) {
+            return Long.compare(getDelay(TimeUnit.NANOSECONDS), o.getDelay(TimeUnit.NANOSECONDS));
+        }
+
+        @Override
+        public boolean cancel(boolean mayInterruptIfRunning) {
+            boolean dispatchCancelled = dispatch.cancel(mayInterruptIfRunning);
+            boolean resultCancelled = result.cancel(mayInterruptIfRunning);
+            // Propagate interruption to the in-flight virtual-thread work (if dispatched).
+            // The schedule() method also re-checks result.isCancelled() right after publishing
+            // the inner future so a cancel that races with the dispatch isn't lost.
+            Future<?> inner = innerRef.get();
+            if (inner != null) {
+                inner.cancel(mayInterruptIfRunning);
+            }
+            return dispatchCancelled || resultCancelled;
+        }
+
+        @Override
+        public boolean isCancelled() {
+            return result.isCancelled() || dispatch.isCancelled();
+        }
+
+        @Override
+        public boolean isDone() {
+            return result.isDone();
+        }
+
+        @Override
+        public V get() throws InterruptedException, ExecutionException {
+            return result.get();
+        }
+
+        @Override
+        public V get(long timeout, TimeUnit unit) throws InterruptedException, ExecutionException, TimeoutException {
+            return result.get(timeout, unit);
+        }
+    }
+
+    /**
+     * A ScheduledFuture wrapper that supports cancellation across self-rescheduling chains
+     * and matches {@link ScheduledThreadPoolExecutor}'s periodic-task semantics:
+     * <ul>
+     *   <li>{@code cancel(true)} prevents future runs, cancels the currently-pending
+     *       scheduler entry, and interrupts the in-flight virtual-thread work via
+     *       {@link #setActiveInner}.</li>
+     *   <li>If a run throws, {@link #completeExceptionally} marks the future done with
+     *       the exception so {@code get()} throws {@link ExecutionException}, mirroring
+     *       STPE's "subsequent executions are suppressed" contract.</li>
+     * </ul>
+     */
+    private static final class SelfReschedulingFuture implements ScheduledFuture<Object> {
+        private final AtomicBoolean cancelled = new AtomicBoolean(false);
+        private final AtomicReference<ScheduledFuture<?>> next = new AtomicReference<>();
+        // Tracks the currently in-flight virtual-thread submission. cancel(true) propagates
+        // through this so a long-running periodic task is actually interrupted.
+        private final AtomicReference<Future<?>> activeInner = new AtomicReference<>();
+        // Stored cause when a run throws. get() rethrows this as ExecutionException to
+        // match the abnormal-termination reporting STPE provides via its returned future.
+        private final AtomicReference<Throwable> failure = new AtomicReference<>();
+        // Released when the future enters its terminal state — cancellation OR a throwing
+        // run. A periodic task has no natural completion otherwise, matching STPE's
+        // "the task can only terminate via cancellation or termination of the executor"
+        // (extended here to include the abnormal-termination case).
+        private final CountDownLatch terminated = new CountDownLatch(1);
+
+        /**
+         * Publish the next scheduled run. If cancellation raced ahead of the publication,
+         * cancel the just-published future too, so a cancel() call cannot leak a still-firing
+         * task that was scheduled after cancel() read the previous {@code next}.
+         */
+        void setNext(ScheduledFuture<?> sf) {
+            next.set(sf);
+            if (cancelled.get()) {
+                sf.cancel(false);
+                next.compareAndSet(sf, null);
+            }
+        }
+
+        /**
+         * Publish the in-flight virtual-thread submission so {@link #cancel} can interrupt it.
+         * If a cancel(true) raced ahead, replay the interrupt on the just-published inner.
+         */
+        void setActiveInner(Future<?> inner) {
+            activeInner.set(inner);
+            if (cancelled.get()) {
+                inner.cancel(true);
+            }
+        }
+
+        /**
+         * Mark the periodic task as terminated due to an abnormal run. After this, no
+         * further executions will be scheduled and {@link #get()} throws {@link ExecutionException}.
+         */
+        void completeExceptionally(Throwable t) {
+            if (failure.compareAndSet(null, t)) {
+                // Stop future runs from rescheduling themselves: cancellation makes the
+                // self-rescheduling task short-circuit before submitting the next.
+                cancelled.set(true);
+                ScheduledFuture<?> sf = next.getAndSet(null);
+                if (sf != null) sf.cancel(false);
+                terminated.countDown();
+            }
+        }
+
+        @Override
+        public long getDelay(TimeUnit unit) {
+            ScheduledFuture<?> sf = next.get();
+            return sf != null ? sf.getDelay(unit) : 0L;
+        }
+
+        @Override
+        public int compareTo(Delayed o) {
+            return Long.compare(getDelay(TimeUnit.NANOSECONDS), o.getDelay(TimeUnit.NANOSECONDS));
+        }
+
+        @Override
+        public boolean cancel(boolean mayInterruptIfRunning) {
+            boolean firstCancel = cancelled.compareAndSet(false, true);
+            // getAndSet ensures a concurrent setNext() observing cancelled=true will replay
+            // the cancellation on the future it just installed (see setNext above).
+            ScheduledFuture<?> sf = next.getAndSet(null);
+            boolean cancelledInner = sf == null || sf.cancel(mayInterruptIfRunning);
+            // Propagate interruption to the running virtual-thread work, if any. Same race
+            // protection on the publication side is in setActiveInner().
+            Future<?> inner = activeInner.getAndSet(null);
+            if (inner != null) {
+                inner.cancel(mayInterruptIfRunning);
+            }
+            if (firstCancel) {
+                terminated.countDown();
+            }
+            return cancelledInner;
+        }
+
+        @Override
+        public boolean isCancelled() {
+            // Distinguish user cancel from abnormal termination: only return true for the
+            // former so isCancelled()/get() consumers see STPE-equivalent reporting.
+            return cancelled.get() && failure.get() == null;
+        }
+
+        @Override
+        public boolean isDone() {
+            if (cancelled.get() || failure.get() != null) return true;
+            ScheduledFuture<?> sf = next.get();
+            return sf != null && sf.isDone();
+        }
+
+        @Override
+        public Object get() throws InterruptedException, ExecutionException {
+            terminated.await();
+            Throwable t = failure.get();
+            if (t != null) throw new ExecutionException(t);
+            return null;
+        }
+
+        @Override
+        public Object get(long timeout, TimeUnit unit) throws InterruptedException, ExecutionException, TimeoutException {
+            if (!terminated.await(timeout, unit)) {
+                throw new TimeoutException();
+            }
+            Throwable t = failure.get();
+            if (t != null) throw new ExecutionException(t);
+            return null;
+        }
     }
 }

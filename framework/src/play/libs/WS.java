@@ -733,10 +733,10 @@ public class WS extends PlayPlugin {
                 _encoding = Play.defaultWebEncoding;
             } else {
                 HTTP.ContentTypeWithEncoding contentTypeEncoding = HTTP.parseContentType(contentType);
-                if (contentTypeEncoding.encoding == null) {
+                if (contentTypeEncoding.encoding() == null) {
                     _encoding = Play.defaultWebEncoding;
                 } else {
-                    _encoding = contentTypeEncoding.encoding;
+                    _encoding = contentTypeEncoding.encoding();
                 }
             }
             return _encoding;

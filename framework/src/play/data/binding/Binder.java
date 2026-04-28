@@ -20,6 +20,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * The binder try to convert String values to Java objects.
@@ -29,7 +30,9 @@ public abstract class Binder {
     private static final Object DIRECTBINDING_NO_RESULT = new Object();
     public static final Object NO_BINDING = new Object();
 
-    static final Map<Class<?>, TypeBinder<?>> supportedTypes = new HashMap<>();
+    // ConcurrentHashMap: register()/unregister() can fire from plugin lifecycle while requests
+    // are reading this map; under virtual threads the contention surface is amplified.
+    static final Map<Class<?>, TypeBinder<?>> supportedTypes = new ConcurrentHashMap<>();
 
     // TODO: something a bit more dynamic? The As annotation allows you to inject your own binder
     static {
@@ -81,23 +84,16 @@ public abstract class Binder {
         supportedTypes.remove(clazz);
     }
 
-    static final Map<Class<?>, BeanWrapper> beanwrappers = new HashMap<>();
+    // ConcurrentHashMap so request-path callers (especially virtual-thread workers) can
+    // computeIfAbsent without HashMap structural-modification races and without duplicating
+    // BeanWrapper construction under contention.
+    static final Map<Class<?>, BeanWrapper> beanwrappers = new ConcurrentHashMap<>();
 
     static BeanWrapper getBeanWrapper(Class<?> clazz) {
         return beanwrappers.computeIfAbsent(clazz, BeanWrapper::new);
     }
 
-    public static class MethodAndParamInfo {
-        public final Object objectInstance;
-        public final Method method;
-        public final int parameterIndex;
-
-        public MethodAndParamInfo(Object objectInstance, Method method, int parameterIndex) {
-            this.objectInstance = objectInstance;
-            this.method = method;
-            this.parameterIndex = parameterIndex;
-        }
-    }
+    public record MethodAndParamInfo(Object objectInstance, Method method, int parameterIndex) {}
 
     /**
      * Deprecated. Use bindBean() instead.
@@ -157,10 +153,10 @@ public abstract class Binder {
             // Try the scala default
             if (methodAndParamInfo != null) {
                 try {
-                    Method method = methodAndParamInfo.method;
+                    Method method = methodAndParamInfo.method();
                     Method defaultMethod = method.getDeclaringClass()
-                            .getDeclaredMethod(method.getName() + "$default$" + methodAndParamInfo.parameterIndex);
-                    return defaultMethod.invoke(methodAndParamInfo.objectInstance);
+                            .getDeclaredMethod(method.getName() + "$default$" + methodAndParamInfo.parameterIndex());
+                    return defaultMethod.invoke(methodAndParamInfo.objectInstance());
                 } catch (NoSuchMethodException ignore) {
                 } catch (Exception e) {
                     logBindingNormalFailure(paramNode, e);
@@ -168,27 +164,16 @@ public abstract class Binder {
                 }
             }
 
-            if (clazz.equals(boolean.class)) {
-                return false;
-            }
-            if (clazz.equals(int.class)) {
-                return 0;
-            }
-            if (clazz.equals(long.class)) {
-                return 0;
-            }
-            if (clazz.equals(double.class)) {
-                return 0;
-            }
-            if (clazz.equals(short.class)) {
-                return 0;
-            }
-            if (clazz.equals(byte.class)) {
-                return 0;
-            }
-            if (clazz.equals(char.class)) {
-                return ' ';
-            }
+            // Return the correctly-typed primitive default rather than relying on int->Object
+            // boxing (which would force a Long/Double/etc. unboxing cast at the call site).
+            if (clazz.equals(boolean.class)) return false;
+            if (clazz.equals(int.class))    return 0;
+            if (clazz.equals(long.class))   return 0L;
+            if (clazz.equals(double.class)) return 0d;
+            if (clazz.equals(float.class))  return 0f;
+            if (clazz.equals(short.class))  return (short) 0;
+            if (clazz.equals(byte.class))   return (byte) 0;
+            if (clazz.equals(char.class))   return ' ';
             return null;
         }
 
@@ -721,7 +706,7 @@ public abstract class Binder {
 
         // Handles the case where the model property is a sole character
         if (clazz.equals(Character.class)) {
-            return value.charAt(0);
+            return (value == null || value.isEmpty()) ? null : value.charAt(0);
         }
 
         // Enums
@@ -729,58 +714,25 @@ public abstract class Binder {
             return nullOrEmpty ? null : Enum.valueOf((Class<Enum>) clazz, value);
         }
 
-        // int or Integer binding
+        // Integral primitives accept "5.0" as 5 (web forms commonly post numeric strings
+        // with trailing decimals); floating-point types parse the value as-is.
         if (clazz.equals(int.class) || clazz.equals(Integer.class)) {
-            if (nullOrEmpty) {
-                return clazz.isPrimitive() ? 0 : null;
-            }
-
-            return Integer.parseInt(value.contains(".") ? value.substring(0, value.indexOf('.')) : value);
+            return bindIntegral(value, clazz, nullOrEmpty, 0, Integer::parseInt);
         }
-
-        // long or Long binding
         if (clazz.equals(long.class) || clazz.equals(Long.class)) {
-            if (nullOrEmpty) {
-                return clazz.isPrimitive() ? 0l : null;
-            }
-
-            return Long.parseLong(value.contains(".") ? value.substring(0, value.indexOf('.')) : value);
+            return bindIntegral(value, clazz, nullOrEmpty, 0L, Long::parseLong);
         }
-
-        // byte or Byte binding
         if (clazz.equals(byte.class) || clazz.equals(Byte.class)) {
-            if (nullOrEmpty) {
-                return clazz.isPrimitive() ? (byte) 0 : null;
-            }
-
-            return Byte.parseByte(value.contains(".") ? value.substring(0, value.indexOf('.')) : value);
+            return bindIntegral(value, clazz, nullOrEmpty, (byte) 0, Byte::parseByte);
         }
-
-        // short or Short binding
         if (clazz.equals(short.class) || clazz.equals(Short.class)) {
-            if (nullOrEmpty) {
-                return clazz.isPrimitive() ? (short) 0 : null;
-            }
-
-            return Short.parseShort(value.contains(".") ? value.substring(0, value.indexOf('.')) : value);
+            return bindIntegral(value, clazz, nullOrEmpty, (short) 0, Short::parseShort);
         }
-
-        // float or Float binding
         if (clazz.equals(float.class) || clazz.equals(Float.class)) {
-            if (nullOrEmpty) {
-                return clazz.isPrimitive() ? 0f : null;
-            }
-
-            return Float.parseFloat(value);
+            return bindNumeric(value, clazz, nullOrEmpty, 0f, Float::parseFloat);
         }
-
-        // double or Double binding
         if (clazz.equals(double.class) || clazz.equals(Double.class)) {
-            if (nullOrEmpty) {
-                return clazz.isPrimitive() ? 0d : null;
-            }
-
-            return Double.parseDouble(value);
+            return bindNumeric(value, clazz, nullOrEmpty, 0d, Double::parseDouble);
         }
 
         // BigDecimal binding
@@ -807,5 +759,30 @@ public abstract class Binder {
         }
 
         return DIRECTBINDING_NO_RESULT;
+    }
+
+    /**
+     * Bind an integral type (int/long/byte/short or wrapper). Strips a trailing decimal
+     * portion so "5.0" parses as 5 — the historical behaviour for HTML form inputs that
+     * post numeric strings with implicit precision.
+     */
+    private static <T> Object bindIntegral(String value, Class<?> clazz, boolean nullOrEmpty,
+                                            T primitiveDefault, java.util.function.Function<String, T> parser) {
+        if (nullOrEmpty) {
+            return clazz.isPrimitive() ? primitiveDefault : null;
+        }
+        int dot = value.indexOf('.');
+        return parser.apply(dot == -1 ? value : value.substring(0, dot));
+    }
+
+    /**
+     * Bind a floating-point type (float/double or wrapper). Parses as-is.
+     */
+    private static <T> Object bindNumeric(String value, Class<?> clazz, boolean nullOrEmpty,
+                                           T primitiveDefault, java.util.function.Function<String, T> parser) {
+        if (nullOrEmpty) {
+            return clazz.isPrimitive() ? primitiveDefault : null;
+        }
+        return parser.apply(value);
     }
 }

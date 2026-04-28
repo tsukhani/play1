@@ -80,11 +80,36 @@ require:    &allDependencies
     - org.javassist -> javassist 3.30.2-GA
     - io.netty -> netty-buffer 4.2.12.Final
     - io.netty -> netty-codec-base 4.2.12.Final
+    # netty-codec-compression carries the gzip/deflate/brotli/zstd encoder
+    # classes that Netty 4.2 split out of netty-codec-http. HttpContentCompressor
+    # static-references them via StandardCompressionOptions, so without this jar
+    # the no-arg ctor blows up with NoClassDefFoundError: BrotliEncoder. Brings
+    # com.aayushatharva.brotli4j + native classifiers transitively, which lets
+    # HttpServerPipelineFactory wire brotli when it constructs the compressor.
+    - io.netty -> netty-codec-compression 4.2.12.Final
     - io.netty -> netty-codec-http 4.2.12.Final
     - io.netty -> netty-common 4.2.12.Final
     - io.netty -> netty-handler 4.2.12.Final
     - io.netty -> netty-resolver 4.2.12.Final
     - io.netty -> netty-transport 4.2.12.Final
+    # com.aayushatharva.brotli4j is the JNI wrapper around the Brotli C lib that
+    # StandardCompressionOptions.brotli() loads. brotli4j publishes per-platform
+    # natives as separate artifactIds (NOT Ivy classifiers); the `service` jar is
+    # the SPI loader peer that brotli4j uses at runtime to discover the matching
+    # native. Under transitiveDependencies: false everything must be declared
+    # explicitly. Shipping all six natives (~4.5 MB total in lib/) keeps the
+    # framework portable across the platforms users actually run Play on:
+    # macOS arm64/x86_64, Linux x86_64/arm64/riscv64, Windows x86_64. The native
+    # service-loader picks the right one at runtime; unused ones are dead weight
+    # but don't load.
+    - com.aayushatharva.brotli4j -> brotli4j 1.16.0
+    - com.aayushatharva.brotli4j -> service 1.16.0
+    - com.aayushatharva.brotli4j -> native-osx-aarch64 1.16.0
+    - com.aayushatharva.brotli4j -> native-osx-x86_64 1.16.0
+    - com.aayushatharva.brotli4j -> native-linux-aarch64 1.16.0
+    - com.aayushatharva.brotli4j -> native-linux-x86_64 1.16.0
+    - com.aayushatharva.brotli4j -> native-linux-riscv64 1.16.0
+    - com.aayushatharva.brotli4j -> native-windows-x86_64 1.16.0
     - org.postgresql -> postgresql 42.7.7
     - org.slf4j -> slf4j-api 2.0.17
     - org.apache.logging.log4j -> log4j-slf4j2-impl 2.25.3

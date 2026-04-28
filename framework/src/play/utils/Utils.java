@@ -1,10 +1,16 @@
 package play.utils;
 
+import java.io.OutputStream;
 import java.lang.annotation.Annotation;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
@@ -54,16 +60,9 @@ public class Utils {
         if (values == null) {
             return "";
         }
-        List<Annotation> a = Arrays.asList(values);
-        Iterator<Annotation> iter = a.iterator();
-        if (!iter.hasNext()) {
-            return "";
-        }
-        StringBuilder toReturn = new StringBuilder("@" + iter.next().annotationType().getSimpleName());
-        while (iter.hasNext()) {
-            toReturn.append(", @").append(iter.next().annotationType().getSimpleName());
-        }
-        return toReturn.toString();
+        return Arrays.stream(values)
+                .map(a -> "@" + a.annotationType().getSimpleName())
+                .collect(java.util.stream.Collectors.joining(", "));
     }
 
     /**
@@ -127,15 +126,47 @@ public class Utils {
         }
     }
 
-    private static final ThreadLocal<SimpleDateFormat> httpFormatter = ThreadLocal.withInitial(() -> {
+    // RFC 1123 date formatter, immutable and thread-safe — preferred over the legacy
+    // SimpleDateFormat path. ThreadLocal<SimpleDateFormat> caches scale poorly with virtual
+    // threads (each task allocates its own), so we share a single DateTimeFormatter.
+    private static final DateTimeFormatter HTTP_DATE = DateTimeFormatter
+            .ofPattern("EEE, dd MMM yyyy HH:mm:ss 'GMT'", Locale.US)
+            .withZone(ZoneId.of("GMT"));
+
+    /**
+     * Format a Date as an RFC 1123 HTTP date (e.g. {@code "Sun, 06 Nov 1994 08:49:37 GMT"}).
+     * Thread-safe; preferred over {@link #getHttpDateFormatter()} for new code.
+     */
+    public static String formatHttpDate(Date date) {
+        return HTTP_DATE.format(date.toInstant());
+    }
+
+    /**
+     * Parse an RFC 1123 HTTP date string. Falls back to lenient SimpleDateFormat parsing on
+     * format mismatches so legacy headers ({@code "Sun, 06-Nov-1994 08:49:37 GMT"}) are still
+     * handled.
+     */
+    public static Date parseHttpDate(String value) throws ParseException {
+        try {
+            return Date.from(ZonedDateTime.parse(value, HTTP_DATE).toInstant());
+        } catch (DateTimeParseException e) {
+            // Fall back to the legacy SimpleDateFormat for non-RFC-1123 inputs.
+            SimpleDateFormat fmt = new SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss zzz", Locale.US);
+            fmt.setTimeZone(TimeZone.getTimeZone("GMT"));
+            return fmt.parse(value);
+        }
+    }
+
+    /**
+     * @deprecated Allocates a fresh {@link SimpleDateFormat} per call so it is safe to use
+     * from any thread. New code should call {@link #formatHttpDate(Date)} or
+     * {@link #parseHttpDate(String)} which use the shared immutable formatter.
+     */
+    @Deprecated
+    public static SimpleDateFormat getHttpDateFormatter() {
         SimpleDateFormat format = new SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss zzz", Locale.US);
         format.setTimeZone(TimeZone.getTimeZone("GMT"));
-
         return format;
-    });
-
-    public static SimpleDateFormat getHttpDateFormatter() {
-        return httpFormatter.get();
     }
 
     public static Map<String, String[]> filterMap(Map<String, String[]> map, String prefix) {
@@ -169,8 +200,19 @@ public class Utils {
     }
 
     public static void kill(String pid) throws Exception {
-        String[] cmdarray = { OS.isWindows() ? "taskkill /F /PID " + pid : "kill " + pid };
-        Runtime.getRuntime().exec(cmdarray).waitFor();
+        // Validate pid: pids are positive integers. Reject anything else to prevent argument
+        // injection on Windows where the original code passed a single concatenated string.
+        if (pid == null || !pid.matches("\\d+")) {
+            throw new IllegalArgumentException("Invalid pid: " + pid);
+        }
+        ProcessBuilder pb = OS.isWindows()
+                ? new ProcessBuilder("taskkill", "/F", "/PID", pid)
+                : new ProcessBuilder("kill", pid);
+        // Merge stderr into stdout so a single drain prevents the child blocking on a full pipe.
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        p.getInputStream().transferTo(OutputStream.nullOutputStream());
+        p.waitFor();
     }
 
     public static class AlternativeDateFormat {
@@ -189,7 +231,11 @@ public class Utils {
             }
         }
 
-        public Date parse(String source) throws ParseException {
+        // SimpleDateFormat.parse is not thread-safe, so guard the iteration. With Java 25+ as
+        // our minimum runtime, JEP 491 guarantees synchronized does not pin virtual threads,
+        // so a single shared instance under a monitor is fine — and avoids the per-thread
+        // AlternativeDateFormat allocation a ThreadLocal would force on every virtual thread.
+        public synchronized Date parse(String source) throws ParseException {
             for (SimpleDateFormat dateFormat : formats) {
                 if (source.length() == dateFormat.toPattern().replace("'", "").length()) {
                     try {
@@ -201,8 +247,10 @@ public class Utils {
             throw new ParseException("Date format not understood", 0);
         }
 
-        static final ThreadLocal<AlternativeDateFormat> dateformat = ThreadLocal.withInitial(() ->
-            new AlternativeDateFormat(
+        // Single shared instance (was ThreadLocal). The synchronized parse() above keeps
+        // it thread-safe; sharing avoids one AlternativeDateFormat allocation per virtual
+        // thread on every validation call.
+        private static final AlternativeDateFormat DEFAULT = new AlternativeDateFormat(
                 Locale.US,
                 "yyyy-MM-dd'T'HH:mm:ss'Z'", // ISO8601 + timezone
                 "yyyy-MM-dd'T'HH:mm:ss", // ISO8601
@@ -217,11 +265,10 @@ public class Utils {
                 "dd-MM-yyyy HH:mm:ss",
                 "ddMMyyyy HHmmss",
                 "ddMMyyyy"
-            )
         );
 
         public static AlternativeDateFormat getDefaultFormatter() {
-            return dateformat.get();
+            return DEFAULT;
         }
     }
 

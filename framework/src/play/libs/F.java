@@ -10,6 +10,7 @@ import java.util.ListIterator;
 import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
@@ -77,7 +78,10 @@ public class F {
             }
             return result;
         }
-        protected List<F.Action<Promise<V>>> callbacks = new ArrayList<>();
+        // CopyOnWriteArrayList: invokeWithResultOrException iterates this list AFTER releasing
+        // the monitor, so a concurrent onRedeem() on another thread (common with virtual-thread
+        // workers and Netty I/O) could otherwise produce a ConcurrentModificationException.
+        protected List<F.Action<Promise<V>>> callbacks = new CopyOnWriteArrayList<>();
         protected boolean invoked = false;
         protected V result = null;
         protected Throwable exception = null;
@@ -463,7 +467,14 @@ public class F {
 
         final int bufferSize;
         final ConcurrentLinkedQueue<T> events = new ConcurrentLinkedQueue<>();
-        final List<Promise<T>> waiting = Collections.synchronizedList(new ArrayList<Promise<T>>());
+        // Guarded by `lock` so the publish-then-notify pair (events.offer + drain waiting)
+        // observes the same logical event state. Plain ArrayList — `lock` is the sole gate.
+        final List<Promise<T>> waiting = new ArrayList<>();
+        // ReentrantLock instead of `synchronized` so the waiting-list snapshot can be drained
+        // under the lock and the callback fan-out happens outside it. Avoids long monitor
+        // residency that would (pre-JEP-491) pin virtual-thread carriers and (always) increase
+        // contention between the Netty I/O thread (publisher) and VT consumers.
+        private final java.util.concurrent.locks.ReentrantLock lock = new java.util.concurrent.locks.ReentrantLock();
 
         public EventStream() {
             this.bufferSize = 100;
@@ -473,30 +484,44 @@ public class F {
             this.bufferSize = maxBufferSize;
         }
 
-        public synchronized Promise<T> nextEvent() {
-            if (events.isEmpty()) {
-                LazyTask task = new LazyTask();
-                waiting.add(task);
-                return task;
+        public Promise<T> nextEvent() {
+            lock.lock();
+            try {
+                if (events.isEmpty()) {
+                    LazyTask task = new LazyTask();
+                    waiting.add(task);
+                    return task;
+                }
+                return new LazyTask(events.peek());
+            } finally {
+                lock.unlock();
             }
-            return new LazyTask(events.peek());
         }
 
-        public synchronized void publish(T event) {
-            if (events.size() > bufferSize) {
-                Logger.warn("Dropping message.  If this is catastrophic to your app, use a BlockingEvenStream instead");
-                events.poll();
+        public void publish(T event) {
+            List<Promise<T>> snapshot;
+            T value;
+            lock.lock();
+            try {
+                if (events.size() > bufferSize) {
+                    Logger.warn("Dropping message.  If this is catastrophic to your app, use a BlockingEvenStream instead");
+                    events.poll();
+                }
+                events.offer(event);
+                value = events.peek();
+                if (waiting.isEmpty()) {
+                    return;
+                }
+                snapshot = new ArrayList<>(waiting);
+                waiting.clear();
+            } finally {
+                lock.unlock();
             }
-            events.offer(event);
-            notifyNewEvent();
-        }
-
-        void notifyNewEvent() {
-            T value = events.peek();
-            for (Promise<T> task : waiting) {
+            // Fan-out callbacks outside the lock so a slow callback never serializes other
+            // publishers or new nextEvent() calls.
+            for (Promise<T> task : snapshot) {
                 task.invoke(value);
             }
-            waiting.clear();
         }
 
         class LazyTask extends Promise<T> {
@@ -533,8 +558,11 @@ public class F {
     public static class BlockingEventStream<T> {
 
         final LinkedBlockingQueue<T> events;
-        final List<Promise<T>> waiting = Collections.synchronizedList(new ArrayList<Promise<T>>());
+        final List<Promise<T>> waiting = new ArrayList<>();
         final PlayChannel channel;
+        // Same rationale as EventStream above: drain waiting under the lock, invoke
+        // callbacks outside.
+        private final java.util.concurrent.locks.ReentrantLock lock = new java.util.concurrent.locks.ReentrantLock();
 
         public BlockingEventStream(PlayChannel channel) {
             this(100, channel);
@@ -545,43 +573,55 @@ public class F {
             events = new LinkedBlockingQueue<>(maxBufferSize + 10);
         }
 
-        public synchronized Promise<T> nextEvent() {
-            if (events.isEmpty()) {
-                LazyTask task = new LazyTask(channel);
-                waiting.add(task);
-                return task;
+        public Promise<T> nextEvent() {
+            lock.lock();
+            try {
+                if (events.isEmpty()) {
+                    LazyTask task = new LazyTask(channel);
+                    waiting.add(task);
+                    return task;
+                }
+                return new LazyTask(events.peek(), channel);
+            } finally {
+                lock.unlock();
             }
-            return new LazyTask(events.peek(), channel);
         }
 
-        //NOTE: cannot synchronize since events.put may block when system is overloaded.
-        //Normally, I HATE blocking an NIO thread, but to do this correct, we need a token from netty that we can use to disable
-        //the socket reads completely(ie. stop reading from socket when queue is full) as in normal NIO operations if you stop reading
-        //from the socket, the local nic buffer fills up, then the remote nic buffer fills(the client's nic), and so the client is informed
-        //he can't write anymore just yet (or he blocks if he is synchronous).
-        //Then when someone pulls from the queue, the token would be set to enabled allowing to read from nic buffer again and it all propagates
-        //This is normal flow control with NIO but since it is not done properly, this at least fixes the issue where websocket break down and
-        //skip packets.  They no longer skip packets anymore.
+        // Flow control: setReadable(false) is called when the queue nears capacity so Netty
+        // stops draining the socket buffer; this propagates back-pressure to the client. We
+        // then use offer() (non-blocking) instead of put() — if the buffer ever genuinely
+        // fills before Netty acts on the readable=false signal we drop the event with a warn
+        // rather than parking the I/O thread, which would block ALL channels on that
+        // EventLoop, not just this one.
         public void publish(T event) {
-            try {
-                // This method blocks if the queue is full(read publish method documentation just above)
-                if (events.remainingCapacity() == 10) {
-                    Logger.trace("events queue is full! Setting readable to false.");
-                    channel.setReadable(false);
-                }
-                events.put(event);
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
+            if (events.remainingCapacity() <= 10) {
+                Logger.trace("events queue is near capacity; pausing channel reads.");
+                channel.setReadable(false);
+            }
+            if (!events.offer(event)) {
+                Logger.warn("BlockingEventStream queue full; dropping event to avoid blocking the I/O thread.");
+                return;
             }
             notifyNewEvent();
         }
 
-        synchronized void notifyNewEvent() {
-            T value = events.peek();
-            for (Promise<T> task : waiting) {
+        void notifyNewEvent() {
+            List<Promise<T>> snapshot;
+            T value;
+            lock.lock();
+            try {
+                value = events.peek();
+                if (waiting.isEmpty()) {
+                    return;
+                }
+                snapshot = new ArrayList<>(waiting);
+                waiting.clear();
+            } finally {
+                lock.unlock();
+            }
+            for (Promise<T> task : snapshot) {
                 task.invoke(value);
             }
-            waiting.clear();
         }
 
         class LazyTask extends Promise<T> {
