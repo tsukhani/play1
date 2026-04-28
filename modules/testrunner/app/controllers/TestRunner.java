@@ -5,15 +5,9 @@ import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.util.*;
 
-import org.objectweb.asm.ClassReader;
-import org.objectweb.asm.ClassVisitor;
-import org.objectweb.asm.MethodVisitor;
-import org.objectweb.asm.Opcodes;
-
 import play.Logger;
 import play.Play;
 import play.cache.Cache;
-import play.classloading.ApplicationClasses;
 import play.jobs.Job;
 import play.libs.IO;
 import play.libs.Mail;
@@ -54,27 +48,19 @@ public class TestRunner extends Controller {
             seleniumTests = TestEngine.allSeleniumTests();
         }
         
-        // Category prefixes split unit tests into two lanes for FirePhoque:
-        //   U: pure unit test  — no DB / JPA / Fixtures references → fully parallel.
-        //   D: DB-touching     — single-permit serial lane (still concurrent with U:).
-        // Functional + Selenium go through the serial WebClient path because
-        // FunctionalTest's static savedCookies/renderArgs would race under parallelism
-        // (Stage 2 of the test-parallelism roadmap).
         if(unitTests != null){
-            Set<String> entityNames = entityInternalNames();
             for(Class c : unitTests) {
-                String prefix = usesDatabase(c, entityNames) ? "D:" : "U:";
-                p.println(prefix + c.getName() + ".class");
+                p.println(c.getName() + ".class");
             }
         }
         if(functionalTests != null){
             for(Class c : functionalTests) {
-                p.println("F:" + c.getName() + ".class");
+                p.println(c.getName() + ".class");
             }
         }
         if(seleniumTests != null){
             for(String c : seleniumTests) {
-                p.println("S:" + c);
+                p.println(c);
             }
         }
         renderText(list);
@@ -211,95 +197,6 @@ public class TestRunner extends Controller {
     	}
     	renderText(value);
     }
-
-    /**
-     * ASM-walk a unit test class's transitive call graph (through application
-     * classes only) to decide whether it touches the database. A test is
-     * DB-touching if any reachable class references:
-     *   - {@code play.test.Fixtures} (the fixture loader)
-     *   - any class under {@code play.db.*} (DB / JPA plumbing)
-     *   - any application entity class (anything assignable to {@code play.db.jpa.Model})
-     *
-     * Such tests run on a single-permit serial lane in FirePhoque so they don't
-     * trample each other's {@code Fixtures.deleteDatabase()} or detach in-flight
-     * entities. Pure tests stay on the parallel lane.
-     *
-     * The walk stops at non-application boundaries: framework, library, and JDK
-     * classes are not scanned (we treat them as opaque, since application code
-     * reaches DB only through its own packages or directly through Play's DB
-     * APIs, both of which the marker checks catch). This is fast — JClaw's
-     * graph resolves in milliseconds — and avoids the explosion of scanning
-     * Hibernate / Jackson / etc.
-     */
-    private static boolean usesDatabase(Class<?> testClass, Set<String> entityInternalNames) {
-        Set<String> visited = new HashSet<>();
-        Deque<String> queue = new ArrayDeque<>();
-        queue.add(testClass.getName().replace('.', '/'));
-        while (!queue.isEmpty()) {
-            String classInternal = queue.poll();
-            if (!visited.add(classInternal)) continue;
-            if (matchesDbMarker(classInternal, entityInternalNames)) {
-                return true;
-            }
-            // Only walk through application classes; framework / JDK / libs end
-            // the chain. Their internal references aren't ours to police, and
-            // any application-side DB call must transit through play.db.* or an
-            // entity class — both of which the marker check above catches.
-            ApplicationClasses.ApplicationClass appClass =
-                    Play.classes.getApplicationClass(classInternal.replace('/', '.'));
-            if (appClass == null) continue;
-            byte[] bytes = appClass.enhancedByteCode != null ? appClass.enhancedByteCode : appClass.javaByteCode;
-            if (bytes == null) continue;
-            try {
-                new ClassReader(bytes).accept(new ClassVisitor(Opcodes.ASM9) {
-                    @Override
-                    public MethodVisitor visitMethod(int access, String name, String desc,
-                                                      String signature, String[] exceptions) {
-                        return new MethodVisitor(Opcodes.ASM9) {
-                            private void enqueue(String owner) {
-                                if (owner != null && !visited.contains(owner)) {
-                                    queue.add(owner);
-                                }
-                            }
-                            @Override
-                            public void visitMethodInsn(int opcode, String owner, String n,
-                                                         String d, boolean isInterface) {
-                                enqueue(owner);
-                            }
-                            @Override
-                            public void visitFieldInsn(int opcode, String owner, String n, String d) {
-                                enqueue(owner);
-                            }
-                            @Override
-                            public void visitTypeInsn(int opcode, String type) {
-                                enqueue(type);
-                            }
-                        };
-                    }
-                }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
-            } catch (Exception e) {
-                Logger.warn(e, "TestRunner: failed to scan %s during classification of %s, defaulting to DB-serial",
-                        classInternal, testClass.getName());
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static boolean matchesDbMarker(String classInternal, Set<String> entityInternalNames) {
-        return classInternal.equals("play/test/Fixtures")
-                || classInternal.startsWith("play/db/")
-                || entityInternalNames.contains(classInternal);
-    }
-
-    private static Set<String> entityInternalNames() {
-        Set<String> set = new HashSet<>();
-        for (ApplicationClasses.ApplicationClass c :
-                Play.classes.getAssignableClasses(play.db.jpa.Model.class)) {
-            set.add(c.javaClass.getName().replace('.', '/'));
-        }
-        return set;
-    }
-
+	
 }
 
