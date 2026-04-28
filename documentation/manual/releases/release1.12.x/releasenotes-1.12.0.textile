@@ -137,7 +137,7 @@ Netty 4 reference-counted @ByteBuf@s are the framework's biggest behavioural cha
 
 h3. Threading model
 
-The Netty event loop ↔ virtual threads boundary is unchanged. Virtual threads remain opt-in via @play.threads.virtual=true@; the migration did not modify the @Invoker@ or its handoff seam.
+Virtual threads are unconditional for request invocation, background jobs, and mail dispatch as of 1.12.x. 1.12.0 originally shipped this as opt-in via @play.threads.virtual=true@; subsequent 1.12.x patches removed the toggle, retired the platform-thread executor paths, and made VT execution the only path. The Netty event loop ↔ virtual threads boundary itself is unchanged; the @Invoker@'s handoff seam was not modified by the toggle removal. Operators upgrading from 1.12.0 should remove any @play.threads.virtual*@, @play.pool@, or @play.jobs.pool@ entries from @application.conf@ — the framework emits a @WARN@ at boot if any are still present.
 
 h2. Verification
 

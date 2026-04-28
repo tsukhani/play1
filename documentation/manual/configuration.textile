@@ -1070,15 +1070,6 @@ Open file from error pages. If your text editor supports opening files by URL, P
 bc. play.editor=txmt://open?url=file://%s&line=%s
 
 
-h3(#play.jobs.pool). play.jobs.pool
-
-Size of the Jobs pool. For example:
-
-bc. play.jobs.pool=20
-
-Default: @10@
-
-
 h3(#play.netty.clientAuth). play.netty.clientAuth
 
 Configures @javax.net.ssl.SSLEngine@ client authentication. For example:
@@ -1121,21 +1112,6 @@ Tuning:
 The temp file is cleaned up automatically when the request completes (success or exception); on connection drop mid-upload the partial file is deleted by the aggregator's @channelInactive@ handler.
 
 
-h3(#play.threads.virtual). play.threads.virtual
-
-Run framework subsystems on virtual threads (JEP 444). Off by default; the fork ships the machinery but does not enable it for you.
-
-bc. play.threads.virtual=true
-
-Default: @false@.
-
-When enabled, request invocation, background jobs, and mail dispatch each run on a virtual-thread executor. Per-subsystem overrides (any of which inherits from @play.threads.virtual@ when unset):
-
-* @play.threads.virtual.invoker@ — request invocation only
-* @play.threads.virtual.jobs@ — background jobs (@@Every@, @@On@) only
-* @play.threads.virtual.mail@ — mail delivery only
-
-
 h3(#play.ssl.enabledCiphers). play.ssl.enabledCiphers
 
 This setting allows to specify certain SSL ciphers to be used. This might be needed in case you have to be PCI compliant, as some ciphers in the default settings are vulnerable to the so-called BEAST attack.
@@ -1151,15 +1127,6 @@ This setting allows to specify certain SSL protocols to be used.
 bc. play.ssl.enabledProtocols=TLSv1,TLSv1.1,TLSv1.2
 
 Default: none - the default protocols are chosen.
-
-
-h3(#play.pool). play.pool
-
-Execution pool size. Try to keep this as low as possible. Setting this to 1 thread will serialise all requests (very useful for debugging purpose). For example:
-
-bc. play.pool=10
-
-Default: @1@ (in @dev@ mode), number of processors + 1 (in @prod@ mode).
 
 
 h3(#play.templates.compile). play.templates.compile

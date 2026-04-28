@@ -786,15 +786,6 @@ h3(#play.editor). play.editor
 bc. play.editor=txmt://open?url=file://%s&line=%s
 
 
-h3(#play.jobs.pool). play.jobs.pool
-
-ジョブプールのサイズです。設定例:
-
-bc. play.jobs.pool=20
-
-デフォルト: @10@
-
-
 h3(#play.netty.clientAuth). play.netty.clientAuth
 
 @javax.net.ssl.SSLEngine@ のクライアント認証を設定します。設定例:
@@ -815,15 +806,6 @@ h3(#play.netty.maxContentLength). play.netty.maxContentLength
 HTTP サーバがレスポンスとして返すコンテンツのバイト単位の最大長です。
 
 デフォルト: なし - 制限なし
-
-
-h3(#play.pool). play.pool
-
-実行プールサイズです。この値はできるだけ小さく抑えてください。この値を 1 スレッドに設定すると全てのリクエストは直列に処理されます (デバッグ目的には非常に有用です)。
-
-bc. play.pool=10
-
-デフォルト: @1@ (@dev@ モード), プロセッサ数 + 1 (@prod@ モード).
 
 
 h3(#play.tmp). play.tmp
