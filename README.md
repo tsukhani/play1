@@ -51,21 +51,21 @@ play run /opt/myFirstApp
 
 ## Get the source
 
-Fork the project source code on [Github](http://github.com/playframework/play)
+Fork the project source code on [Github](https://github.com/tsukhani/play1)
 
 ```
-git clone git://github.com/playframework/play1.git
+git clone https://github.com/tsukhani/play1.git
 ```
 
 The project history is pretty big. You can pull only a shallow clone by specifying the number of commits you want with **--depth**:
 
 ```
-git clone git://github.com/playframework/play1.git --depth 10
+git clone https://github.com/tsukhani/play1.git --depth 10
 ```
 
 ## Reporting bugs
 
-Please report bugs on [our tracker](https://github.com/playframework/play1/issues).
+Please report bugs on [our tracker](https://github.com/tsukhani/play1/issues).
 
 ## Learn More
 
