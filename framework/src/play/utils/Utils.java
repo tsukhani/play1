@@ -7,10 +7,14 @@ import java.net.URLEncoder;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.time.format.ResolverStyle;
+import java.time.temporal.TemporalAccessor;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
@@ -217,39 +221,60 @@ public class Utils {
 
     public static class AlternativeDateFormat {
 
-        final List<SimpleDateFormat> formats = new ArrayList<>();
-        final Locale locale;
+        private final Locale locale;
+        // Captured once at construction to mirror SimpleDateFormat's "zone is fixed at
+        // formatter creation" semantics — a later TimeZone.setDefault() does not retroactively
+        // shift parses through this formatter.
+        private final ZoneId zone;
+        // Volatile snapshot so a parse() iterating the list never sees a partially-published
+        // setFormats() update; readers see either the old list or the new list, never a mid-write.
+        private volatile List<CompiledFormat> compiled = List.of();
 
         public AlternativeDateFormat(Locale locale, String... alternativeFormats) {
             this.locale = locale;
+            this.zone = ZoneId.systemDefault();
             setFormats(alternativeFormats);
         }
 
+        /** Append the given patterns to the existing list. */
         public void setFormats(String... alternativeFormats) {
-            for (String format : alternativeFormats) {
-                formats.add(new SimpleDateFormat(format, locale));
+            List<CompiledFormat> existing = compiled;
+            List<CompiledFormat> next = new ArrayList<>(existing.size() + alternativeFormats.length);
+            next.addAll(existing);
+            for (String pattern : alternativeFormats) {
+                DateTimeFormatter formatter = DateTimeFormatter
+                        .ofPattern(pattern, locale)
+                        .withResolverStyle(ResolverStyle.LENIENT);
+                int patternLength = pattern.replace("'", "").length();
+                next.add(new CompiledFormat(formatter, patternLength));
             }
+            compiled = List.copyOf(next);
         }
 
-        // SimpleDateFormat.parse is not thread-safe, so guard the iteration. With Java 25+ as
-        // our minimum runtime, JEP 491 guarantees synchronized does not pin virtual threads,
-        // so a single shared instance under a monitor is fine — and avoids the per-thread
-        // AlternativeDateFormat allocation a ThreadLocal would force on every virtual thread.
-        public synchronized Date parse(String source) throws ParseException {
-            for (SimpleDateFormat dateFormat : formats) {
-                if (source.length() == dateFormat.toPattern().replace("'", "").length()) {
+        // DateTimeFormatter is documented immutable + thread-safe, so parse() needs no
+        // monitor — a thousand concurrent virtual threads each get their own parse stack
+        // with no global serialization point. ResolverStyle.LENIENT preserves the rollover
+        // semantics callers got from SimpleDateFormat (the previous default).
+        public Date parse(String source) throws ParseException {
+            for (CompiledFormat cf : compiled) {
+                if (source.length() == cf.patternLength) {
                     try {
-                        return dateFormat.parse(source);
-                    } catch (ParseException ex) {
+                        TemporalAccessor ta = cf.formatter.parseBest(source, LocalDateTime::from, LocalDate::from);
+                        Instant instant = (ta instanceof LocalDateTime ldt)
+                                ? ldt.atZone(zone).toInstant()
+                                : ((LocalDate) ta).atStartOfDay(zone).toInstant();
+                        return Date.from(instant);
+                    } catch (DateTimeParseException ex) {
+                        // try next pattern
                     }
                 }
             }
             throw new ParseException("Date format not understood", 0);
         }
 
-        // Single shared instance (was ThreadLocal). The synchronized parse() above keeps
-        // it thread-safe; sharing avoids one AlternativeDateFormat allocation per virtual
-        // thread on every validation call.
+        private record CompiledFormat(DateTimeFormatter formatter, int patternLength) {}
+
+        // Singleton — DateTimeFormatter is thread-safe so this is shared safely with no monitor.
         private static final AlternativeDateFormat DEFAULT = new AlternativeDateFormat(
                 Locale.US,
                 "yyyy-MM-dd'T'HH:mm:ss'Z'", // ISO8601 + timezone
