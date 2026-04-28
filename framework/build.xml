@@ -4,6 +4,10 @@
 
     <property name="baseversion" value="1.12.2" />
     <property name="build-release" value="25" />
+    <!-- Loaded as a startup -javaagent in test forks so Mockito's inline mock-maker
+         doesn't have to self-attach byte-buddy-agent at runtime (which JDK 21+ warns
+         about and a future JDK will disallow). Bump in lock-step with byte-buddy-*.jar. -->
+    <property name="bytebuddy.agent.jar" value="${basedir}/lib-test/byte-buddy-agent-1.17.6.jar" />
 
     <path id="project.classpath">
         <fileset dir=".">
@@ -49,7 +53,10 @@
 
     <target name="compile" description="compile without cleaning">
         <mkdir dir="classes"/>
-        <javac encoding="utf-8" srcdir="src" destdir="classes" debug="true" release="${build-release}">
+        <!-- includeantruntime=true: framework src includes play.ant.* tasks that import
+             org.apache.tools.ant.*, so the Ant runtime jars must be on the compile classpath.
+             Setting it explicitly silences Ant's "wasn't set" warning while keeping behavior. -->
+        <javac encoding="utf-8" srcdir="src" destdir="classes" debug="true" release="${build-release}" includeantruntime="true">
             <classpath refid="project.classpath" />
         </javac>
         <copy todir="classes">
@@ -222,7 +229,7 @@
         <mkdir dir="test-classes"/>
         <javac encoding="utf-8" nowarn="${compile.nowarn}" debug="true"
                destdir="test-classes" classpathref="project.classpath" srcdir="test-src"
-               release="${build-release}">
+               release="${build-release}" includeantruntime="false">
             <classpath refid="classpath.test" />
             <include name="**/*.java"/>
         </javac>
@@ -236,6 +243,7 @@
                 <fileset dir="test-classes" includes="integration/*Test.class" />
                 <fork>
                     <jvmarg value="-javaagent:${basedir}/play-${version}.jar" />
+                    <jvmarg value="-javaagent:${bytebuddy.agent.jar}" />
                 </fork>
             </testclasses>
             <classpath>
@@ -330,6 +338,7 @@
                 <fork>
                     <jvmarg value="-agentlib:jdwp=transport=dt_socket,address=${jpda.address}"/>
                     <jvmarg value="-javaagent:${basedir}/play-${version}.jar" />
+                    <jvmarg value="-javaagent:${bytebuddy.agent.jar}" />
                     <sysproperty key="tests-tmp" value="${basedir}/tests-tmp" />
                 </fork>
             </testclasses>
@@ -366,6 +375,7 @@
                 <fileset dir="test-classes" includes="${testclass.path}.class" />
                 <fork>
                     <jvmarg value="-javaagent:${basedir}/play-${version}.jar" />
+                    <jvmarg value="-javaagent:${bytebuddy.agent.jar}" />
                     <sysproperty key="tests-tmp" value="${basedir}/tests-tmp" />
                 </fork>
             </testclasses>
@@ -379,7 +389,7 @@
 
     <target name="compile-unittest" depends="compile">
         <mkdir dir="test-classes"/>
-        <javac encoding="utf-8" srcdir="test-src" destdir="test-classes" debug="true" release="${build-release}">
+        <javac encoding="utf-8" srcdir="test-src" destdir="test-classes" debug="true" release="${build-release}" includeantruntime="false">
             <classpath refid="classpath.test" />
         </javac>
         <copy todir="test-classes">
@@ -420,6 +430,7 @@
                 <fileset dir="test-classes" includes="**/*Test.class" excludes="integration/*Test.class" />
                 <fork>
                     <jvmarg value="-javaagent:${basedir}/play-${version}.jar" />
+                    <jvmarg value="-javaagent:${bytebuddy.agent.jar}" />
                     <sysproperty key="tests-tmp" value="${basedir}/tests-tmp" />
                 </fork>
             </testclasses>
