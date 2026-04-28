@@ -14,8 +14,6 @@ import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 
-import org.apache.commons.javaflow.Continuation;
-import org.apache.commons.javaflow.bytecode.StackRecorder;
 import org.w3c.dom.Document;
 
 import com.google.gson.Gson;
@@ -26,16 +24,13 @@ import play.Invoker.Suspend;
 import play.Logger;
 import play.Play;
 import play.classloading.ApplicationClasses.ApplicationClass;
-import play.classloading.enhancers.ContinuationEnhancer;
 import play.classloading.enhancers.ControllersEnhancer.ControllerInstrumentation;
 import play.classloading.enhancers.ControllersEnhancer.ControllerSupport;
-import play.classloading.enhancers.LocalvariablesNamesEnhancer;
 import play.classloading.enhancers.LocalvariablesNamesEnhancer.LocalVariablesNamesTracer;
 import play.classloading.enhancers.LocalvariablesNamesEnhancer.LocalVariablesSupport;
 import play.data.binding.Unbinder;
 import play.data.validation.Validation;
 import play.data.validation.ValidationPlugin;
-import play.exceptions.ContinuationsException;
 import play.exceptions.NoRouteFoundException;
 import play.exceptions.PlayException;
 import play.exceptions.TemplateNotFoundException;
@@ -64,7 +59,6 @@ import play.templates.Template;
 import play.templates.TemplateLoader;
 import play.utils.Default;
 import play.utils.Java;
-import play.utils.VirtualThreadConfig;
 import play.vfs.VirtualFile;
 
 /**
@@ -1090,274 +1084,75 @@ public class Controller implements PlayController, ControllerSupport, LocalVaria
         await(1000 * Time.parseDuration(timeout), callback);
     }
 
+    /**
+     * Block the calling thread for {@code millis} milliseconds. On a virtual thread
+     * (the recommended deployment) the VT yields its carrier and the wait costs nothing;
+     * on a platform thread the thread is parked normally. Either way, all ThreadLocal-
+     * bound request state — JPA EntityManager, Validation, Lang, Http.Request, plugin
+     * scopes — survives the wait because the same thread continues after wake.
+     */
     protected static void await(int millis) {
         Request.current().isNew = false;
-        if (VirtualThreadConfig.isInvokerEnabled()) {
-            // Loom path: park the virtual thread directly. Skips the Javaflow
-            // continuation machinery — the resumed run on a different VT would
-            // lose every ThreadLocal-bound resource (most importantly the JPA
-            // EntityManager and its leased JDBC connection). Blocking the same
-            // VT keeps all per-request scope intact and yields its carrier.
-            try {
-                Thread.sleep(millis);
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-                throw new UnexpectedException(ie);
-            }
-            return;
-        }
-        verifyContinuationsEnhancement();
-        storeOrRestoreDataStateForContinuations(null);
-        Continuation.suspend(millis);
-    }
-
-    /**
-     * Used to store data before Continuation suspend and restore after.
-     *
-     * If isRestoring == null, the method will try to resolve it.
-     *
-     * important: when using isRestoring == null you have to KNOW that continuation suspend is going to happen and that
-     * this method is called twice for this single continuation suspend operation for this specific request.
-     *
-     * @param isRestoring
-     *            true if restoring, false if storing, and null if you don't know
-     */
-    private static void storeOrRestoreDataStateForContinuations(Boolean isRestoring) {
-
-        if (isRestoring == null) {
-            // Sometimes, due to how continuations suspends/restarts the code,
-            // we do not
-            // know when calling this method if we're suspending or restoring.
-
-            String continuationStateKey = "__storeOrRestoreDataStateForContinuations_started";
-            if (Http.Request.current().args.remove(continuationStateKey) != null) {
-                isRestoring = true;
-            } else {
-                Http.Request.current().args.put(continuationStateKey, true);
-                isRestoring = false;
-            }
-        }
-
-        if (isRestoring) {
-            // we are restoring after suspend
-
-            // localVariablesState
-            Deque<Map<String, Object>> localVariablesState = (Deque<Map<String, Object>>) Http.Request.current().args
-                    .remove(ActionInvoker.CONTINUATIONS_STORE_LOCAL_VARIABLE_NAMES);
-            LocalvariablesNamesEnhancer.LocalVariablesNamesTracer.setLocalVariablesStateAfterAwait(localVariablesState);
-
-            // renderArgs
-            Scope.RenderArgs renderArgs = (Scope.RenderArgs) Request.current().args.remove(ActionInvoker.CONTINUATIONS_STORE_RENDER_ARGS);
-            Scope.RenderArgs.current.set(renderArgs);
-
-            // Params
-            // We know that the params are partially reprocessed during
-            // awake(Before now), but here we restore the correct values as
-            // they where when we performed the await();
-            Map<String, String[]> params = (Map<String, String[]>) Request.current().args.remove(ActionInvoker.CONTINUATIONS_STORE_PARAMS);
-            Scope.Params.current().all().clear();
-            if (params != null) {
-                Scope.Params.current().all().putAll(params);
-            }
-            // Validations
-            Validation validation = (Validation) Request.current().args.remove(ActionInvoker.CONTINUATIONS_STORE_VALIDATIONS);
-            Validation.current.set(validation);
-            ValidationPlugin.keys
-                    .set((Map<Object, String>) Request.current().args.remove(ActionInvoker.CONTINUATIONS_STORE_VALIDATIONPLUGIN_KEYS));
-
-        } else {
-            // we are storing before suspend
-
-            // localVariablesState
-            Request.current().args.put(ActionInvoker.CONTINUATIONS_STORE_LOCAL_VARIABLE_NAMES,
-                    LocalVariablesNamesTracer.getLocalVariablesStateBeforeAwait());
-
-            // renderArgs
-            Request.current().args.put(ActionInvoker.CONTINUATIONS_STORE_RENDER_ARGS, Scope.RenderArgs.current());
-
-            // Params
-            // Store the actual params values so we can restore the exact same
-            // state when awaking.
-            Request.current().args.put(ActionInvoker.CONTINUATIONS_STORE_PARAMS, new HashMap<>(Scope.Params.current().data));
-
-            // Validations
-            Request.current().args.put(ActionInvoker.CONTINUATIONS_STORE_VALIDATIONS, Validation.current());
-            Request.current().args.put(ActionInvoker.CONTINUATIONS_STORE_VALIDATIONPLUGIN_KEYS, ValidationPlugin.keys.get());
-
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new UnexpectedException(ie);
         }
     }
 
     protected static void await(int millis, F.Action0 callback) {
         Request.current().isNew = false;
-        if (VirtualThreadConfig.isInvokerEnabled()) {
-            // Loom path: sleep on this VT, then run the callback inline. The
-            // platform-thread variant uses Suspend to schedule the callback on
-            // a fresh invocation — under VT mode that fresh invocation would
-            // run on a different VT with empty ThreadLocals, leaking the
-            // request-scoped EntityManager. Inline execution keeps the same VT
-            // (and its scope) active end-to-end.
-            try {
-                Thread.sleep(millis);
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-                throw new UnexpectedException(ie);
-            }
-            try {
-                callback.invoke();
-            } catch (Throwable t) {
-                if (t instanceof RuntimeException re) throw re;
-                throw new UnexpectedException(t);
-            }
-            return;
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new UnexpectedException(ie);
         }
-        Request.current().args.put(ActionInvoker.A, callback);
-        Request.current().args.put(ActionInvoker.CONTINUATIONS_STORE_RENDER_ARGS, Scope.RenderArgs.current());
-        throw new Suspend(millis);
+        try {
+            callback.invoke();
+        } catch (Throwable t) {
+            if (t instanceof RuntimeException re) throw re;
+            throw new UnexpectedException(t);
+        }
     }
 
-    @SuppressWarnings("unchecked")
     protected static <T> T await(Future<T> future) {
-
-        if (VirtualThreadConfig.isInvokerEnabled()) {
-            // Loom path: block the VT on future.get() and return synchronously.
-            // The Javaflow stack-capture + Suspend/resume dance below is built
-            // for thread scarcity that VTs eliminate; running both at once
-            // strands the request-scoped EntityManager on the suspending VT
-            // and leaks its JDBC connection. Direct .get() keeps the same VT
-            // (and every ThreadLocal-bound scope) live across the wait.
-            if (future == null) {
-                throw new UnexpectedException("Lost promise for " + Http.Request.current() + "!");
-            }
-            Request.current().isNew = false;
-            try {
-                return future.get();
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-                throw new UnexpectedException(ie);
-            } catch (ExecutionException ee) {
-                Throwable cause = ee.getCause() != null ? ee.getCause() : ee;
-                if (cause instanceof RuntimeException re) throw re;
-                throw new UnexpectedException(cause);
-            }
-        }
-
-        if (future != null) {
-            Request.current().args.put(ActionInvoker.F, future);
-        } else if (Request.current().args.containsKey(ActionInvoker.F)) {
-            // Since the continuation will restart in this code that isn't
-            // instrumented by javaflow,
-            // we need to reset the state manually.
-            StackRecorder.get().isCapturing = false;
-            StackRecorder.get().isRestoring = false;
-            StackRecorder.get().value = null;
-            future = (Future<T>) Request.current().args.get(ActionInvoker.F);
-
-            // Now reset the Controller invocation context
-            ControllerInstrumentation.stopActionCall();
-            storeOrRestoreDataStateForContinuations(true);
-        } else {
+        if (future == null) {
             throw new UnexpectedException("Lost promise for " + Http.Request.current() + "!");
         }
-
-        if (future.isDone()) {
-            try {
-                return future.get();
-            } catch (Exception e) {
-                throw new UnexpectedException(e);
-            }
-        } else {
-            Request.current().isNew = false;
-            verifyContinuationsEnhancement();
-            storeOrRestoreDataStateForContinuations(false);
-            Continuation.suspend(future);
-            return null;
-        }
-    }
-
-    /**
-     * Verifies that all application-code is properly enhanced. "application code" is the code on the callstack after
-     * leaving actionInvoke into the app, and before reentering Controller.await
-     */
-    private static void verifyContinuationsEnhancement() {
-        // only check in dev mode..
-        if (Play.mode == Play.Mode.PROD) {
-            return;
-        }
-
+        Request.current().isNew = false;
         try {
-            throw new Exception();
-        } catch (Exception e) {
-            boolean haveSeenFirstApplicationClass = false;
-            for (StackTraceElement ste : e.getStackTrace()) {
-                String className = ste.getClassName();
-
-                if (!haveSeenFirstApplicationClass) {
-                    haveSeenFirstApplicationClass = Play.classes.getApplicationClass(className) != null;
-                    // when haveSeenFirstApplicationClass is set to true, we are
-                    // entering the user application code..
-                }
-
-                if (haveSeenFirstApplicationClass) {
-                    if (shouldBeCheckedForEnhancement(className)) {
-                        // we're back into the play framework code...
-                        return; // done checking
-                    } else {
-                        // is this class enhanced?
-                        boolean enhanced = ContinuationEnhancer.isEnhanced(className);
-                        if (!enhanced) {
-                            throw new ContinuationsException(
-                                    "Cannot use await/continuations when not all application classes on the callstack are properly enhanced. The following class is not enhanced: "
-                                            + className);
-                        }
-                    }
-                }
-            }
-
+            return future.get();
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new UnexpectedException(ie);
+        } catch (ExecutionException ee) {
+            Throwable cause = ee.getCause() != null ? ee.getCause() : ee;
+            if (cause instanceof RuntimeException re) throw re;
+            throw new UnexpectedException(cause);
         }
-    }
-
-
-    /**
-     * Checks if the classname is from the jdk, sun or play package and therefore should not be checked for enhancement
-     * @param String className
-     * @return boolean
-     */
-    static boolean shouldBeCheckedForEnhancement(String className)
-    {
-        return className.startsWith("jdk.") || className.startsWith("sun.") || className.startsWith("play.");
     }
 
     protected static <T> void await(Future<T> future, F.Action<T> callback) {
         Request.current().isNew = false;
-        if (VirtualThreadConfig.isInvokerEnabled()) {
-            // Loom path: block on the future, run the callback inline. See
-            // await(int, callback) above for the rationale — the platform-thread
-            // Suspend pattern fans the callback to a fresh invocation, which
-            // under VT mode gets a fresh ThreadLocal and orphans the original
-            // EntityManager. Inline keeps everything on one VT.
-            T result;
-            try {
-                result = future.get();
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-                throw new UnexpectedException(ie);
-            } catch (ExecutionException ee) {
-                Throwable cause = ee.getCause() != null ? ee.getCause() : ee;
-                if (cause instanceof RuntimeException re) throw re;
-                throw new UnexpectedException(cause);
-            }
-            try {
-                callback.invoke(result);
-            } catch (Throwable t) {
-                if (t instanceof RuntimeException re) throw re;
-                throw new UnexpectedException(t);
-            }
-            return;
+        T result;
+        try {
+            result = future.get();
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new UnexpectedException(ie);
+        } catch (ExecutionException ee) {
+            Throwable cause = ee.getCause() != null ? ee.getCause() : ee;
+            if (cause instanceof RuntimeException re) throw re;
+            throw new UnexpectedException(cause);
         }
-        Request.current().args.put(ActionInvoker.F, future);
-        Request.current().args.put(ActionInvoker.A, callback);
-        Request.current().args.put(ActionInvoker.CONTINUATIONS_STORE_RENDER_ARGS, Scope.RenderArgs.current());
-        throw new Suspend(future);
+        try {
+            callback.invoke(result);
+        } catch (Throwable t) {
+            if (t instanceof RuntimeException re) throw re;
+            throw new UnexpectedException(t);
+        }
     }
 
     /**
