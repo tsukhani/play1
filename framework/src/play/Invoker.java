@@ -418,6 +418,22 @@ public class Invoker {
      * interleave a swap with a concurrent shutdown.
      */
     public static synchronized void init() {
+        // Lazy-boot in DEV: the first request creates a bootstrap scheduler via
+        // {@link #ensureExecutor()}, then runs the request on a VT in that scheduler.
+        // The VT's request handler is what triggers {@code Play.start()} →
+        // {@code Invoker.init()} — so calling {@code stop()} → {@code shutdownNow()}
+        // here would interrupt the calling thread itself, and the first
+        // {@code @OnApplicationStart} job's first blocking I/O would abort with
+        // {@link InterruptedException}. Hot reloads route through {@link Play#stop()}
+        // first, which clears {@code scheduler} via {@link #stop()}, so by the time
+        // {@code Invoker.init()} runs again {@code scheduler} is {@code null} and the
+        // normal path is taken. Hence: a non-null scheduler at this entry implies the
+        // bootstrap-from-ensureExecutor case — reuse it rather than sawing off the
+        // branch the caller is sitting on.
+        if (scheduler != null && Thread.currentThread().isVirtual()) {
+            Logger.info("Invoker using virtual threads (kept bootstrap executor)");
+            return;
+        }
         stop();
         VirtualThreadScheduledExecutor v = new VirtualThreadScheduledExecutor("play");
         scheduler = v;
