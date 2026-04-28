@@ -80,6 +80,16 @@ public class Play {
      */
     private static boolean shutdownHookEnabled = false;
     /**
+     * Retired threading-config keys observed in raw form during {@code readConfiguration()},
+     * preserving any {@code %<id>.} profile prefix. The {@link #init(File, String)} warn
+     * block reports each so an operator can grep the offending line out of
+     * {@code application.conf} regardless of which profile is currently active —
+     * the two-pass profile filter in {@code readOneConfigurationFile} would otherwise
+     * silently drop e.g. {@code %prod.play.pool=10} when running in dev/test, hiding
+     * the dead knob until the next profile switch.
+     */
+    private static final java.util.Set<String> retiredThreadingKeys = new java.util.LinkedHashSet<>();
+    /**
      * The framework ID
      */
     public static String id = System.getProperty("play.id", "");
@@ -369,6 +379,7 @@ public class Play {
      */
     public static void readConfiguration() {
         confs = new HashSet<>();
+        retiredThreadingKeys.clear();
         configuration = readOneConfigurationFile("application.conf");
         extractHttpPort();
         // Plugins
@@ -404,6 +415,7 @@ public class Play {
         confs.add(conf);
 
         validateApplicationSecretDeclaration(propsFromFile, filename);
+        recordRetiredThreadingKeys(propsFromFile);
 
         // OK, check for instance specifics configuration
         Properties newConfiguration = new OrderSafeProperties();
@@ -586,6 +598,33 @@ public class Play {
     }
 
     /**
+     * Scan the raw {@link Properties} for retired threading-config keys and remember
+     * each in {@link #retiredThreadingKeys} preserving the original key form (including
+     * any {@code %<id>.} profile prefix). Runs before the two-pass profile filter in
+     * {@link #readOneConfigurationFile} drops non-active-profile keys, so a dormant
+     * {@code %prod.play.pool=10} sitting in {@code application.conf} during a dev run
+     * still shows up at boot as a {@code WARN} rather than waiting for the next profile
+     * switch to surface.
+     */
+    private static void recordRetiredThreadingKeys(Properties rawProps) {
+        if (rawProps == null) return;
+        for (Object keyObj : rawProps.keySet()) {
+            String key = keyObj.toString();
+            String bareKey = key;
+            if (key.startsWith("%")) {
+                int dotIdx = key.indexOf('.');
+                if (dotIdx > 0) bareKey = key.substring(dotIdx + 1);
+            }
+            if (bareKey.equals("play.threads.virtual")
+                    || bareKey.startsWith("play.threads.virtual.")
+                    || bareKey.equals("play.pool")
+                    || bareKey.equals("play.jobs.pool")) {
+                retiredThreadingKeys.add(key);
+            }
+        }
+    }
+
+    /**
      * Start the application. Recall to restart !
      */
     public static synchronized void start() {
@@ -639,16 +678,17 @@ public class Play {
             // Clean templates
             TemplateLoader.cleanCompiledCache();
 
-            // Warn on retired virtual-thread toggles. The fork executes the request
-            // invoker, jobs scheduler, and mail dispatcher exclusively on virtual threads;
-            // any legacy play.threads.virtual* property an operator has carried forward
-            // is silently ignored, so emit a one-shot WARN to make the no-op visible.
-            for (Object k : configuration.keySet()) {
-                String key = k.toString();
-                if (key.equals("play.threads.virtual") || key.startsWith("play.threads.virtual.")) {
-                    Logger.warn("Configuration key %s is no longer honored — this fork runs on "
-                            + "virtual threads exclusively. Remove it from application.conf.", key);
-                }
+            // Warn on retired threading toggles. The fork executes the request invoker,
+            // jobs scheduler, and mail dispatcher exclusively on virtual threads; any
+            // legacy play.threads.virtual*, play.pool, or play.jobs.pool entry — including
+            // profile-prefixed forms like %test.play.pool — is silently ignored (the VT
+            // thread-per-task executor isn't sized). Iterating the raw observed set
+            // (populated during readOneConfigurationFile, before the two-pass profile
+            // filter drops non-active-profile keys) means operators get one warning per
+            // dead line in application.conf, regardless of the active profile.
+            for (String key : retiredThreadingKeys) {
+                Logger.warn("Configuration key %s is no longer honored — this fork runs on "
+                        + "virtual threads exclusively. Remove it from application.conf.", key);
             }
 
             // SecretKey

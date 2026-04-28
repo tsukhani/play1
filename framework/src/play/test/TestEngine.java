@@ -12,6 +12,8 @@ import java.util.ListIterator;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+import play.utils.VirtualThreadFactory;
+
 import org.junit.jupiter.api.Assertions;
 import org.junit.platform.engine.TestExecutionResult;
 import org.junit.platform.launcher.Launcher;
@@ -45,7 +47,11 @@ public class TestEngine {
 
     private static final ClassNameComparator classNameComparator = new ClassNameComparator();
 
-    public static final ExecutorService functionalTestsExecutor = Executors.newSingleThreadExecutor();
+    // Single-threaded so functional-test invocations serialize (tests share static
+    // request/response/render state). Worker is a virtual thread; the "single-threaded"
+    // semantic comes from newSingleThreadExecutor's queue, not from the carrier kind.
+    public static final ExecutorService functionalTestsExecutor =
+            Executors.newSingleThreadExecutor(new VirtualThreadFactory("functional-test"));
 
     public static List<Class> allUnitTests() {
         List<Class> classes = new ArrayList<>();
