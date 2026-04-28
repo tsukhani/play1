@@ -171,15 +171,21 @@ public class FirePhoque {
             firephoque.getOptions().setThrowExceptionOnScriptError(false);
             firephoque.getOptions().setPrintContentOnFailingStatusCode(false);
 
-            // Split tests by category. Unit tests are independent and ship to a
-            // parallel VT pool; functional and Selenium tests go through the serial
-            // WebClient path so FunctionalTest's static savedCookies/renderArgs
-            // (and HtmlUnit's non-thread-safe WebClient) don't race.
-            List<String> unitTests = new ArrayList<>();
+            // Split tests into three lanes:
+            //   pureUnitTests  (U:) — no DB references → parallel pool, N permits.
+            //   dbUnitTests    (D:) — DB-touching → single-permit lane (serial among
+            //                         themselves, but concurrent with the U: lane).
+            //   serialTests    (F:/S: + unprefixed) → WebClient sequential path
+            //                         (FunctionalTest's static savedCookies/renderArgs
+            //                         and HtmlUnit's non-thread-safe WebClient race).
+            List<String> pureUnitTests = new ArrayList<>();
+            List<String> dbUnitTests = new ArrayList<>();
             List<String> serialTests = new ArrayList<>();
             for (String entry : tests) {
                 if (entry.startsWith("U:")) {
-                    unitTests.add(entry.substring(2));
+                    pureUnitTests.add(entry.substring(2));
+                } else if (entry.startsWith("D:")) {
+                    dbUnitTests.add(entry.substring(2));
                 } else if (entry.startsWith("F:") || entry.startsWith("S:")) {
                     serialTests.add(entry.substring(2));
                 } else {
@@ -191,7 +197,7 @@ public class FirePhoque {
 
             int maxLength = 0;
             for (String test : tests) {
-                String body = test.startsWith("U:") || test.startsWith("F:") || test.startsWith("S:") ? test.substring(2) : test;
+                String body = test.startsWith("U:") || test.startsWith("D:") || test.startsWith("F:") || test.startsWith("S:") ? test.substring(2) : test;
                 String testName = body.replace(".class", "").replace(".test.html", "").replace(".", "/").replace("$", "/");
                 if (testName.length() > maxLength) {
                     maxLength = testName.length();
@@ -202,7 +208,7 @@ public class FirePhoque {
             firephoque.openWindow(new URL(app + "/@tests/init"), "headless");
             AtomicBoolean ok = new AtomicBoolean(true);
 
-            runUnitTestsInParallel(app, unitTests, root, maxLength, ok);
+            runUnitTestsInParallel(app, pureUnitTests, dbUnitTests, root, maxLength, ok);
             runSerialTests(firephoque, app, selenium, serialTests, root, maxLength, ok);
 
             firephoque.openWindow(new URL(app + "/@tests/end?result=" + (ok.get() ? "passed" : "failed")), "headless");
@@ -228,35 +234,39 @@ public class FirePhoque {
     private static final Object PRINT_LOCK = new Object();
 
     /**
-     * Run unit tests concurrently via a virtual-thread executor capped by a
-     * {@link Semaphore}. Each test fires a plain HTTP GET (no browser semantics —
-     * the response is server-rendered HTML written by {@code TestRunner.run}) and
-     * then polls for the result file the controller writes. Output order becomes
-     * completion-order; pass/fail aggregates into the shared {@code ok} flag.
+     * Run unit tests concurrently via a virtual-thread executor with two gates:
+     * pure unit tests share an N-permit semaphore (default 16, override via
+     * {@code -DunitTestParallelism=N}); DB-touching tests share a single-permit
+     * semaphore so {@code Fixtures.deleteDatabase()} calls don't race against
+     * each other. The two lanes run concurrently with each other against the
+     * same VT executor — pure tests don't touch the database, so they can
+     * proceed while the DB lane serializes.
+     *
+     * Each test fires a plain HTTP GET (no browser semantics — the response is
+     * server-rendered HTML written by {@code TestRunner.run}) and then polls for
+     * the result file the controller writes. Output order becomes completion-
+     * order; pass/fail aggregates into the shared {@code ok} flag.
      */
-    private static void runUnitTestsInParallel(String app, List<String> unitTests, File root,
+    private static void runUnitTestsInParallel(String app, List<String> pureUnitTests,
+                                                List<String> dbUnitTests, File root,
                                                 int maxLength, AtomicBoolean ok) {
-        if (unitTests.isEmpty()) return;
+        if (pureUnitTests.isEmpty() && dbUnitTests.isEmpty()) return;
 
         int parallelism = Integer.parseInt(System.getProperty("unitTestParallelism", "16"));
-        Semaphore gate = new Semaphore(parallelism);
+        Semaphore pureGate = new Semaphore(parallelism);
+        Semaphore dbGate = new Semaphore(1);
         HttpClient httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(30))
                 .build();
 
         try (ExecutorService pool = Executors.newThreadPerTaskExecutor(
                 Thread.ofVirtual().name("firephoque-unit-", 1).factory())) {
-            List<Future<?>> futures = new ArrayList<>(unitTests.size());
-            for (String test : unitTests) {
-                futures.add(pool.submit(() -> {
-                    gate.acquire();
-                    try {
-                        runOneUnitTest(httpClient, app, test, root, maxLength, ok);
-                    } finally {
-                        gate.release();
-                    }
-                    return null;
-                }));
+            List<Future<?>> futures = new ArrayList<>(pureUnitTests.size() + dbUnitTests.size());
+            for (String test : pureUnitTests) {
+                futures.add(submitGated(pool, pureGate, httpClient, app, test, root, maxLength, ok));
+            }
+            for (String test : dbUnitTests) {
+                futures.add(submitGated(pool, dbGate, httpClient, app, test, root, maxLength, ok));
             }
             for (Future<?> f : futures) {
                 try {
@@ -267,6 +277,20 @@ public class FirePhoque {
                 }
             }
         }
+    }
+
+    private static Future<?> submitGated(ExecutorService pool, Semaphore gate,
+                                          HttpClient httpClient, String app, String test,
+                                          File root, int maxLength, AtomicBoolean ok) {
+        return pool.submit(() -> {
+            gate.acquire();
+            try {
+                runOneUnitTest(httpClient, app, test, root, maxLength, ok);
+            } finally {
+                gate.release();
+            }
+            return null;
+        });
     }
 
     private static void runOneUnitTest(HttpClient httpClient, String app, String test,
