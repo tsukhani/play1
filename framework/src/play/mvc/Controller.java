@@ -11,6 +11,7 @@ import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 
 import org.apache.commons.javaflow.Continuation;
@@ -63,6 +64,7 @@ import play.templates.Template;
 import play.templates.TemplateLoader;
 import play.utils.Default;
 import play.utils.Java;
+import play.utils.VirtualThreadConfig;
 import play.vfs.VirtualFile;
 
 /**
@@ -1090,6 +1092,20 @@ public class Controller implements PlayController, ControllerSupport, LocalVaria
 
     protected static void await(int millis) {
         Request.current().isNew = false;
+        if (VirtualThreadConfig.isInvokerEnabled()) {
+            // Loom path: park the virtual thread directly. Skips the Javaflow
+            // continuation machinery — the resumed run on a different VT would
+            // lose every ThreadLocal-bound resource (most importantly the JPA
+            // EntityManager and its leased JDBC connection). Blocking the same
+            // VT keeps all per-request scope intact and yields its carrier.
+            try {
+                Thread.sleep(millis);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                throw new UnexpectedException(ie);
+            }
+            return;
+        }
         verifyContinuationsEnhancement();
         storeOrRestoreDataStateForContinuations(null);
         Continuation.suspend(millis);
@@ -1173,6 +1189,27 @@ public class Controller implements PlayController, ControllerSupport, LocalVaria
 
     protected static void await(int millis, F.Action0 callback) {
         Request.current().isNew = false;
+        if (VirtualThreadConfig.isInvokerEnabled()) {
+            // Loom path: sleep on this VT, then run the callback inline. The
+            // platform-thread variant uses Suspend to schedule the callback on
+            // a fresh invocation — under VT mode that fresh invocation would
+            // run on a different VT with empty ThreadLocals, leaking the
+            // request-scoped EntityManager. Inline execution keeps the same VT
+            // (and its scope) active end-to-end.
+            try {
+                Thread.sleep(millis);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                throw new UnexpectedException(ie);
+            }
+            try {
+                callback.invoke();
+            } catch (Throwable t) {
+                if (t instanceof RuntimeException re) throw re;
+                throw new UnexpectedException(t);
+            }
+            return;
+        }
         Request.current().args.put(ActionInvoker.A, callback);
         Request.current().args.put(ActionInvoker.CONTINUATIONS_STORE_RENDER_ARGS, Scope.RenderArgs.current());
         throw new Suspend(millis);
@@ -1180,6 +1217,29 @@ public class Controller implements PlayController, ControllerSupport, LocalVaria
 
     @SuppressWarnings("unchecked")
     protected static <T> T await(Future<T> future) {
+
+        if (VirtualThreadConfig.isInvokerEnabled()) {
+            // Loom path: block the VT on future.get() and return synchronously.
+            // The Javaflow stack-capture + Suspend/resume dance below is built
+            // for thread scarcity that VTs eliminate; running both at once
+            // strands the request-scoped EntityManager on the suspending VT
+            // and leaks its JDBC connection. Direct .get() keeps the same VT
+            // (and every ThreadLocal-bound scope) live across the wait.
+            if (future == null) {
+                throw new UnexpectedException("Lost promise for " + Http.Request.current() + "!");
+            }
+            Request.current().isNew = false;
+            try {
+                return future.get();
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                throw new UnexpectedException(ie);
+            } catch (ExecutionException ee) {
+                Throwable cause = ee.getCause() != null ? ee.getCause() : ee;
+                if (cause instanceof RuntimeException re) throw re;
+                throw new UnexpectedException(cause);
+            }
+        }
 
         if (future != null) {
             Request.current().args.put(ActionInvoker.F, future);
@@ -1269,6 +1329,31 @@ public class Controller implements PlayController, ControllerSupport, LocalVaria
 
     protected static <T> void await(Future<T> future, F.Action<T> callback) {
         Request.current().isNew = false;
+        if (VirtualThreadConfig.isInvokerEnabled()) {
+            // Loom path: block on the future, run the callback inline. See
+            // await(int, callback) above for the rationale — the platform-thread
+            // Suspend pattern fans the callback to a fresh invocation, which
+            // under VT mode gets a fresh ThreadLocal and orphans the original
+            // EntityManager. Inline keeps everything on one VT.
+            T result;
+            try {
+                result = future.get();
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                throw new UnexpectedException(ie);
+            } catch (ExecutionException ee) {
+                Throwable cause = ee.getCause() != null ? ee.getCause() : ee;
+                if (cause instanceof RuntimeException re) throw re;
+                throw new UnexpectedException(cause);
+            }
+            try {
+                callback.invoke(result);
+            } catch (Throwable t) {
+                if (t instanceof RuntimeException re) throw re;
+                throw new UnexpectedException(t);
+            }
+            return;
+        }
         Request.current().args.put(ActionInvoker.F, future);
         Request.current().args.put(ActionInvoker.A, callback);
         Request.current().args.put(ActionInvoker.CONTINUATIONS_STORE_RENDER_ARGS, Scope.RenderArgs.current());
