@@ -38,14 +38,6 @@ public class ApplicationCompiler {
 
     private static final String JAVA_SOURCE_DEFAULT_VERSION = "25";
     static final Map<String, String> compatibleJavaVersions = Map.ofEntries(
-        Map.entry("17", CompilerOptions.VERSION_17),
-        Map.entry("18", CompilerOptions.VERSION_18),
-        Map.entry("19", CompilerOptions.VERSION_19),
-        Map.entry("20", CompilerOptions.VERSION_20),
-        Map.entry("21", CompilerOptions.VERSION_21),
-        Map.entry("22", CompilerOptions.VERSION_22),
-        Map.entry("23", CompilerOptions.VERSION_23),
-        Map.entry("24", CompilerOptions.VERSION_24),
         Map.entry("25", CompilerOptions.VERSION_25)
     );
 
@@ -61,8 +53,9 @@ public class ApplicationCompiler {
      */
     public ApplicationCompiler(ApplicationClasses applicationClasses) {
         final String runningJavaVersion = System.getProperty("java.version");
-        if (Stream.of("1.5", "1.6", "1.7", "1.8", "9", "10", "11", "12", "13", "14", "15", "16").anyMatch(runningJavaVersion::startsWith)) {
-            throw new CompilationException("JDK version prior to 17 are not supported to run the application");
+        if (Stream.of("1.5", "1.6", "1.7", "1.8", "9", "10", "11", "12", "13", "14", "15", "16",
+                      "17", "18", "19", "20", "21", "22", "23", "24").anyMatch(runningJavaVersion::startsWith)) {
+            throw new CompilationException("JDK version prior to 25 are not supported to run the application");
         }
 
         final String configSourceVersion = Play.configuration.getProperty("java.source", JAVA_SOURCE_DEFAULT_VERSION);

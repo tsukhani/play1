@@ -27,7 +27,7 @@ class TestPlayVersion(unittest.TestCase):
     def test_version_outputs_version_number(self):
         result = run_play(['version'])
         self.assertIn('play!', result.stdout)
-        self.assertIn('1.11', result.stdout)
+        self.assertRegex(result.stdout, r'play!\s+\d+\.\d+\.\d+')
 
 
 class TestPlayHelp(unittest.TestCase):
@@ -86,7 +86,7 @@ class TestPlayNewWithNuxt(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_creates_nuxt_frontend(self):
-        result = run_play(['new', self.app_path, '--name=NuxtApp', '--frontend=nuxt'])
+        result = run_play(['new', self.app_path, '--name=NuxtApp', '--frontend'])
         self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
 
         self.assertTrue(os.path.isdir(os.path.join(self.app_path, 'frontend')))
@@ -95,7 +95,7 @@ class TestPlayNewWithNuxt(unittest.TestCase):
         self.assertTrue(os.path.isfile(os.path.join(self.app_path, 'frontend', 'pages', 'index.vue')))
 
     def test_creates_api_controller(self):
-        run_play(['new', self.app_path, '--name=NuxtApp', '--frontend=nuxt'])
+        run_play(['new', self.app_path, '--name=NuxtApp', '--frontend'])
 
         api_controller = os.path.join(self.app_path, 'app', 'controllers', 'ApiController.java')
         self.assertTrue(os.path.isfile(api_controller))
@@ -104,7 +104,7 @@ class TestPlayNewWithNuxt(unittest.TestCase):
         self.assertIn('renderJSON', content)
 
     def test_adds_api_route(self):
-        run_play(['new', self.app_path, '--name=NuxtApp', '--frontend=nuxt'])
+        run_play(['new', self.app_path, '--name=NuxtApp', '--frontend'])
 
         routes_path = os.path.join(self.app_path, 'conf', 'routes')
         with open(routes_path) as f:
@@ -113,7 +113,7 @@ class TestPlayNewWithNuxt(unittest.TestCase):
         self.assertIn('ApiController.status', content)
 
     def test_substitutes_app_name_in_frontend(self):
-        run_play(['new', self.app_path, '--name=MyNuxtApp', '--frontend=nuxt'])
+        run_play(['new', self.app_path, '--name=MyNuxtApp', '--frontend'])
 
         with open(os.path.join(self.app_path, 'frontend', 'package.json')) as f:
             content = f.read()

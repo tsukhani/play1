@@ -50,16 +50,16 @@ def execute(**kargs):
 def new(app, args, env, cmdloader=None):
     withModules = []
     application_name = None
-    frontend = None
+    frontend = False
     try:
-        optlist, args = getopt.getopt(args, '', ['with=', 'name=', 'frontend='])
+        optlist, args = getopt.getopt(args, '', ['with=', 'name=', 'frontend'])
         for o, a in optlist:
             if o in ('--with'):
                 withModules = a.split(',')
             if o in ('--name'):
                 application_name = a
             if o in ('--frontend'):
-                frontend = a
+                frontend = True
     except getopt.GetoptError as err:
         print("~ %s" % str(err))
         print("~ Sorry, unrecognized option")
@@ -117,12 +117,12 @@ def new(app, args, env, cmdloader=None):
     cmdloader.commands['dependencies'].execute(command='dependencies', app=app, args=['--sync'], env=env, cmdloader=cmdloader)
 
     # Set up Nuxt 3 frontend if requested
-    if frontend == 'nuxt':
+    if frontend:
         setup_nuxt_frontend(app, application_name, env)
 
     print("~ OK, the application is created.")
     print("~ Start it with : play run %s" % sys.argv[2])
-    if frontend == 'nuxt':
+    if frontend:
         print("~ Start the frontend with : cd %s/frontend && pnpm install && pnpm dev" % sys.argv[2])
     print("~ Have fun!")
     print("~")

@@ -13,6 +13,7 @@ public class ApiController extends Controller {
         JsonObject json = new JsonObject();
         json.addProperty("status", "ok");
         json.addProperty("application", play.Play.configuration.getProperty("application.name"));
+        json.addProperty("applicationVersion", play.Play.configuration.getProperty("application.version"));
         json.addProperty("mode", play.Play.mode.toString());
         json.addProperty("version", play.Play.version);
         renderJSON(json.toString());

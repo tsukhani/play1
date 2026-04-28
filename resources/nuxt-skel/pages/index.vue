@@ -11,7 +11,18 @@ const { data: status } = await useFetch('/api/status')
 
     <div class="bg-white border border-gray-200 rounded-lg p-6">
       <h3 class="text-sm font-medium text-gray-500 uppercase tracking-wide mb-3">API Status</h3>
-      <pre v-if="status" class="text-sm text-gray-700 bg-gray-50 rounded p-4 overflow-auto">{{ JSON.stringify(status, null, 2) }}</pre>
+      <dl v-if="status" class="text-sm text-gray-700 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-2">
+        <dt class="text-gray-500">Status</dt>
+        <dd class="font-mono">{{ status.status }}</dd>
+        <dt class="text-gray-500">Application</dt>
+        <dd class="font-mono">{{ status.application }}</dd>
+        <dt class="text-gray-500">Application version</dt>
+        <dd class="font-mono">{{ status.applicationVersion }}</dd>
+        <dt class="text-gray-500">Mode</dt>
+        <dd class="font-mono">{{ status.mode }}</dd>
+        <dt class="text-gray-500">Play version</dt>
+        <dd class="font-mono">{{ status.version }}</dd>
+      </dl>
       <p v-else class="text-sm text-gray-400">
         Start the Play backend with <code class="bg-gray-100 px-1.5 py-0.5 rounded text-xs">play run</code> to see API data.
       </p>
