@@ -69,10 +69,36 @@ public class StreamChunkAggregator extends ChannelInboundHandlerAdapter {
     private boolean rejected;
 
     public StreamChunkAggregator() {
-        this.spoolThresholdBytes = Integer.parseInt(
-                Play.configuration.getProperty("play.netty.spoolThresholdBytes", String.valueOf(DEFAULT_SPOOL_THRESHOLD)));
-        this.maxContentLength = Long.parseLong(
-                Play.configuration.getProperty("play.netty.maxContentLength", "-1"));
+        // Defensive parse: this ctor is invoked once per accepted connection (channelInitializer
+        // path). A typo in either property would otherwise throw NumberFormatException for every
+        // connection, so the server appears to "drop all traffic" with no useful log. Fall back
+        // to documented defaults and warn loudly so the operator notices.
+        this.spoolThresholdBytes = parseIntConfig(
+                "play.netty.spoolThresholdBytes", DEFAULT_SPOOL_THRESHOLD);
+        this.maxContentLength = parseLongConfig(
+                "play.netty.maxContentLength", -1L);
+    }
+
+    private static int parseIntConfig(String key, int defaultValue) {
+        String raw = Play.configuration.getProperty(key);
+        if (raw == null || raw.isBlank()) return defaultValue;
+        try {
+            return Integer.parseInt(raw.trim());
+        } catch (NumberFormatException nfe) {
+            Logger.warn("Invalid %s='%s'; using default %d", key, raw, defaultValue);
+            return defaultValue;
+        }
+    }
+
+    private static long parseLongConfig(String key, long defaultValue) {
+        String raw = Play.configuration.getProperty(key);
+        if (raw == null || raw.isBlank()) return defaultValue;
+        try {
+            return Long.parseLong(raw.trim());
+        } catch (NumberFormatException nfe) {
+            Logger.warn("Invalid %s='%s'; using default %d", key, raw, defaultValue);
+            return defaultValue;
+        }
     }
 
     @Override
@@ -104,6 +130,10 @@ public class StreamChunkAggregator extends ChannelInboundHandlerAdapter {
 
             resetState();
             pendingRequest = req;
+            // Audit M31: allocate inMemoryBody under try/release so any subsequent
+            // throw on this code path doesn't leak the CompositeByteBuf. The
+            // exceptionCaught handler also calls resetState (defensive belt+braces),
+            // but local cleanup makes the invariant explicit.
             inMemoryBody = ctx.alloc().compositeBuffer();
 
             // PF-55: handle Expect: 100-continue. Strict upload clients (curl --expect100,
@@ -159,15 +189,22 @@ public class StreamChunkAggregator extends ChannelInboundHandlerAdapter {
 
             if (!overflow && bytesReceived > spoolThresholdBytes) {
                 // Switch from in-memory accumulation to disk.
-                overflow = true;
-                spoolFile = createSpoolFile();
-                spoolOut = new FileOutputStream(spoolFile);
-                if (inMemoryBody != null && inMemoryBody.isReadable()) {
-                    inMemoryBody.readBytes(spoolOut, inMemoryBody.readableBytes());
-                }
-                if (inMemoryBody != null) {
-                    inMemoryBody.release();
-                    inMemoryBody = null;
+                // Audit M31: createSpoolFile / FileOutputStream / readBytes can throw
+                // IOException (disk full, permission denied). If they do, ensure the
+                // in-memory composite buffer is released here rather than waiting for
+                // exceptionCaught/channelInactive to fire and call resetState.
+                try {
+                    overflow = true;
+                    spoolFile = createSpoolFile();
+                    spoolOut = new FileOutputStream(spoolFile);
+                    if (inMemoryBody != null && inMemoryBody.isReadable()) {
+                        inMemoryBody.readBytes(spoolOut, inMemoryBody.readableBytes());
+                    }
+                } finally {
+                    if (inMemoryBody != null) {
+                        inMemoryBody.release();
+                        inMemoryBody = null;
+                    }
                 }
             }
 

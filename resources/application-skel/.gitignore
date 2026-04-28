@@ -1,0 +1,16 @@
+# Real environment values (with secrets) — never committed.
+# `.env.example` (without leading dot-env-anything-else) is the committed template.
+.env
+.env.local
+
+# Play artifacts
+/tmp/
+/logs/
+/test-result/
+/precompiled/
+/db/
+/lib/
+/modules/
+*.iml
+.idea/
+.vscode/

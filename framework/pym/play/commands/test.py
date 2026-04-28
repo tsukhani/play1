@@ -21,6 +21,15 @@ def execute(**kargs):
     
 def test(app, args):
     app.check()
+
+    # Tests are hermetic — generate an ephemeral secret if none was supplied via
+    # .env / host env / -D flag, so a fresh checkout can run `play test` without
+    # first running `play secret`.
+    generated = ensureTestSecret(app.path)
+    if generated is not None:
+        print("~ Generated ephemeral %s for this test run" % generated)
+        print("~ ")
+
     java_cmd = app.java_cmd(args)
     print("~ Running in test mode")
     print("~ Ctrl+C to stop")

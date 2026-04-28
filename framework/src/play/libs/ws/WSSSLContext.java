@@ -8,6 +8,7 @@ import java.security.GeneralSecurityException;
 import java.security.KeyStore;
 import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
+import play.Logger;
 
 public final class WSSSLContext {
 
@@ -70,6 +71,11 @@ public final class WSSSLContext {
 
             return tmf.getTrustManagers();
         } else {
+            Logger.error(
+                "INSECURE: WS outbound TLS certificate validation is disabled "
+                + "(ssl.cavalidation=false). Every HTTPS call from `play.libs.WS` "
+                + "trusts any presented certificate, exposing this app to "
+                + "man-in-the-middle attacks. Disable this option in production.");
             return new TrustManager[] { TRUST_ALL_MANAGER };
         }
     }

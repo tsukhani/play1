@@ -33,6 +33,14 @@ def autotest(app, args):
     print("~ Ctrl+C to stop")
     print("~ ")
 
+    # Tests are hermetic — generate an ephemeral secret if none was supplied via
+    # .env / host env / -D flag, so a fresh checkout can run `play auto-test`
+    # without first running `play secret`.
+    generated = ensureTestSecret(app.path)
+    if generated is not None:
+        print("~ Generated ephemeral %s for this test run" % generated)
+        print("~ ")
+
     print("~ Deleting %s" % os.path.normpath(os.path.join(app.path, 'tmp')))
     if os.path.exists(os.path.join(app.path, 'tmp')):
         shutil.rmtree(os.path.join(app.path, 'tmp'))

@@ -23,6 +23,7 @@ import play.data.validation.Validation;
 import play.exceptions.TagInternalException;
 import play.exceptions.TemplateExecutionException;
 import play.exceptions.TemplateNotFoundException;
+import play.utils.HTML;
 import play.libs.Codec;
 import play.mvc.Http;
 import play.mvc.Mailer;
@@ -69,7 +70,11 @@ public class FastTags {
         if (args.containsKey("encodeURI") && Boolean.TRUE.equals(Boolean.valueOf(args.get("encodeURI").toString()))) {
             html += "val = encodeURIComponent(val.replace('&amp;', '&'));" + minimize;
         }
-        // Custom script
+        // Custom script — emitted verbatim into the generated JavaScript by design.
+        // SECURITY: this attribute is intended for developer-supplied JS code, not
+        // for user input. Never pass an attacker-influenced value to `customScript`;
+        // doing so produces XSS. Use `encodeURI:true` instead when the goal is to
+        // safely pass user data into the URL pattern.
         if (args.containsKey("customScript")) {
             html += "val = " + args.get("customScript") + minimize;
         }
@@ -105,7 +110,10 @@ public class FastTags {
         Object value = args.get("arg");
         Object selectedValue = TagContext.parent("select").data.get("selected");
         boolean selected = selectedValue != null && value != null && (selectedValue.toString()).equals(value.toString());
-        out.print("<option value=\"" + (value == null ? "" : value) + "\" " + (selected ? "selected=\"selected\"" : "") + " "
+        // Audit B10: HTML-escape the value attribute so a model value containing `"` or
+        // `<` cannot break out of the attribute and inject markup.
+        String safeValue = (value == null) ? "" : HTML.htmlEscape(value.toString());
+        out.print("<option value=\"" + safeValue + "\" " + (selected ? "selected=\"selected\"" : "") + " "
                 + serialize(args, "selected", "value") + ">");
         out.println(JavaExtensions.toString(body));
         out.print("</option>");
@@ -465,7 +473,10 @@ public class FastTags {
             if (Arrays.binarySearch(unless, attr) < 0 && !attr.equals("arg")) {
                 attrs.append(attr);
                 attrs.append("=\"");
-                attrs.append(value);
+                // Audit B10: HTML-escape attribute values so a `"` in a passed-through
+                // attribute (e.g. #{form class:userInput}) cannot break out of the
+                // quotes and inject onsubmit= or onload= handlers.
+                attrs.append(HTML.htmlEscape(value));
                 attrs.append("\" ");
             }
         }

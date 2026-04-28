@@ -134,12 +134,17 @@ public class VirtualThreadScheduledExecutor {
         SelfReschedulingFuture handle = new SelfReschedulingFuture();
         AtomicReference<Runnable> taskRef = new AtomicReference<>();
         taskRef.set(() -> {
-            // H1: split the early-return so a shutdown between runs still drives the
-            // handle to terminal state. STPE's default policy executes already-delayed
-            // tasks after shutdown(); without the explicit handle.cancel(false) call,
-            // the dispatch would observe isShutdown(), bail, and never count down the
-            // terminated latch — leaving callers blocked on handle.get() forever.
-            if (handle.isCancelled()) return;
+            // H1 + M14: short-circuit on terminal handle state OR scheduler shutdown.
+            // Use isDone() not isCancelled() — completeExceptionally sets failure!=null
+            // but isCancelled() returns false in that case, so a fast dispatch queued
+            // just before abnormal termination could slip past and re-run a job the
+            // previous iteration already failed (audit M14). Split the shutdown branch
+            // so a shutdown between runs ALSO drives the handle to terminal state:
+            // STPE's default policy executes already-delayed tasks after shutdown();
+            // without the explicit handle.cancel(false), the dispatch would observe
+            // isShutdown(), bail, and never count down the terminated latch — leaving
+            // callers blocked on handle.get() forever (audit H1).
+            if (handle.isDone()) return;
             if (scheduler.isShutdown()) {
                 handle.cancel(false);
                 return;
@@ -160,7 +165,7 @@ public class VirtualThreadScheduledExecutor {
                 // isDone() would return false and get() would block, diverging from
                 // ScheduledThreadPoolExecutor's "shutdown cancels periodic tasks"
                 // contract.
-                if (handle.isCancelled()) {
+                if (handle.isDone()) {
                     return;
                 }
                 if (scheduler.isShutdown()) {
@@ -177,6 +182,31 @@ public class VirtualThreadScheduledExecutor {
         });
         handle.setNext(scheduler.schedule(taskRef.get(), initialDelay, unit));
         return handle;
+    }
+
+    /**
+     * Initiate an orderly shutdown: the scheduler stops accepting new tasks but
+     * lets in-flight work complete. Pair with {@link #awaitTermination} for
+     * graceful drain semantics; call {@link #shutdownNow} only if the await
+     * times out.
+     */
+    public void shutdown() {
+        scheduler.shutdown();
+        virtualExecutor.shutdown();
+    }
+
+    /**
+     * Block up to {@code timeout} for both the scheduler and the virtual-thread
+     * executor to finish their in-flight work after a {@link #shutdown} call.
+     * Returns true if both terminated within the budget.
+     */
+    public boolean awaitTermination(long timeout, TimeUnit unit) throws InterruptedException {
+        long nanosBudget = unit.toNanos(timeout);
+        long deadline = System.nanoTime() + nanosBudget;
+        boolean schedulerDone = scheduler.awaitTermination(nanosBudget, TimeUnit.NANOSECONDS);
+        long remaining = Math.max(0L, deadline - System.nanoTime());
+        boolean executorDone = virtualExecutor.awaitTermination(remaining, TimeUnit.NANOSECONDS);
+        return schedulerDone && executorDone;
     }
 
     /**

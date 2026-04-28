@@ -72,22 +72,29 @@ public class EvolutionQuery{
     }
     
     public static void resolve(String dbName, int revision, String moduleKey) throws SQLException {
+        // Audit B7: connection was previously opened and never closed — every call
+        // (e.g. via the /@evolutions/force/ HTTP endpoint) leaked one pooled
+        // connection until pool exhaustion.
         Connection connection = getNewConnection(dbName);
-        PreparedStatement ps = connection.prepareStatement("update play_evolutions set state = ?, last_problem = ?  where state = ? and id = ? and module_key = ?" );
-        ps.setString(1, EvolutionState.APPLIED.getStateWord() );
-        ps.setString(2, "");
-        ps.setString(3, EvolutionState.APPLYING_UP.getStateWord() );
-        ps.setInt(4, revision);
-        ps.setString(5, moduleKey);
-        ps.execute();
-        closeStatement(ps);
-        
-        PreparedStatement ps2 = connection.prepareStatement("delete from play_evolutions where state = ? and id = ? and module_key = ?" );
-        ps2.setString(1, EvolutionState.APPLYING_DOWN.getStateWord() );
-        ps2.setInt(2, revision);
-        ps2.setString(3, moduleKey);
-        ps2.execute();
-        closeStatement(ps2);
+        try {
+            PreparedStatement ps = connection.prepareStatement("update play_evolutions set state = ?, last_problem = ?  where state = ? and id = ? and module_key = ?" );
+            ps.setString(1, EvolutionState.APPLIED.getStateWord() );
+            ps.setString(2, "");
+            ps.setString(3, EvolutionState.APPLYING_UP.getStateWord() );
+            ps.setInt(4, revision);
+            ps.setString(5, moduleKey);
+            ps.execute();
+            closeStatement(ps);
+
+            PreparedStatement ps2 = connection.prepareStatement("delete from play_evolutions where state = ? and id = ? and module_key = ?" );
+            ps2.setString(1, EvolutionState.APPLYING_DOWN.getStateWord() );
+            ps2.setInt(2, revision);
+            ps2.setString(3, moduleKey);
+            ps2.execute();
+            closeStatement(ps2);
+        } finally {
+            closeConnection(connection);
+        }
     }
     
     public static void apply(Connection connection, boolean runScript, Evolution evolution, String moduleKey) throws SQLException {

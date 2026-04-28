@@ -159,6 +159,40 @@ public class HttpServerPipelineFactory extends ChannelInitializer<Channel> {
         return name;
     }
 
+    /**
+     * Build an HttpContentCompressor with explicit gzip+deflate (always) and
+     * brotli/zstd (if their native deps are on the classpath). Shared by the
+     * plain HTTP and SSL pipeline factories so SSL-wired compressors get the
+     * same encoder set without duplicating the construction logic.
+     * <p>
+     * Audit M32: SSL factory used to fall through to a no-arg ctor here, which
+     * doesn't exist on HttpContentCompressor in Netty 4.2 — explicitly wiring
+     * compressor in the SSL pipeline silently failed to instantiate.
+     */
+    public static HttpContentCompressor buildHttpContentCompressor() {
+        // HttpContentCompressor: the no-arg ctor in Netty 4.2 only enables gzip + deflate. We
+        // construct it with explicit CompressionOptions so brotli (and zstd) auto-enable when
+        // their native libs are on the classpath. brotli4j ships transitively with
+        // netty-codec-compression; zstd-jni is opt-in. StandardCompressionOptions.brotli() /
+        // .zstd() throw at call time if the native deps are absent — catch and skip.
+        List<CompressionOptions> opts = new ArrayList<>(4);
+        // gzip/deflate take (level, windowBits, memLevel); we expose only level — the other
+        // two are zlib trivia (windowBits=15 → 32KB window; memLevel=8 → 256KB state) that
+        // nobody benchmarks against in HTTP contexts.
+        opts.add(StandardCompressionOptions.gzip(GZIP_LEVEL, 15, 8));
+        opts.add(StandardCompressionOptions.deflate(DEFLATE_LEVEL, 15, 8));
+        // brotli4j Encoder.Parameters is referenced by FQCN inside the try block so the JVM
+        // resolves it at method-call time rather than at class load. If brotli4j is absent,
+        // NoClassDefFoundError is caught and brotli is skipped.
+        try {
+            com.aayushatharva.brotli4j.encoder.Encoder.Parameters brotliParams =
+                    new com.aayushatharva.brotli4j.encoder.Encoder.Parameters().setQuality(BROTLI_QUALITY);
+            opts.add(StandardCompressionOptions.brotli(brotliParams));
+        } catch (Throwable ignored) { /* brotli4j absent */ }
+        try { opts.add(StandardCompressionOptions.zstd()); } catch (Throwable ignored) { /* zstd-jni absent */ }
+        return new HttpContentCompressor(COMPRESSION_THRESHOLD, opts.toArray(new CompressionOptions[0]));
+    }
+
     protected ChannelHandler getInstance(String name) throws Exception {
         Class<?> clazz = classes.computeIfAbsent(name, className -> {
             try {
@@ -174,28 +208,8 @@ public class HttpServerPipelineFactory extends ChannelInitializer<Channel> {
             return new HttpObjectAggregator(DEFAULT_AGGREGATOR_MAX);
         }
 
-        // HttpContentCompressor: the no-arg ctor in Netty 4.2 only enables gzip + deflate. We
-        // construct it with explicit CompressionOptions so brotli (and zstd) auto-enable when
-        // their native libs are on the classpath. brotli4j ships transitively with
-        // netty-codec-compression; zstd-jni is opt-in. StandardCompressionOptions.brotli() /
-        // .zstd() throw at call time if the native deps are absent — catch and skip.
         if (clazz == HttpContentCompressor.class) {
-            List<CompressionOptions> opts = new ArrayList<>(4);
-            // gzip/deflate take (level, windowBits, memLevel); we expose only level — the other
-            // two are zlib trivia (windowBits=15 → 32KB window; memLevel=8 → 256KB state) that
-            // nobody benchmarks against in HTTP contexts.
-            opts.add(StandardCompressionOptions.gzip(GZIP_LEVEL, 15, 8));
-            opts.add(StandardCompressionOptions.deflate(DEFLATE_LEVEL, 15, 8));
-            // brotli4j Encoder.Parameters is referenced by FQCN inside the try block so the JVM
-            // resolves it at method-call time rather than at HttpServerPipelineFactory class load.
-            // If brotli4j is absent, NoClassDefFoundError is caught and brotli is skipped.
-            try {
-                com.aayushatharva.brotli4j.encoder.Encoder.Parameters brotliParams =
-                        new com.aayushatharva.brotli4j.encoder.Encoder.Parameters().setQuality(BROTLI_QUALITY);
-                opts.add(StandardCompressionOptions.brotli(brotliParams));
-            } catch (Throwable ignored) { /* brotli4j absent */ }
-            try { opts.add(StandardCompressionOptions.zstd()); } catch (Throwable ignored) { /* zstd-jni absent */ }
-            return new HttpContentCompressor(COMPRESSION_THRESHOLD, opts.toArray(new CompressionOptions[0]));
+            return buildHttpContentCompressor();
         }
 
         // Otherwise prefer no-arg constructor; fall back to int-arg if needed.

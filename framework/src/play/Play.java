@@ -403,6 +403,8 @@ public class Play {
         }
         confs.add(conf);
 
+        validateApplicationSecretDeclaration(propsFromFile, filename);
+
         // OK, check for instance specifics configuration
         Properties newConfiguration = new OrderSafeProperties();
         Pattern pattern = Pattern.compile("^%([a-zA-Z0-9_\\-]+)\\.(.*)$");
@@ -470,6 +472,10 @@ public class Play {
                 try {
                     String filenameToInclude = propsFromFile.getProperty(key.toString());
                     toInclude.putAll(readOneConfigurationFile(filenameToInclude));
+                } catch (UnexpectedException ex) {
+                    // Configuration validation errors (e.g. forbidden application.secret
+                    // declaration in an included file) must surface, not be silenced.
+                    throw ex;
                 } catch (Exception ex) {
                     Logger.warn(ex, "Missing include: %s", key);
                 }
@@ -478,6 +484,105 @@ public class Play {
         propsFromFile.putAll(toInclude);
 
         return propsFromFile;
+    }
+
+    /**
+     * Enforce that {@code application.secret} is declared exactly once, in
+     * {@code conf/application.conf}, with the form:
+     *
+     * <pre>application.secret=${VARNAME}</pre>
+     *
+     * <p>{@code VARNAME} can be any name the operator chooses (default in
+     * generated apps: {@code PLAY_SECRET}); the framework's {@code ${VAR}}
+     * resolver looks it up via {@link System#getProperty} then
+     * {@link System#getenv} at startup. The same secret declaration applies to
+     * every framework id (dev / test / prod / etc.) — different environments
+     * supply different values for {@code VARNAME}, not different declarations.
+     *
+     * <p>Rejected:
+     * <ul>
+     *   <li>Literal values ({@code application.secret=hardcoded})</li>
+     *   <li>Mixed literal+placeholder ({@code prefix-${VAR}})</li>
+     *   <li>Default-fallback syntax ({@code ${VAR:fallback}}) — the fallback is a literal</li>
+     *   <li>Framework-injected names ({@code application.path}, {@code play.path})</li>
+     *   <li>Framework-id overrides ({@code %prod.application.secret=...}) — there is one secret per app</li>
+     *   <li>Declarations in {@code @include}'d files — the canonical line lives in the main conf</li>
+     * </ul>
+     */
+    private static final java.util.regex.Pattern SECRET_PLACEHOLDER =
+        java.util.regex.Pattern.compile("^\\$\\{([^}]+)}$");
+
+    private static void validateApplicationSecretDeclaration(Properties rawProps, String filename) {
+        if (rawProps == null) return;
+        boolean isMainConf = "application.conf".equals(filename);
+        boolean foundCanonical = false;
+        for (Object keyObj : rawProps.keySet()) {
+            String key = keyObj.toString();
+            String bareKey = key;
+            boolean prefixed = false;
+            if (key.startsWith("%")) {
+                int dotIdx = key.indexOf('.');
+                if (dotIdx > 0) {
+                    bareKey = key.substring(dotIdx + 1);
+                    prefixed = true;
+                }
+            }
+            if (!"application.secret".equals(bareKey)) continue;
+
+            if (prefixed) {
+                throw new UnexpectedException(
+                    "application.secret cannot be overridden per framework id (found `" + key
+                    + "` in " + filename + "). There is one secret per app — vary the value "
+                    + "across environments by setting the referenced variable to a different "
+                    + "value in each environment's `.env` / shell / `-D` flag, not by adding a "
+                    + "second declaration.");
+            }
+            if (!isMainConf) {
+                throw new UnexpectedException(
+                    "application.secret may only be declared in conf/application.conf, not in "
+                    + filename + ". Remove the declaration from the included file; the canonical "
+                    + "line lives in the main conf.");
+            }
+
+            String value = rawProps.getProperty(key, "").trim();
+            java.util.regex.Matcher m = SECRET_PLACEHOLDER.matcher(value);
+            if (!m.matches()) {
+                throw new UnexpectedException(
+                    "application.secret in " + filename + " must be a single environment-variable "
+                    + "placeholder of the form `${VARNAME}` (found `" + key + "=" + value + "`). "
+                    + "Literal values, mixed literal-plus-placeholder strings, and the "
+                    + "`${VAR:default}` fallback syntax are rejected — the secret must come from "
+                    + "outside the configuration file. Run `play secret` to write the configured "
+                    + "variable into your `.env`, or pick any variable name and set it via your "
+                    + "shell or `-D<NAME>=...` JVM flag.");
+            }
+            String varName = m.group(1);
+            if (varName.contains(":")) {
+                throw new UnexpectedException(
+                    "application.secret in " + filename + " uses the `${VAR:default}` fallback "
+                    + "form (found `" + key + "=" + value + "`). The fallback would be a literal "
+                    + "value, which defeats the purpose of requiring the secret to come from "
+                    + "outside the configuration. Use `${VARNAME}` without a default; if the "
+                    + "variable is unset at startup, Play will refuse to start with a clear "
+                    + "error pointing the operator to set it.");
+            }
+            if ("application.path".equals(varName) || "play.path".equals(varName)) {
+                throw new UnexpectedException(
+                    "application.secret in " + filename + " resolves to the framework-injected "
+                    + "`${" + varName + "}` placeholder. That value is determined at runtime by "
+                    + "the framework, not by the environment, so it is not a valid source for "
+                    + "the application secret. Use a real environment variable instead.");
+            }
+            foundCanonical = true;
+        }
+        if (isMainConf && !foundCanonical) {
+            throw new UnexpectedException(
+                "application.secret is missing from conf/application.conf. The required "
+                + "declaration is `application.secret=${VARNAME}` where VARNAME is the "
+                + "environment variable carrying the actual value (default: PLAY_SECRET). "
+                + "Run `play secret` to generate a value into your `.env`, or set the "
+                + "variable directly via your shell or `-D<NAME>=...` JVM flag.");
+        }
     }
 
     /**
@@ -536,8 +641,13 @@ public class Play {
 
             // SecretKey
             secretKey = configuration.getProperty("application.secret", "").trim();
-            if (secretKey.length() == 0) {
-                Logger.warn("No secret key defined. Sessions will not be encrypted");
+            if (secretKey.isEmpty() || secretKey.contains("${")) {
+                throw new UnexpectedException(
+                    "application.secret is not set. Run `play secret` to generate one " +
+                    "(writes APP_SECRET to your application's .env file), or supply it " +
+                    "directly via the APP_SECRET environment variable or a `-DAPP_SECRET=...` " +
+                    "JVM flag. Refusing to start without a secret because session and HMAC " +
+                    "signing would otherwise be insecure.");
             }
 
             // Default web encoding

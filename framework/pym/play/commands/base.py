@@ -99,7 +99,11 @@ def new(app, args, env, cmdloader=None):
     os.mkdir(os.path.join(app.path, 'lib'))
     app.check()
     replaceAll(os.path.join(app.path, 'conf/application.conf'), r'%APPLICATION_NAME%', application_name)
-    replaceAll(os.path.join(app.path, 'conf/application.conf'), r'%SECRET_KEY%', secretKey())
+    var_name = secretVarName(app.path)
+    env_path = writeAppSecret(app.path, secretKey())
+    example_path = writeEnvExample(app.path, var_name)
+    print("~ %s written to %s" % (var_name, env_path))
+    print("~ %s template written to %s (commit this; it documents required env vars)" % (var_name, example_path))
     print("~")
 
     # Configure modules

@@ -84,8 +84,15 @@ public abstract class Enhancer {
             }
             ApplicationClass appClass = Play.classes.getApplicationClass(className);
 
-            if (appClass.enhancedByteCode == null) {
-                throw new RuntimeException("Trying to visit uncompiled class while enhancing. Uncompiled class: " + className);
+            if (appClass == null || appClass.enhancedByteCode == null) {
+                // Audit M13: throw NotFoundException (the documented contract for
+                // ClassPath.openClassfile) so Javassist can fall back to the parent
+                // ClassPath (system classpath) instead of aborting enhancement.
+                // The previous RuntimeException blew up cascade compilation with
+                // mutual class dependencies — class A's enhancer needed to inspect
+                // class B which hadn't been enhanced yet — and surfaced as a hard
+                // UnexpectedException on first DEV-mode load of certain projects.
+                throw new NotFoundException("Application class not yet compiled: " + className);
             }
 
             return new ByteArrayInputStream(appClass.enhancedByteCode);

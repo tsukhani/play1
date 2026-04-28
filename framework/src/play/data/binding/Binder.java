@@ -34,6 +34,32 @@ public abstract class Binder {
     // are reading this map; under virtual threads the contention surface is amplified.
     static final Map<Class<?>, TypeBinder<?>> supportedTypes = new ConcurrentHashMap<>();
 
+    // Audit B2: cap the maximum sparse list index so a single request like
+    // `items[10000000]=x` cannot allocate millions of null padding slots. Tunable
+    // via `play.data.binding.maxCollectionIndex`. Indices beyond this limit are
+    // silently dropped; the bound value at that index is ignored.
+    private static int maxCollectionIndex() {
+        if (Play.configuration == null) return 1024;
+        try {
+            return Integer.parseInt(Play.configuration.getProperty("play.data.binding.maxCollectionIndex", "1024"));
+        } catch (NumberFormatException e) {
+            return 1024;
+        }
+    }
+
+    // Audit B3: cap the length of any string fed to BigDecimal/BigInteger so a
+    // ~100k-digit number or `1e2147483647` cannot pin a CPU core during parsing.
+    // Default of 64 chars accommodates standard scientific notation while rejecting
+    // pathological inputs. Tunable via `play.data.binding.maxNumericLength`.
+    private static int maxNumericLength() {
+        if (Play.configuration == null) return 64;
+        try {
+            return Integer.parseInt(Play.configuration.getProperty("play.data.binding.maxNumericLength", "64"));
+        } catch (NumberFormatException e) {
+            return 64;
+        }
+    }
+
     // TODO: something a bit more dynamic? The As annotation allows you to inject your own binder
     static {
         supportedTypes.put(Date.class, new DateBinder());
@@ -540,14 +566,23 @@ public abstract class Binder {
 
             // get each value in correct order with index
 
+            int maxIndex = maxCollectionIndex();
             for (String index : indexes) {
+                int pos;
+                try {
+                    pos = Integer.parseInt(index);
+                } catch (NumberFormatException nfe) {
+                    continue;
+                }
+                if (pos < 0 || pos > maxIndex) {
+                    // Audit B2: drop entries past the configured ceiling rather than
+                    // padding the list to size pos+1. Without this, a single param
+                    // name `items[10000000]` triggers ~10M l.add(null) calls.
+                    continue;
+                }
                 ParamNode child = paramNode.getChild(index);
                 Object childValue = internalBind(child, componentClass, componentType, bindingAnnotations);
                 if (childValue != NO_BINDING && childValue != MISSING) {
-
-                    // must make sure we place the value at the correct position
-                    int pos = Integer.parseInt(index);
-                    // must check if we must add empty elements before adding this item
                     int paddingCount = (l.size() - pos) * -1;
                     if (paddingCount > 0) {
                         for (int p = 0; p < paddingCount; p++) {
@@ -737,12 +772,23 @@ public abstract class Binder {
 
         // BigDecimal binding
         if (clazz.equals(BigDecimal.class)) {
-            return nullOrEmpty ? null : new BigDecimal(value);
+            if (nullOrEmpty) return null;
+            // Audit B3: reject pathological inputs (huge digit string or `1e2147483647`)
+            // before the O(n^2) parser allocates GBs. Throwing NumberFormatException
+            // routes to the standard validation-error path.
+            if (value.length() > maxNumericLength()) {
+                throw new NumberFormatException("BigDecimal input exceeds " + maxNumericLength() + " characters");
+            }
+            return new BigDecimal(value);
         }
 
         // BigInteger binding
         if (clazz.equals(BigInteger.class)) {
-            return nullOrEmpty ? null : new BigInteger(value);
+            if (nullOrEmpty) return null;
+            if (value.length() > maxNumericLength()) {
+                throw new NumberFormatException("BigInteger input exceeds " + maxNumericLength() + " characters");
+            }
+            return new BigInteger(value);
         }
 
         // boolean or Boolean binding

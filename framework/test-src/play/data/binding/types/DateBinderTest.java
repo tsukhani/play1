@@ -8,6 +8,7 @@ import play.PlayBuilder;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.TimeZone;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -24,7 +25,11 @@ public class DateBinderTest {
         Play.configuration.setProperty("date.format", "dd.MM.yyyy");
 
         Date actual = binder.bind("client.birthday", null, "31.12.1986", Date.class, null);
-        Date expected = new SimpleDateFormat("MM/dd/yyyy").parse("12/31/1986");
+        // Audit M21: DateBinder now pins parsing to UTC by default (configurable
+        // via play.date.timezone). The expected fixture must match.
+        SimpleDateFormat fmt = new SimpleDateFormat("MM/dd/yyyy");
+        fmt.setTimeZone(TimeZone.getTimeZone("UTC"));
+        Date expected = fmt.parse("12/31/1986");
         assertEquals(expected, actual);
     }
 

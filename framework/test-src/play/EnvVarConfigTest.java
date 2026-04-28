@@ -119,6 +119,6 @@ public class EnvVarConfigTest {
 
     private void writeConfig(String content) throws IOException {
         Files.writeString(tempDir.resolve("conf/application.conf"),
-                "application.name=test\n" + content + "\n");
+                "application.name=test\napplication.secret=${APP_SECRET}\n" + content + "\n");
     }
 }

@@ -4,7 +4,10 @@ import java.io.File;
 import java.lang.management.ManagementFactory;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Properties;
+import java.util.concurrent.TimeUnit;
 
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.ChannelException;
@@ -24,6 +27,15 @@ public class Server {
     public static int httpsPort;
 
     public static final String PID_FILE = "server.pid";
+
+    /**
+     * Tracks every {@link EventLoopGroup} created during bind so the JVM shutdown hook can
+     * gracefully drain accept/IO threads. Without this, the daemon NIO threads outlive the
+     * application — harmless on real JVM exit but a real leak in DEV hot-reload restarts and
+     * test harnesses that reinstantiate {@link Server} repeatedly within one JVM.
+     */
+    private static final List<EventLoopGroup> eventLoopGroups = new ArrayList<>();
+    private static volatile boolean shutdownHookRegistered = false;
 
     public Server(String[] args) {
 
@@ -68,8 +80,12 @@ public class Server {
 
         try {
             if (httpPort != -1) {
-                EventLoopGroup bossGroup = new NioEventLoopGroup();
-                EventLoopGroup workerGroup = new NioEventLoopGroup();
+                // Boss only accepts; one thread per bound port suffices. Worker count honours
+                // play.netty.maxThreads if set (legacy Netty 3 toggle), otherwise Netty's default
+                // (2 × cores). 0 / unset / unparseable → default.
+                EventLoopGroup bossGroup = new NioEventLoopGroup(1);
+                EventLoopGroup workerGroup = new NioEventLoopGroup(workerThreads());
+                registerForShutdown(bossGroup, workerGroup);
                 ServerBootstrap bootstrap = new ServerBootstrap();
                 bootstrap.group(bossGroup, workerGroup)
                         .channel(NioServerSocketChannel.class)
@@ -101,8 +117,9 @@ public class Server {
 
         try {
             if (httpsPort != -1) {
-                EventLoopGroup bossGroup = new NioEventLoopGroup();
-                EventLoopGroup workerGroup = new NioEventLoopGroup();
+                EventLoopGroup bossGroup = new NioEventLoopGroup(1);
+                EventLoopGroup workerGroup = new NioEventLoopGroup(workerThreads());
+                registerForShutdown(bossGroup, workerGroup);
                 ServerBootstrap bootstrap = new ServerBootstrap();
                 bootstrap.group(bossGroup, workerGroup)
                         .channel(NioServerSocketChannel.class)
@@ -135,6 +152,51 @@ public class Server {
            // print this line to STDOUT - not using logger, so auto test runner will not block if logger is misconfigured (see #1222)
            System.out.println("~ Server is up and running");
         }
+    }
+
+    /**
+     * Resolve worker EventLoop thread count from {@code play.netty.maxThreads}. The legacy
+     * Netty 3 path honoured this property; the Netty 4 migration accidentally dropped it.
+     * 0 / unset / unparseable values fall back to Netty's default (2 × cores).
+     */
+    private static int workerThreads() {
+        String raw = Play.configuration.getProperty("play.netty.maxThreads");
+        if (raw == null || raw.isBlank()) return 0;
+        try {
+            int n = Integer.parseInt(raw.trim());
+            return n < 0 ? 0 : n;
+        } catch (NumberFormatException nfe) {
+            Logger.warn("Invalid play.netty.maxThreads='%s'; using Netty default", raw);
+            return 0;
+        }
+    }
+
+    private static synchronized void registerForShutdown(EventLoopGroup... groups) {
+        for (EventLoopGroup g : groups) {
+            eventLoopGroups.add(g);
+        }
+        if (!shutdownHookRegistered) {
+            Runtime.getRuntime().addShutdownHook(new Thread(Server::shutdownEventLoops, "play-netty-shutdown"));
+            shutdownHookRegistered = true;
+        }
+    }
+
+    /**
+     * Drain Netty IO threads. Called from the JVM shutdown hook; safe to call directly from
+     * tests that want to release the groups without exiting the JVM. Bounded wait of 5s per
+     * group so a hung handler can't hold up shutdown indefinitely.
+     */
+    public static synchronized void shutdownEventLoops() {
+        for (EventLoopGroup g : eventLoopGroups) {
+            try {
+                g.shutdownGracefully(0, 5, TimeUnit.SECONDS).await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+            } catch (Throwable t) {
+                Logger.warn(t, "EventLoopGroup shutdown failed");
+            }
+        }
+        eventLoopGroups.clear();
     }
 
     private String getOpt(String[] args, String arg, String defaultValue) {

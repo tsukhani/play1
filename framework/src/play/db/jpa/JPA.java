@@ -404,7 +404,12 @@ public class JPA {
     }
 
     public static void rollbackTx(String name) {
-        if (JPA.isInsideTransaction()) {
+        // Audit B6: must scope the transaction-active check to the named DB. The
+        // no-arg isInsideTransaction() only inspects the DEFAULT persistence unit,
+        // so calling rollbackTx("other") with an active transaction on `other`
+        // returns false and skips cleanup — leaking the EntityManager + JDBC
+        // connection until the thread dies.
+        if (JPA.isInsideTransaction(name)) {
             EntityManager manager = em(name);
             try {
                 // Be sure to set the connection is non-autoCommit mode as some driver will complain about COMMIT

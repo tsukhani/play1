@@ -23,7 +23,11 @@ import java.util.Properties;
 
 public class SslHttpServerContextFactory {
 
-    private static final String PROTOCOL = "SSL";
+    // "TLS" lets the JDK pick the highest-supported version (TLSv1.3 / TLSv1.2 on
+    // Java 25) and excludes the long-deprecated TLSv1.0 / TLSv1.1 / SSLv3 that the
+    // bare "SSL" provider name still allows on some JDKs. Operators can further
+    // restrict via `play.ssl.enabledProtocols` if needed.
+    private static final String PROTOCOL = "TLS";
     private static final SSLContext SERVER_CONTEXT;
 
     static {

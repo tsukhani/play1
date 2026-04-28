@@ -404,8 +404,15 @@ public class Invoker {
                     onSuccess();
                 }
             } catch (Suspend e) {
+                // Audit C4: do not call after() on suspend. afterInvocation must run
+                // exactly once per logical request — on the resumed invocation after
+                // the Suspend resolves (line above). The JPA plugin's afterInvocation
+                // commits the transaction and closes the EntityManager; firing it on
+                // suspend would close the EM the resumed invocation still expects to
+                // use, then fire a phantom second commit when the resumed run also
+                // calls after(). Plugins that need cleanup on suspend should hook
+                // invocationFinally, which runs unconditionally in the finally below.
                 suspend(e);
-                after();
             } catch (Throwable e) {
                 onException(e);
             } finally {

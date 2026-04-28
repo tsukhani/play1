@@ -330,6 +330,15 @@ public class ApplicationClassloader extends ClassLoader {
                     dirtySig = true;
                 }
                 BytecodeCache.cacheBytecode(applicationClass.enhancedByteCode, applicationClass.name, applicationClass.javaSource);
+                // Audit M6: ClassDefinition's constructor NPEs on a null Class. javaClass
+                // is null for classes that were re-added to modifiedWithDependencies before
+                // ever being defineClass'd in this classloader (rare reload-cycle interleaving).
+                // Force a full restart in that case rather than crashing the reload pass.
+                if (applicationClass.javaClass == null) {
+                    throw new RestartNeededException(
+                        "Cannot hot-reload " + applicationClass.name + ": class has not been "
+                        + "loaded yet by the current classloader. A restart is required.");
+                }
                 newDefinitions.add(new ClassDefinition(applicationClass.javaClass, applicationClass.enhancedByteCode));
                 currentState = new ApplicationClassloaderState();// show others that we have changed..
             }
@@ -391,7 +400,11 @@ public class ApplicationClassloader extends ClassLoader {
      * 
      * @return The list of well defined Class
      */
-    public List<Class<?>> getAllClasses() {
+    public synchronized List<Class<?>> getAllClasses() {
+        // Audit M8: synchronized so two concurrent worker threads in DEV can't both
+        // observe `allClasses == null` and both run the expensive compile-and-load
+        // pass in parallel, racing to assign the cache fields. The fast path (cache
+        // hit) acquires + releases the monitor cheaply; the contended path is rare.
         if (allClasses == null) {
             List<Class<?>> result = new ArrayList<>();
 

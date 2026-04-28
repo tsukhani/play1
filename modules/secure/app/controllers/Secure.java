@@ -54,7 +54,7 @@ public class Secure extends Controller {
                 if (expirationDate == null || expirationDate.before(now)) {
                     logout();
                 }
-                if(Crypto.sign(restOfCookie).equals(sign)) {
+                if (CookieDataCodec.safeEquals(Crypto.sign(restOfCookie), sign)) {
                     session.put("username", username);
                     redirectToOriginalURL();
                 }
@@ -108,7 +108,13 @@ public class Secure extends Controller {
     static void redirectToOriginalURL() throws Throwable {
         Security.invoke("onAuthenticated");
         String url = flash.get("url");
-        if(url == null) {
+        // Audit B5: the value of `flash.url` came verbatim from `request.url` of an
+        // unauthenticated request, including any attacker-controlled input. Without
+        // this check, ?next-style values that look like absolute URLs (https://evil/…)
+        // pass straight to redirect(), which builds a Location header pointing off-site.
+        // Restrict to same-origin: the URL must be either null/empty or start with `/`
+        // and contain no scheme delimiter or backslash.
+        if (url == null || url.isEmpty() || !url.startsWith("/") || url.contains("://") || url.contains("\\")) {
             url = Play.ctxPath + "/";
         }
         redirect(url);

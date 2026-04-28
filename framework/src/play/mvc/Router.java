@@ -322,7 +322,14 @@ public class Router {
      *            The prefix that the path of all routes in this route file start with. This prefix should not end with
      *            a '/' character.
      */
-    public static void detectChanges(String prefix) {
+    public static synchronized void detectChanges(String prefix) {
+        // Audit M3: synchronized on the Router class so two concurrent worker threads
+        // can't both observe a stale lastLoading, both call load(), and interleave
+        // routes.clear() + parse() on the CopyOnWriteArrayList — which produces a
+        // doubled or partially-populated route list. Routing happens on the read
+        // path of every request in DEV; the cost of the lock is paid only when a
+        // change is detected, after which lastLoading is updated and subsequent
+        // callers short-circuit.
         if (Play.mode == Mode.PROD && lastLoading > 0) {
             return;
         }

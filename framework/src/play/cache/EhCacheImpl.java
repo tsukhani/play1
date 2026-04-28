@@ -44,12 +44,12 @@ public class EhCacheImpl implements CacheImpl {
 
     @Override
     public void add(String key, Object value, int expiration) {
-        if (cache.get(key) != null) {
-            return;
-        }
+        // Audit M26: putIfAbsent is atomic (EhCache 2.1+); the old check-then-put
+        // pair raced under concurrent writers, breaking the "add only if absent"
+        // contract that callers like CSRF token issuance rely on for idempotency.
         Element element = new Element(key, value);
         element.setTimeToLive(expiration);
-        cache.put(element);
+        cache.putIfAbsent(element);
     }
 
     @Override
@@ -106,12 +106,12 @@ public class EhCacheImpl implements CacheImpl {
 
     @Override
     public void replace(String key, Object value, int expiration) {
-        if (cache.get(key) == null) {
-            return;
-        }
+        // Audit M26: cache.replace(Element) is atomic — only writes when an
+        // element already exists. The old check-then-put could race with a
+        // concurrent delete, "replacing" a key that no longer existed.
         Element element = new Element(key, value);
         element.setTimeToLive(expiration);
-        cache.put(element);
+        cache.replace(element);
     }
 
     @Override

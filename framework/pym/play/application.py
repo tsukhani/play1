@@ -24,9 +24,15 @@ class PlayApplication(object):
 
     def __init__(self, application_path, env, ignoreMissingModules = False):
         self.path = application_path
-        # only parse conf it is exists - if it should be there, it will be caught later 
+        # Load <app>/.env so APP_SECRET (and any other declared variables) are
+        # visible to the Java subprocess via inherited os.environ. Existing
+        # environment values win, so a host env var or `-DAPP_SECRET=...` flag
+        # still overrides a value in the file.
+        if application_path is not None:
+            loadDotEnv(application_path)
+        # only parse conf it is exists - if it should be there, it will be caught later
         # (depends on command)
-        confExists = os.path.exists(os.path.join(self.path, 'conf', 'application.conf')); 
+        confExists = os.path.exists(os.path.join(self.path, 'conf', 'application.conf'));
         if application_path != None and confExists:
             confFolder = os.path.join(application_path, 'conf/')
             try:

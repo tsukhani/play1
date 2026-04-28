@@ -3,7 +3,7 @@ package play.classloading.hash;
 import play.vfs.VirtualFile;
 
 import java.io.File;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
@@ -40,7 +40,22 @@ public class ClassStateHashCreator {
         }
     }
 
-    private final Map<File, FileWithClassDefs> classDefsInFileCache = new HashMap<>();
+    /**
+     * Audit M11: cap the cache so it can't grow unbounded across many DEV
+     * reloads. LinkedHashMap with access-order eviction keeps the recently-used
+     * files warm — a typical app has well under 4096 .java files, so the cap is
+     * effectively no-op in practice; long-running DEV sessions that scan
+     * additional files (renamed/moved sources, modules adding paths) no longer
+     * accumulate stale entries forever.
+     */
+    private static final int MAX_CACHE_SIZE = 4096;
+
+    private final Map<File, FileWithClassDefs> classDefsInFileCache = new LinkedHashMap<>(256, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<File, FileWithClassDefs> eldest) {
+            return size() > MAX_CACHE_SIZE;
+        }
+    };
 
     public synchronized int computePathHash(List<VirtualFile> paths) {
         StringBuilder buf = new StringBuilder();

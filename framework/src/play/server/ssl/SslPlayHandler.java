@@ -61,23 +61,20 @@ public class SslPlayHandler extends PlayHandler {
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception {
-        // We have to redirect to https://, as it was targeting http://
-        // Redirect to the root as we don't know the url at that point.
+        // Audit M30: the previous code tried to send an HTTP redirect after an
+        // SSL handshake failure by removing the SslHandler and writing a plain
+        // HttpResponse onto the same channel. After remove("ssl"), bytes traverse
+        // the pipeline without TLS framing and are emitted as plaintext on a
+        // socket the client opened expecting TLS — the client sees garbage and
+        // aborts; the redirect is never delivered. There's no way to send a
+        // valid HTTP response on a socket that was opened for TLS handshake.
+        // Just close the channel; configure a separate plain-HTTP listener on
+        // the canonical port if you need the http→https redirect behaviour.
         if (cause instanceof SSLException) {
-            Logger.debug(cause, "");
-            InetSocketAddress inet = ctx.channel().attr(LOCAL_ADDR).get();
-            if (ctx.pipeline().get("ssl") != null) {
-                ctx.pipeline().remove("ssl");
-            }
-            FullHttpResponse nettyResponse = new DefaultFullHttpResponse(
-                    HttpVersion.HTTP_1_1, HttpResponseStatus.TEMPORARY_REDIRECT, Unpooled.EMPTY_BUFFER);
-            String host = (inet != null) ? inet.getHostString() : "";
-            nettyResponse.headers().set(HttpHeaderNames.LOCATION, "https://" + host + ":" + Server.httpsPort + "/");
-            ChannelFuture writeFuture = ctx.writeAndFlush(nettyResponse);
-            writeFuture.addListener(ChannelFutureListener.CLOSE);
+            Logger.debug(cause, "TLS handshake failure; closing channel");
         } else {
             Logger.error(cause, "");
-            ctx.channel().close();
         }
+        ctx.channel().close();
     }
 }

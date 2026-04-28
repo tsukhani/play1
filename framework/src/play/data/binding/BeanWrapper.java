@@ -5,6 +5,7 @@ import java.lang.reflect.*;
 import java.util.*;
 
 import play.Logger;
+import play.Play;
 import play.classloading.enhancers.PropertiesEnhancer.PlayPropertyAccessor;
 import play.exceptions.UnexpectedException;
 
@@ -15,6 +16,36 @@ public class BeanWrapper {
 
     static final int notwritableField = Modifier.FINAL | Modifier.NATIVE | Modifier.STATIC;
     static final int notaccessibleMethod = Modifier.NATIVE | Modifier.STATIC;
+
+    /**
+     * Audit B1 (partial): names of properties that the framework refuses to bind from
+     * HTTP request parameters under any circumstance. These are reflective entry
+     * points (Spring4Shell-style) that have no legitimate binding use case — letting
+     * a request set them risks classloader / protection-domain pivots.
+     *
+     * <p>Applications that still need to defend against mass-assignment of
+     * <em>application-specific</em> sensitive fields (e.g. {@code id}, {@code role},
+     * {@code isAdmin}) should annotate those fields with {@code @NoBinding} or set
+     * {@code play.data.binding.deniedFields} (comma-separated) to extend this list at
+     * runtime.
+     */
+    private static final Set<String> RESERVED_DENIED_FIELDS = Set.of(
+        "class", "classLoader", "protectionDomain", "module"
+    );
+
+    private static Set<String> deniedFields() {
+        Set<String> denied = new HashSet<>(RESERVED_DENIED_FIELDS);
+        if (Play.configuration != null) {
+            String extra = Play.configuration.getProperty("play.data.binding.deniedFields", "");
+            for (String name : extra.split(",")) {
+                String trimmed = name.trim();
+                if (!trimmed.isEmpty()) {
+                    denied.add(trimmed);
+                }
+            }
+        }
+        return denied;
+    }
 
     /**
      * a cache for our properties and setters
@@ -80,12 +111,16 @@ public class BeanWrapper {
         if (clazz == Object.class) {
             return;
         }
+        Set<String> denied = deniedFields();
         Field[] fields = clazz.getFields();
         for (Field field : fields) {
             if (wrappers.containsKey(field.getName())) {
                 continue;
             }
             if ((field.getModifiers() & notwritableField) != 0) {
+                continue;
+            }
+            if (denied.contains(field.getName())) {
                 continue;
             }
             Property w = new Property(field);
@@ -121,6 +156,7 @@ public class BeanWrapper {
         }
         registerSetters(clazz.getSuperclass(), isScala);
 
+        Set<String> denied = deniedFields();
         Method[] methods = clazz.getDeclaredMethods();
         for (Method method : methods) {
             String propertyname;
@@ -134,6 +170,9 @@ public class BeanWrapper {
                     continue;
                 }
                 propertyname = method.getName().substring(3, 4).toLowerCase() + method.getName().substring(4);
+            }
+            if (denied.contains(propertyname)) {
+                continue;
             }
             Property wrapper = new Property(propertyname, method);
             wrappers.put(propertyname, wrapper);

@@ -80,9 +80,15 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
     private static final boolean exposePlayServer;
 
     /**
-     * The Pipeline is given for a PlayHandler
+     * The Pipeline is given for a PlayHandler.
+     * <p>
+     * Audit M29: ConcurrentHashMap not HashMap. The map is written from the IO
+     * thread during initChannel and read from worker threads (writeChunk /
+     * closeChunked invoked from controller code on the Invoker pool). Plain
+     * HashMap concurrent put/get is a JMM data race — bucket-array corruption
+     * possible. Reads/writes here are infrequent so the cost of CHM is negligible.
      */
-    public final Map<String, ChannelHandler> pipelines = new HashMap<>();
+    public final Map<String, ChannelHandler> pipelines = new ConcurrentHashMap<>();
 
     /**
      * Define allowed methods that will be handled when defined in X-HTTP-Method-Override
@@ -303,7 +309,12 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
                 }
                 super.run();
             } catch (Exception e) {
-                serve500(e, ctx, nettyRequest);
+                // Audit M4: by this point super.run()'s finally has called _finally(),
+                // which cleared Request.current / Response.current. serve500 used to
+                // read those ThreadLocals — now null — and NPE'd internally, downgrading
+                // every controller exception to the static "Internal Error" fallback.
+                // Pass the Invocation's own captured request/response in directly.
+                serve500(e, ctx, nettyRequest, request, response);
             } finally {
                 // Close + delete the spooled body temp file (no-op for in-memory bodies).
                 // Done in finally so disk leaks can't survive a controller throwing — except when
@@ -438,7 +449,7 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
         Map<String, Http.Cookie> cookies = response.cookies;
 
         for (Http.Cookie cookie : cookies.values()) {
-            Cookie c = new DefaultCookie(cookie.name, cookie.value);
+            DefaultCookie c = new DefaultCookie(cookie.name, cookie.value);
             c.setSecure(cookie.secure);
             c.setPath(cookie.path);
             if (cookie.domain != null) {
@@ -448,6 +459,17 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
                 c.setMaxAge(cookie.maxAge);
             }
             c.setHttpOnly(cookie.httpOnly);
+            // Audit B9: emit SameSite=Lax by default so cross-site navigations don't
+            // ship session cookies, blocking the largest class of CSRF attacks.
+            // null/empty disables; anything else is parsed by Netty's enum.
+            if (cookie.sameSite != null && !cookie.sameSite.isEmpty()) {
+                try {
+                    c.setSameSite(io.netty.handler.codec.http.cookie.CookieHeaderNames.SameSite
+                            .valueOf(cookie.sameSite));
+                } catch (IllegalArgumentException ignored) {
+                    // unknown value — skip rather than fail the response
+                }
+            }
             nettyResponse.headers().add(SET_COOKIE, ServerCookieEncoder.STRICT.encode(c));
         }
 
@@ -671,6 +693,15 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
         // request's ByteBuf, large bodies are spooled to a temp file referenced by a channel
         // attribute. Read-and-clear the attribute atomically — safe under HTTP/1.1 keep-alive
         // request serialization on the IO thread.
+        //
+        // CORRECTNESS CONTRACT: this read must happen on the EventLoop, synchronously from
+        // the channelRead that delivered nettyRequest, BEFORE the next channelRead can fire
+        // for request N+1. StreamChunkAggregator.buildFullRequest sets the attribute on the
+        // EventLoop and immediately fires the FullHttpRequest downstream; channelRead chains
+        // here on the same thread, calls parseRequest (this method) synchronously, and only
+        // then dispatches to the Invoker pool. If anything ever moves parseRequest off the
+        // EventLoop or defers the read, request N+1 will inherit N's spool file silently.
+        // The writer-side complement is documented at StreamChunkAggregator#SPOOLED_BODY.
         InputStream body;
         File spooled = ctx.channel().attr(StreamChunkAggregator.SPOOLED_BODY).getAndSet(null);
         if (spooled != null) {
@@ -861,8 +892,17 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
         return ErrorBindings.forError(e, isError);
     }
 
-    // TODO: add request and response as parameter
     public static void serve500(Exception e, ChannelHandlerContext ctx, HttpRequest nettyRequest) {
+        // Backward-compat overload: defer to the request/response-aware variant,
+        // pulling values from ThreadLocals. Safe at the IO-thread call site (line
+        // ~166), which still has the locals set; broken at the worker-thread site
+        // (line ~306) where _finally has already cleared them — that caller now
+        // uses the explicit overload below.
+        serve500(e, ctx, nettyRequest, Request.current(), Response.current());
+    }
+
+    public static void serve500(Exception e, ChannelHandlerContext ctx, HttpRequest nettyRequest,
+                                Request request, Response response) {
         if (Logger.isTraceEnabled()) {
             Logger.trace("serve500: begin");
         }
@@ -875,9 +915,6 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
 
         // RFC 7230 §3.3.2: skip body bytes for HEAD requests (Content-Length still set).
         final boolean isHead = nettyRequest.method().equals(HttpMethod.HEAD);
-
-        Request request = Request.current();
-        Response response = Response.current();
 
         String encoding = response.encoding;
 
@@ -1107,12 +1144,22 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
         return httpResponse;
     }
 
+    /**
+     * Play's keep-alive policy: HTTP/1.1 only, even when an HTTP/1.0 client sets
+     * {@code Connection: keep-alive} explicitly. {@link HttpUtil#isKeepAlive(HttpMessage)}
+     * alone would honour the HTTP/1.0 opt-in; the extra version guard preserves the
+     * historical Netty 3 Play behaviour of always closing HTTP/1.0 connections after one
+     * response. Intentional — flip carefully, it changes wire behaviour for clients that
+     * still speak HTTP/1.0.
+     */
     public static boolean isKeepAlive(HttpMessage message) {
         return HttpUtil.isKeepAlive(message) && message.protocolVersion().equals(HttpVersion.HTTP_1_1);
     }
 
     public static void setContentLength(HttpMessage message, long contentLength) {
-        message.headers().set(HttpHeaderNames.CONTENT_LENGTH, String.valueOf(contentLength));
+        // Defer to HttpUtil so any Netty 4 edge cases (e.g. clearing Transfer-Encoding: chunked
+        // when a known length is now set) are handled idiomatically.
+        HttpUtil.setContentLength(message, contentLength);
     }
 
     /**
@@ -1192,6 +1239,21 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
         }
     }
 
+    /**
+     * Resume any {@link ChunkedWriteHandler} sitting in this channel's pipeline. Class-based
+     * lookup so a custom {@code play.netty.pipeline} that renames or subclasses the handler
+     * still works — the previous string-keyed {@code pipelines.get("ChunkedWriteHandler")}
+     * silently failed to resume the transfer for any non-default name.
+     * <p>
+     * {@link ChannelPipeline#get(Class)} is thread-safe; callers here run on the Invoker pool.
+     */
+    private static void resumeChunkedTransfer(ChannelHandlerContext ctx) {
+        ChunkedWriteHandler cwh = ctx.pipeline().get(ChunkedWriteHandler.class);
+        if (cwh != null) {
+            cwh.resumeTransfer();
+        }
+    }
+
     public void writeChunk(Request playRequest, Response playResponse, ChannelHandlerContext ctx,
             HttpRequest nettyRequest, Object chunk) {
         try {
@@ -1202,12 +1264,7 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
             }
             ((LazyChunkedInput) playResponse.direct).writeChunk(chunk);
 
-            if (this.pipelines.get("ChunkedWriteHandler") != null) {
-                ((ChunkedWriteHandler) this.pipelines.get("ChunkedWriteHandler")).resumeTransfer();
-            }
-            if (this.pipelines.get("SslChunkedWriteHandler") != null) {
-                ((ChunkedWriteHandler) this.pipelines.get("SslChunkedWriteHandler")).resumeTransfer();
-            }
+            resumeChunkedTransfer(ctx);
         } catch (Exception e) {
             throw new UnexpectedException(e);
         }
@@ -1217,12 +1274,7 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
             HttpRequest nettyRequest) {
         try {
             ((LazyChunkedInput) playResponse.direct).close();
-            if (this.pipelines.get("ChunkedWriteHandler") != null) {
-                ((ChunkedWriteHandler) this.pipelines.get("ChunkedWriteHandler")).resumeTransfer();
-            }
-            if (this.pipelines.get("SslChunkedWriteHandler") != null) {
-                ((ChunkedWriteHandler) this.pipelines.get("SslChunkedWriteHandler")).resumeTransfer();
-            }
+            resumeChunkedTransfer(ctx);
         } catch (Exception e) {
             throw new UnexpectedException(e);
         }
@@ -1233,9 +1285,23 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
     static final AttributeKey<Http.Inbound> WS_INBOUND = AttributeKey.valueOf("play.ws.inbound");
     static final AttributeKey<WebSocketServerHandshaker> WS_HANDSHAKER = AttributeKey.valueOf("play.ws.handshaker");
 
-    private String getWebSocketLocation(FullHttpRequest req) {
+    /**
+     * Whether the WebSocket handshaker advertises support for protocol extensions
+     * (currently permessage-deflate). Default {@code false} preserves the historical
+     * Netty 3 behaviour. Flip {@code play.netty.ws.allowExtensions=true} for chatty
+     * WS apps to opt into transparent compression.
+     */
+    private static boolean allowWsExtensions() {
+        return "true".equalsIgnoreCase(Play.configuration.getProperty("play.netty.ws.allowExtensions", "false"));
+    }
+
+    private String getWebSocketLocation(ChannelHandlerContext ctx, FullHttpRequest req) {
         String host = req.headers().get(HttpHeaderNames.HOST);
-        return "ws://" + (host != null ? host : "") + req.uri();
+        // Use wss:// when terminating TLS so Origin-checking middleware and DevTools see a
+        // scheme that matches the actual transport. SslHandler's presence is authoritative —
+        // it's only ever installed by SslHttpServerPipelineFactory.
+        boolean secure = ctx.pipeline().get(io.netty.handler.ssl.SslHandler.class) != null;
+        return (secure ? "wss://" : "ws://") + (host != null ? host : "") + req.uri();
     }
 
     private void websocketHandshake(final ChannelHandlerContext ctx, FullHttpRequest req) throws Exception {
@@ -1260,7 +1326,7 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
         }
 
         WebSocketServerHandshakerFactory wsFactory = new WebSocketServerHandshakerFactory(
-                getWebSocketLocation(req), null, false, maxFrame);
+                getWebSocketLocation(ctx, req), null, allowWsExtensions(), maxFrame);
         WebSocketServerHandshaker handshaker = wsFactory.newHandshaker(req);
         if (handshaker == null) {
             WebSocketServerHandshakerFactory.sendUnsupportedVersionResponse(ctx.channel());
@@ -1273,6 +1339,11 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
         request.method = "WS";
         Map<String, String> route = Router.route(request.method, request.path);
         if (!route.containsKey("action")) {
+            // Audit C8: parseRequest may have spooled a large request body to a temp file
+            // (StreamChunkAggregator's SPOOLED_BODY attr). The 404 path bypasses
+            // NettyInvocation, whose _finally normally cleans up — without this call, every
+            // unrouted WS upgrade with a >1MB body leaks one temp file + open FD.
+            cleanupSpooledBody(request);
             FullHttpResponse notFound = new DefaultFullHttpResponse(
                     HttpVersion.HTTP_1_1, HttpResponseStatus.NOT_FOUND, Unpooled.EMPTY_BUFFER);
             setContentLength(notFound, 0);
@@ -1282,7 +1353,21 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
 
         // Complete the handshake. The handshaker rewrites the pipeline: HTTP codec out,
         // WebSocket frame codec in. After this, ctx.channelRead receives WebSocketFrame.
-        handshaker.handshake(ctx.channel(), req);
+        //
+        // Audit C9: channelRead's outer finally calls ReferenceCountUtil.release(msg) on
+        // this same FullHttpRequest immediately after websocketHandshake returns. Some
+        // WebSocketServerHandshaker implementations read req asynchronously while writing
+        // the upgrade response. Retain here and release from the handshake-write
+        // completion listener so the buffer outlives any async use; if handshake() throws
+        // synchronously the catch undoes the retain so we don't leak.
+        req.retain();
+        try {
+            ChannelFuture hf = handshaker.handshake(ctx.channel(), req);
+            hf.addListener(f -> ReferenceCountUtil.release(req));
+        } catch (Throwable t) {
+            ReferenceCountUtil.release(req);
+            throw t;
+        }
         ctx.channel().attr(WS_HANDSHAKER).set(handshaker);
 
         // PF-38: install Netty's frame aggregator immediately after the WS frame codec so the
@@ -1512,6 +1597,11 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
             try {
                 super._finally();
             } finally {
+                // Symmetry with NettyInvocation: parseRequest may have spooled a body to disk
+                // (rare for WS upgrade but possible), and its temp file is owned by request.args.
+                // Without this, a WS upgrade that carried a >spoolThresholdBytes body leaks one
+                // temp file + open FD for the channel's lifetime.
+                cleanupSpooledBody(request);
                 // PF-61: same rationale as NettyInvocation — drop the worker-thread refs to
                 // Request/Inbound/Outbound so a long-lived platform pool thread doesn't pin
                 // the previous WebSocket session in memory between dispatches.

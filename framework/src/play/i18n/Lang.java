@@ -8,6 +8,7 @@ import play.mvc.Http.Response;
 import play.mvc.Scope;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Language support
@@ -16,7 +17,12 @@ public class Lang {
 
     static final ThreadLocal<String> current = new ThreadLocal<>();
 
-    private static final Map<String, Locale> cache = new HashMap<>();
+    // Audit M17: ConcurrentHashMap not HashMap. The cache is read+written from
+    // multiple request threads (and virtual threads, where the contention surface
+    // is amplified); plain HashMap.put() concurrent with another put() can corrupt
+    // the bucket array — a well-known JDK defect that manifests as silent data
+    // loss at best, infinite loops at worst.
+    private static final Map<String, Locale> cache = new ConcurrentHashMap<>();
     
     /**
      * Retrieve the current language or null
@@ -198,15 +204,11 @@ public class Lang {
         if (localeStr == null) {
             return null;
         }
-
-        Locale result = cache.get(localeStr);
-        
-        if (result == null) {
-            result = findLocale(localeStr);
-            cache.put(localeStr, result);
-        }
-        
-        return result;
+        // computeIfAbsent: atomic check-and-fill. ConcurrentHashMap allows null
+        // values from this fn only via a workaround; findLocale never returns
+        // null in practice (it falls back to Locale("xx")), so the simple form
+        // is safe here.
+        return cache.computeIfAbsent(localeStr, Lang::findLocale);
     }
 
     private static Locale findLocale(String localeStr) {

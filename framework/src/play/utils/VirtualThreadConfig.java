@@ -20,8 +20,15 @@ public class VirtualThreadConfig {
 
     /**
      * Returns true if virtual threads are globally enabled.
+     * <p>
+     * Audit M16: returns false (the documented default) when {@code Play.configuration}
+     * has not yet been populated. This protects test paths and plugins that may
+     * lazily reach VT config before {@code Play.init()} has run — e.g. a unit
+     * test that triggers {@code Mail.send()} without booting the full framework.
+     * Without the guard, every such call NPE'd inside {@code Properties.getProperty}.
      */
     public static boolean isGlobalEnabled() {
+        if (Play.configuration == null) return false;
         return Boolean.parseBoolean(Play.configuration.getProperty("play.threads.virtual", "false"));
     }
 
@@ -50,8 +57,11 @@ public class VirtualThreadConfig {
     }
 
     private static boolean isSubsystemEnabled(String subsystem) {
-        // Treat blank/whitespace-only values as "not set" so they fall through to the
-        // global setting rather than being parsed as "false". A line like
+        // Audit M16: same null guard as isGlobalEnabled — protects test paths and plugins
+        // that hit VT config before Play.init() has populated configuration.
+        if (Play.configuration == null) return false;
+        // Audit M2: treat blank/whitespace-only values as "not set" so they fall through
+        // to the global setting rather than being parsed as "false". A line like
         // `play.threads.virtual.invoker=` in application.conf reads back as an empty
         // string, not null; without isBlank() that empty value would silently override
         // a `play.threads.virtual=true` global, surprising operators who expect blank

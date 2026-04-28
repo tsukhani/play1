@@ -244,6 +244,7 @@
                 <fork>
                     <jvmarg value="-javaagent:${basedir}/play-${version}.jar" />
                     <jvmarg value="-javaagent:${bytebuddy.agent.jar}" />
+                    <jvmarg value="-DPLAY_SECRET=integrationtestsecretkey1234567890integrationtest" />
                 </fork>
             </testclasses>
             <classpath>

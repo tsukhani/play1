@@ -9,6 +9,7 @@ import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.Calendar;
 import java.util.Date;
+import java.util.TimeZone;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -20,11 +21,17 @@ public class CalendarBinderTest {
     public void setup() {
         new PlayBuilder().build();
     }
-    
+
     @Test
     public void parses_date_to_calendar() throws Exception {
         Play.configuration.setProperty("date.format", "dd.MM.yyyy");
-        Date expected = new SimpleDateFormat("dd.MM.yyyy").parse("31.12.1986");
+        // Audit M21: CalendarBinder now pins parsing to UTC by default
+        // (configurable via play.date.timezone). Match the binder's default TZ
+        // so the comparison is between the same instant rather than
+        // accidentally JVM-default vs UTC.
+        SimpleDateFormat fmt = new SimpleDateFormat("dd.MM.yyyy");
+        fmt.setTimeZone(TimeZone.getTimeZone("UTC"));
+        Date expected = fmt.parse("31.12.1986");
         Calendar actual = binder.bind("client.birthday", null, "31.12.1986", Calendar.class, null);
         assertEquals(expected, actual.getTime());
     }

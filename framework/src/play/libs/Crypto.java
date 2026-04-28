@@ -1,5 +1,6 @@
 package play.libs;
 
+import java.security.InvalidKeyException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
@@ -72,11 +73,6 @@ public class Crypto {
      * @return The signed message (in hexadecimal)
      */
     public static String sign(String message, byte[] key) {
-
-        if (key.length == 0) {
-            return message;
-        }
-
         try {
             Mac mac = Mac.getInstance("HmacSHA256");
             SecretKeySpec signingKey = new SecretKeySpec(key, "HmacSHA256");
@@ -188,7 +184,7 @@ public class Crypto {
      */
     public static String encryptAES(String value) {
         try {
-            byte[] keyBytes = Arrays.copyOf(Play.secretKey.getBytes(UTF_8), 16);
+            byte[] keyBytes = deriveAesKey();
             SecretKeySpec skeySpec = new SecretKeySpec(keyBytes, "AES");
 
             SecureRandom random = new SecureRandom();
@@ -245,7 +241,7 @@ public class Crypto {
      */
     public static String decryptAES(String value) {
         try {
-            byte[] keyBytes = Arrays.copyOf(Play.secretKey.getBytes(UTF_8), 16);
+            byte[] keyBytes = deriveAesKey();
             SecretKeySpec skeySpec = new SecretKeySpec(keyBytes, "AES");
 
             byte[] combined = Base64.decodeBase64(value.getBytes(StandardCharsets.UTF_8));
@@ -311,4 +307,65 @@ public class Crypto {
         return data;
     }
 
+    /**
+     * Derive a 16-byte AES key from {@link Play#secretKey} via HKDF-SHA256 (RFC 5869).
+     * <p>
+     * The previous implementation truncated/zero-padded the raw UTF-8 bytes of the
+     * secret to exactly 16 bytes — short secrets ended up zero-padded into the key
+     * (predictable bytes), and entropy in long secrets past byte 16 was discarded.
+     * HKDF takes any-length input keying material and produces a uniformly
+     * distributed key. The {@code info} string scopes this derivation to AES so
+     * the same secret can safely be used for HMAC signing without one weakness
+     * leaking into the other.
+     * <p>
+     * <b>Compatibility note:</b> Ciphertext produced by older versions (using the
+     * truncate/pad derivation) is not decryptable with this key. Apps that store
+     * AES-encrypted data long-term must re-encrypt during the upgrade window.
+     */
+    private static byte[] deriveAesKey() {
+        return hkdfSha256(Play.secretKey.getBytes(UTF_8),
+                          null,
+                          "play.encrypt.aes.v1".getBytes(UTF_8),
+                          16);
+    }
+
+    /**
+     * RFC 5869 HKDF with HMAC-SHA256 (extract-then-expand).
+     *
+     * @param ikm   input keying material (the long-term secret)
+     * @param salt  optional salt; null is treated as a zero-filled 32-byte salt
+     * @param info  context/application-specific info string for domain separation
+     * @param length  desired output length in bytes (max 32 * 255 = 8160)
+     */
+    static byte[] hkdfSha256(byte[] ikm, byte[] salt, byte[] info, int length) {
+        if (length < 0 || length > 32 * 255) {
+            throw new IllegalArgumentException("HKDF length out of range: " + length);
+        }
+        if (info == null) info = new byte[0];
+        if (salt == null) salt = new byte[32];
+        try {
+            // Extract: PRK = HMAC-SHA256(salt, IKM)
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(salt, "HmacSHA256"));
+            byte[] prk = mac.doFinal(ikm);
+
+            // Expand: T(0)=empty, T(i)=HMAC(PRK, T(i-1) | info | i); OKM = T(1)|T(2)|...
+            mac.init(new SecretKeySpec(prk, "HmacSHA256"));
+            byte[] okm = new byte[length];
+            byte[] t = new byte[0];
+            int written = 0;
+            for (int counter = 1; written < length; counter++) {
+                mac.update(t);
+                mac.update(info);
+                mac.update((byte) counter);
+                t = mac.doFinal();
+                int copy = Math.min(t.length, length - written);
+                System.arraycopy(t, 0, okm, written, copy);
+                written += copy;
+            }
+            return okm;
+        } catch (NoSuchAlgorithmException | InvalidKeyException e) {
+            throw new UnexpectedException(e);
+        }
+    }
 }

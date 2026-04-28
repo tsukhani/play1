@@ -260,6 +260,18 @@ public class ApplicationClasses {
                     // nop
                 }
 
+                // Audit M7: detach the temporary CtClass from the static enhanceChecker
+                // pool right after the subclassOf probe. CtClass holds a copy of the
+                // bytecode; without detach it accumulates in the pool for every class
+                // ever enhanced, which becomes unbounded heap growth across hot-reload
+                // cycles in DEV mode.
+                try {
+                    CtClass probe = enhanceChecker_classPool.getOrNull(this.name);
+                    if (probe != null) probe.detach();
+                } catch (Throwable ignored) {
+                    // Best-effort: missing class, pool issues — don't fail enhancement.
+                }
+
                 if (shouldEnhance) {
                     Play.pluginCollection.enhance(this);
                 }

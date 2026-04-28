@@ -109,4 +109,45 @@ public final class ExecutorFacade {
         if (s.platform != null) s.platform.shutdownNow();
         if (s.virtual != null) s.virtual.shutdownNow();
     }
+
+    /**
+     * Audit M27: orderly shutdown — block accepting new work, wait up to
+     * {@code timeoutMs} for in-flight tasks to complete, then escalate to
+     * {@link #shutdownNow} if anything is still running. Lets background jobs
+     * mid-DB-transaction commit cleanly during a hot reload or app stop instead
+     * of being interrupted and corrupting data.
+     *
+     * @return true if everything terminated within the timeout, false if
+     *         shutdownNow had to fire.
+     */
+    public synchronized boolean shutdownGracefully(long timeoutMs) {
+        State s = state;
+        state = State.EMPTY;
+        boolean clean = true;
+        try {
+            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(timeoutMs);
+            if (s.platform != null) {
+                s.platform.shutdown();
+                long remaining = Math.max(0L, deadline - System.nanoTime());
+                if (!s.platform.awaitTermination(remaining, java.util.concurrent.TimeUnit.NANOSECONDS)) {
+                    s.platform.shutdownNow();
+                    clean = false;
+                }
+            }
+            if (s.virtual != null) {
+                s.virtual.shutdown();
+                long remaining = Math.max(0L, deadline - System.nanoTime());
+                if (!s.virtual.awaitTermination(remaining, java.util.concurrent.TimeUnit.NANOSECONDS)) {
+                    s.virtual.shutdownNow();
+                    clean = false;
+                }
+            }
+        } catch (InterruptedException ie) {
+            if (s.platform != null) s.platform.shutdownNow();
+            if (s.virtual != null) s.virtual.shutdownNow();
+            Thread.currentThread().interrupt();
+            clean = false;
+        }
+        return clean;
+    }
 }

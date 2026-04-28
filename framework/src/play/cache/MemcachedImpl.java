@@ -55,37 +55,50 @@ public class MemcachedImpl implements CacheImpl {
     }
 
     private MemcachedImpl() throws IOException {
+        // Audit M28: switch from blocklist (5 known gadget packages) to allowlist
+        // via ObjectInputFilter. The blocklist could only stop *known* gadget
+        // chains; any class loadable via Play.classloader would deserialize
+        // unconditionally — including app-specific classes whose readObject might
+        // be exploitable. The allowlist is conservative: java.*, play.*, arrays,
+        // and primitives by default; users with legitimate cached domain types
+        // extend it via memcached.allowlist (comma-separated package patterns
+        // like 'com.example.model.*').
+        String userAllow = Play.configuration != null
+                ? Play.configuration.getProperty("memcached.allowlist", "").trim()
+                : "";
+        StringBuilder filterPattern = new StringBuilder();
+        // Built-in safe packages.
+        filterPattern.append("java.lang.*;java.util.*;java.time.*;java.math.*;java.net.*;");
+        filterPattern.append("play.**;");
+        if (!userAllow.isEmpty()) {
+            for (String pat : userAllow.split(",")) {
+                String trimmed = pat.trim();
+                if (!trimmed.isEmpty()) {
+                    filterPattern.append(trimmed).append(';');
+                }
+            }
+        }
+        // Reject everything else.
+        filterPattern.append("!*");
+        final java.io.ObjectInputFilter inputFilter =
+                java.io.ObjectInputFilter.Config.createFilter(filterPattern.toString());
+
         tc = new SerializingTranscoder() {
 
             @Override
             protected Object deserialize(byte[] data) {
                 try {
-                    return new ObjectInputStream(new ByteArrayInputStream(data)) {
-
-                        private static final String[] BLOCKED_PREFIXES = {
-                            "org.apache.commons.collections.functors",
-                            "org.apache.commons.collections4.functors",
-                            "com.sun.org.apache.xalan",
-                            "org.springframework.beans.factory",
-                            "com.mchange.v2.c3p0"
-                        };
-
+                    ObjectInputStream ois = new ObjectInputStream(new ByteArrayInputStream(data)) {
                         @Override
                         protected Class<?> resolveClass(ObjectStreamClass desc)
                                 throws IOException, ClassNotFoundException {
-                            String name = desc.getName();
-                            for (String blocked : BLOCKED_PREFIXES) {
-                                if (name.startsWith(blocked)) {
-                                    throw new java.io.InvalidClassException(
-                                        "Unauthorized deserialization attempt - blocked gadget class", name);
-                                }
-                            }
-                            if (!name.startsWith("java.") && !name.startsWith("play.") && !name.startsWith("[")) {
-                                Logger.warn("Deserializing non-standard class from Memcached: %s", name);
-                            }
-                            return Class.forName(name, false, Play.classloader);
+                            return Class.forName(desc.getName(), false, Play.classloader);
                         }
-                    }.readObject();
+                    };
+                    ois.setObjectInputFilter(inputFilter);
+                    return ois.readObject();
+                } catch (java.io.InvalidClassException ice) {
+                    Logger.warn("Memcached deserialization rejected by allowlist: %s", ice.getMessage());
                 } catch (Exception e) {
                     Logger.error(e, "Could not deserialize");
                 }

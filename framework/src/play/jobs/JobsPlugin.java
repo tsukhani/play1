@@ -320,7 +320,20 @@ public class JobsPlugin extends PlayPlugin {
         if (!scheduler.isUsingVirtualThreads() && scheduler.platformExecutor() != null) {
             scheduler.platformExecutor().getQueue().clear();
         }
-        scheduler.shutdownNow();
+        // Audit M27: try graceful shutdown first so in-flight jobs (including ones
+        // mid-DB-transaction) can finish their commit before we send interrupts.
+        // Falls back to shutdownNow() after the timeout — long-running runaway
+        // jobs still get interrupted, but the common case of "this job has 200ms
+        // left to commit" no longer corrupts data on hot reload / app stop.
+        long stopTimeoutMs;
+        try {
+            stopTimeoutMs = Long.parseLong(Play.configuration.getProperty("play.jobs.stop.timeout", "30000"));
+        } catch (NumberFormatException e) {
+            stopTimeoutMs = 30000;
+        }
+        if (!scheduler.shutdownGracefully(stopTimeoutMs)) {
+            Logger.warn("Jobs scheduler did not terminate within %d ms; forced shutdown", stopTimeoutMs);
+        }
         executor = null;
         virtualExecutor = null;
     }
@@ -353,6 +366,16 @@ public class JobsPlugin extends PlayPlugin {
                 }
             });
         }
+    }
+
+    @Override
+    public void invocationFinally() {
+        // Audit M15: afterInvocation only runs on the success path; if the request
+        // threw, afterInvocationActions stays set on the platform thread until the
+        // next request reuses it. invocationFinally runs unconditionally, so it's
+        // the right place to ensure the ThreadLocal is cleared. Idempotent — afterInvocation()
+        // already removed it on the success path, this is a no-op there.
+        afterInvocationActions.remove();
     }
 
     // default visibility, because we want to use this only from Job.java

@@ -24,7 +24,12 @@ public class UrlEncodedParser extends DataParser {
 
     // Sets the maximum count of accepted POST params - protection against Hash collision DOS attacks
     private static final int maxParams = Integer.parseInt(Play.configuration.getProperty("http.maxParams", "1000")); // 0 == no limit
-    
+
+    // Audit B4: cap the total POST body size for url-encoded forms (the parser
+    // buffers the entire body to memory before splitting). Default 2MB. 0 == no limit.
+    // Tunable via http.maxPostSize.
+    private static final int maxPostSize = Integer.parseInt(Play.configuration.getProperty("http.maxPostSize", "2097152"));
+
     boolean forQueryString = false;
     
     public static Map<String, String[]> parse(String urlEncoded) {
@@ -51,7 +56,13 @@ public class UrlEncodedParser extends DataParser {
             ByteArrayOutputStream os = new ByteArrayOutputStream();
             byte[] buffer = new byte[1024];
             int bytesRead;
+            int total = 0;
             while ( (bytesRead = is.read(buffer)) > 0 ) {
+                total += bytesRead;
+                if (maxPostSize != 0 && total > maxPostSize) {
+                    Logger.warn("URL-encoded body size %d exceeds maximum of %d, aborting. Configurable via http.maxPostSize.", total, maxPostSize);
+                    throw new Status(413);
+                }
                 os.write( buffer, 0, bytesRead);
             }
 

@@ -1,11 +1,13 @@
 package play.data.binding.types;
 
+import play.Play;
 import play.data.binding.TypeBinder;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Type;
 import java.text.SimpleDateFormat;
 import java.util.Calendar;
 import java.util.Date;
+import java.util.TimeZone;
 
 import play.data.binding.AnnotationHelper;
 import play.i18n.Lang;
@@ -21,7 +23,14 @@ public class CalendarBinder implements TypeBinder<Calendar> {
         if (value == null || value.trim().length() == 0) {
             return null;
         }
-        Calendar cal = Calendar.getInstance(Lang.getLocale());
+        // Audit M21: same fix as DateBinder — pin the binding timezone so server
+        // local TZ doesn't silently shift user-submitted dates. The Calendar
+        // returned to the controller carries this TZ.
+        TimeZone tz = TimeZone.getTimeZone(
+            Play.configuration != null
+                ? Play.configuration.getProperty("play.date.timezone", "UTC")
+                : "UTC");
+        Calendar cal = Calendar.getInstance(tz, Lang.getLocale());
 
         Date date = AnnotationHelper.getDateAs(annotations, value);
         if (date != null) {
@@ -29,6 +38,7 @@ public class CalendarBinder implements TypeBinder<Calendar> {
         } else {
             SimpleDateFormat sdf = new SimpleDateFormat(I18N.getDateFormat());
             sdf.setLenient(false);
+            sdf.setTimeZone(tz);
             cal.setTime(sdf.parse(value));
         }
         return cal;

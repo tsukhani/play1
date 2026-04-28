@@ -60,7 +60,8 @@ public class SslHttpServerPipelineFactory extends HttpServerPipelineFactory {
             engine.setEnabledProtocols(enabledProtocols.replaceAll(" ", "").split(","));
         }
 
-        engine.setEnableSessionCreation(true);
+        // (Note: setEnableSessionCreation(true) is the JDK default; calling it explicitly is
+        // a no-op and was removed.)
 
         pipeline.addLast("ssl", new SslHandler(engine));
 
@@ -93,7 +94,9 @@ public class SslHttpServerPipelineFactory extends HttpServerPipelineFactory {
                     sslPlayHandler.pipelines.put("Ssl" + name, instance);
                 }
             } catch (Throwable e) {
-                Logger.error(" error adding " + handler, e);
+                // Throwable-first overload — the (String, Object...) form treats e as a {}
+                // placeholder arg and drops the stack trace. See HttpServerPipelineFactory:144.
+                Logger.error(e, " error adding %s", handler);
             }
         }
 
@@ -112,6 +115,13 @@ public class SslHttpServerPipelineFactory extends HttpServerPipelineFactory {
         if (!ChannelHandler.class.isAssignableFrom(clazz)) return null;
         if (clazz == HttpObjectAggregator.class) {
             return new HttpObjectAggregator(DEFAULT_AGGREGATOR_MAX);
+        }
+        // Audit M32: HttpContentCompressor has no no-arg ctor in Netty 4.2, so the
+        // generic fallback below silently failed to instantiate. Use the shared
+        // builder to get the same gzip+deflate+brotli+zstd encoder set the plain
+        // HTTP pipeline gets.
+        if (clazz == io.netty.handler.codec.http.HttpContentCompressor.class) {
+            return play.server.HttpServerPipelineFactory.buildHttpContentCompressor();
         }
         try {
             Constructor<?> ctor = clazz.getDeclaredConstructor();

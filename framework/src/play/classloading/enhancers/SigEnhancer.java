@@ -65,8 +65,18 @@ public class SigEnhancer extends Enhancer {
                 int index = i.next();
                 int op = i.byteAt(index);
                 sigChecksum.append(op);
+                // Audit M12: handle both LDC (1-byte operand) and LDC_W (2-byte
+                // operand). Java 25's compiler emits LDC_W for any constant whose
+                // pool index exceeds 255, which is increasingly common as classes
+                // grow. Reading byteAt(index+1) for an LDC_W instruction returns
+                // the high byte of the 2-byte index — wrong constant lookup —
+                // producing a sigChecksum that varies on every recompile, which
+                // surfaces as spurious RestartNeededException on every reload.
                 if (op == Opcode.LDC) {
                     sigChecksum.append("[").append(i.get().getConstPool().getLdcValue(i.byteAt(index + 1))).append("]");
+                } else if (op == Opcode.LDC_W || op == Opcode.LDC2_W) {
+                    int poolIdx = (i.byteAt(index + 1) << 8) | i.byteAt(index + 2);
+                    sigChecksum.append("[").append(i.get().getConstPool().getLdcValue(poolIdx)).append("]");
                 }
                 sigChecksum.append(".");
             }
@@ -78,8 +88,18 @@ public class SigEnhancer extends Enhancer {
                 int index = i.next();
                 int op = i.byteAt(index);
                 sigChecksum.append(op);
+                // Audit M12: handle both LDC (1-byte operand) and LDC_W (2-byte
+                // operand). Java 25's compiler emits LDC_W for any constant whose
+                // pool index exceeds 255, which is increasingly common as classes
+                // grow. Reading byteAt(index+1) for an LDC_W instruction returns
+                // the high byte of the 2-byte index — wrong constant lookup —
+                // producing a sigChecksum that varies on every recompile, which
+                // surfaces as spurious RestartNeededException on every reload.
                 if (op == Opcode.LDC) {
                     sigChecksum.append("[").append(i.get().getConstPool().getLdcValue(i.byteAt(index + 1))).append("]");
+                } else if (op == Opcode.LDC_W || op == Opcode.LDC2_W) {
+                    int poolIdx = (i.byteAt(index + 1) << 8) | i.byteAt(index + 2);
+                    sigChecksum.append("[").append(i.get().getConstPool().getLdcValue(poolIdx)).append("]");
                 }
                 sigChecksum.append(".");
             }

@@ -94,7 +94,12 @@ public abstract class SqlQuery {
     }
 
     public static String quote(String str) {
-        return "'" + str.replace("'","\\'") + "'";
+        // Audit M22: SQL standard escapes a single quote by doubling it (`''`),
+        // not by backslash-escaping. The backslash form was a MySQL-only quirk
+        // that fails on PostgreSQL/Oracle/H2 in default mode and on MySQL with
+        // NO_BACKSLASH_ESCAPES — the quote then leaks unescaped, a SQL-injection
+        // vector for anything that flows through inlineParam/whereIn.
+        return "'" + str.replace("'", "''") + "'";
     }
 
     public static String inlineParam(Object param) {

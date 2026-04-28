@@ -4,11 +4,12 @@ import play.Logger;
 import play.Play;
 import play.PlayPlugin;
 
+import java.io.DataInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.security.MessageDigest;
-import java.util.regex.Pattern;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.apache.commons.io.FileUtils.writeByteArrayToFile;
@@ -18,7 +19,30 @@ import static org.apache.commons.io.FileUtils.writeByteArrayToFile;
  */
 public class BytecodeCache {
 
-    private static final Pattern REPLACED_CHARS = Pattern.compile("[/{}:]");
+    /**
+     * Audit M9: cache filename is derived from a SHA-256 prefix of the class name
+     * rather than the previous {@code [/{}:] -> '_'} substitution. The old scheme
+     * collapsed distinct class names (e.g. inner classes containing braces +
+     * unrelated types containing underscores) onto the same file, silently
+     * loading the wrong bytecode and producing impossible-to-debug
+     * {@code ClassFormatError}s. The first 16 hex chars of SHA-256 give 2^64
+     * collision space — collision-free in practice for any sane class count.
+     */
+    static String cacheFileId(String name) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] digest = md.digest(name.getBytes(UTF_8));
+            StringBuilder hex = new StringBuilder(16);
+            for (int i = 0; i < 8; i++) {
+                int v = digest[i] & 0xff;
+                if (v < 16) hex.append('0');
+                hex.append(Integer.toHexString(v));
+            }
+            return hex.toString();
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
 
     /**
      * Delete the bytecode
@@ -29,7 +53,7 @@ public class BytecodeCache {
             if (!Play.initialized || Play.tmpDir == null || Play.readOnlyTmp || !Play.configuration.getProperty("play.bytecodeCache", "true").equals("true")) {
                 return;
             }
-            File f = cacheFile(REPLACED_CHARS.matcher(name).replaceAll("_"));
+            File f = cacheFile(cacheFileId(name));
             if (f.exists()) {
                 f.delete();
             }
@@ -49,35 +73,53 @@ public class BytecodeCache {
             if (!Play.initialized || Play.tmpDir == null || !Play.configuration.getProperty("play.bytecodeCache", "true").equals("true")) {
                 return null;
             }
-            File f = cacheFile(REPLACED_CHARS.matcher(name).replaceAll("_"));
-            if (f.exists()) {
-                FileInputStream fis = new FileInputStream(f);
-                // Read hash
+            File f = cacheFile(cacheFileId(name));
+            if (!f.exists()) {
+                if (Logger.isTraceEnabled()) {
+                    Logger.trace("Cache MISS for %s", name);
+                }
+                return null;
+            }
+            // Audit M5: try-with-resources on FileInputStream so any exception
+            // during hash read or bytecode read closes the stream rather than
+            // leaking the file handle. Also use DataInputStream.readFully so a
+            // truncated cache file (concurrent reload writer) returns null
+            // rather than handing the loader a partial bytecode array — which
+            // surfaces as an unrelated ClassFormatError far from the real cause.
+            try (FileInputStream fis = new FileInputStream(f);
+                 DataInputStream dis = new DataInputStream(fis)) {
                 int offset = 0;
-                int read = -1;
+                int read;
                 StringBuilder hash = new StringBuilder();
-                // look for null byte, or end-of file
-                while ((read = fis.read()) > 0) {
+                while ((read = dis.read()) > 0) {
                     hash.append((char) read);
                     offset++;
+                }
+                if (read < 0) {
+                    // Reached EOF before the null terminator → file is corrupt/truncated.
+                    Logger.warn("Bytecode cache file truncated for %s; ignoring", name);
+                    return null;
                 }
                 if (!hash(source).contentEquals(hash)) {
                     if (Logger.isTraceEnabled()) {
                         Logger.trace("Bytecode too old (%s != %s)", hash, hash(source));
                     }
-                    fis.close();
                     return null;
                 }
-                byte[] byteCode = new byte[(int) f.length() - (offset + 1)];
-                fis.read(byteCode);
-                fis.close();
+                int bodyLength = (int) f.length() - (offset + 1);
+                if (bodyLength < 0) {
+                    Logger.warn("Bytecode cache file shorter than its header for %s; ignoring", name);
+                    return null;
+                }
+                byte[] byteCode = new byte[bodyLength];
+                try {
+                    dis.readFully(byteCode);
+                } catch (java.io.EOFException eof) {
+                    Logger.warn("Bytecode cache body truncated for %s; ignoring", name);
+                    return null;
+                }
                 return byteCode;
             }
-
-            if (Logger.isTraceEnabled()) {
-                Logger.trace("Cache MISS for %s", name);
-            }
-            return null;
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
@@ -94,7 +136,7 @@ public class BytecodeCache {
             if (!Play.initialized || Play.tmpDir == null || Play.readOnlyTmp || !Play.configuration.getProperty("play.bytecodeCache", "true").equals("true")) {
                 return;
             }
-            File f = cacheFile(REPLACED_CHARS.matcher(name).replaceAll("_"));
+            File f = cacheFile(cacheFileId(name));
             try (FileOutputStream fos = new FileOutputStream(f)) {
                 fos.write(hash(source).getBytes(UTF_8));
                 fos.write(0);

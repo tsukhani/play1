@@ -160,6 +160,15 @@ public class Http {
          * See http://www.owasp.org/index.php/HttpOnly
          */
         public boolean httpOnly = false;
+        /**
+         * SameSite attribute for cross-site request hardening.
+         * <p>
+         * Valid values: {@code "Lax"} (default), {@code "Strict"}, {@code "None"}.
+         * {@code null} or empty disables the attribute. Note that browsers require
+         * {@code SameSite=None} cookies to also be {@code Secure}; setting one without
+         * the other will be rejected by modern browsers.
+         */
+        public String sameSite = "Lax";
     }
 
     /**

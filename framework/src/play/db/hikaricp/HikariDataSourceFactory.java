@@ -30,11 +30,17 @@ public class HikariDataSourceFactory implements DataSourceFactory {
     ds.setConnectionTimeout(parseLong(dbConfig.getProperty("db.pool.timeout", "5000")));
     ds.setMaximumPoolSize(parseInt(dbConfig.getProperty("db.pool.maxSize", "30")));
     ds.setMinimumIdle(parseInt(dbConfig.getProperty("db.pool.minSize", "1")));
-    ds.setIdleTimeout(parseLong(dbConfig.getProperty("db.pool.maxIdleTime", "0"))); // NB! Now in milliseconds
+    // Audit M23: HikariCP treats idleTimeout=0 as "never evict" and maxLifetime=0 as
+    // "never expire", so connections that hit MySQL's default wait_timeout (8h) are
+    // silently dropped server-side but linger broken in the pool. New defaults:
+    // idleTimeout 600s (10 min), maxLifetime 1800s (30 min) — both well below the
+    // MySQL/MariaDB default. Operators with longer DB-side timeouts can raise via
+    // db.pool.maxIdleTime / db.pool.maxConnectionAge as before.
+    ds.setIdleTimeout(parseLong(dbConfig.getProperty("db.pool.maxIdleTime", "600000"))); // ms; 10 minutes
     ds.setLeakDetectionThreshold(parseLong(dbConfig.getProperty("db.pool.unreturnedConnectionTimeout", "0")));
     ds.setValidationTimeout(parseLong(dbConfig.getProperty("db.pool.validationTimeout", "5000")));
     ds.setLoginTimeout(parseInt(dbConfig.getProperty("db.pool.loginTimeout", "0"))); // in seconds
-    ds.setMaxLifetime(parseLong(dbConfig.getProperty("db.pool.maxConnectionAge", "0"))); // in ms
+    ds.setMaxLifetime(parseLong(dbConfig.getProperty("db.pool.maxConnectionAge", "1800000"))); // ms; 30 minutes
 
     if (dbConfig.getProperty("db.pool.connectionInitSql") != null) {
       ds.setConnectionInitSql(dbConfig.getProperty("db.pool.connectionInitSql"));

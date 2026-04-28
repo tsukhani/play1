@@ -38,6 +38,138 @@ def fileHas(file, searchExp):
 def secretKey():
     return ''.join([random.choice('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789') for i in range(64)])
 
+DEFAULT_SECRET_VAR = 'PLAY_SECRET'
+
+def secretVarName(app_path):
+    """Read application.conf and find the variable name in
+    `application.secret=${VARNAME}`. Returns DEFAULT_SECRET_VAR if the file is
+    missing or the line uses an unparseable form (the validator on the Java side
+    will reject anything other than a single `${VARNAME}` placeholder, so this
+    only needs the happy-path regex)."""
+    conf_path = os.path.join(app_path, 'conf', 'application.conf')
+    if not os.path.exists(conf_path):
+        return DEFAULT_SECRET_VAR
+    pattern = re.compile(r'^\s*application\.secret\s*=\s*\$\{([^}:]+)\}\s*$')
+    try:
+        with open(conf_path, 'r') as f:
+            for line in f:
+                stripped = line.lstrip()
+                if stripped.startswith('#') or stripped.startswith('!'):
+                    continue
+                m = pattern.match(line)
+                if m:
+                    return m.group(1)
+    except Exception:
+        pass
+    return DEFAULT_SECRET_VAR
+
+def writeAppSecret(app_path, key):
+    """Write <VARNAME>=<key> into <app_path>/.env, preserving any other lines.
+    The variable name is read from `application.conf` (so a user who renamed
+    the conf line to ${MY_SECRET} gets MY_SECRET=... in .env automatically).
+    Creates the file if missing; replaces any existing line for that variable
+    in place. Returns the .env path."""
+    var_name = secretVarName(app_path)
+    return writeEnvVar(app_path, var_name, key)
+
+def writeEnvVar(app_path, var_name, value, env_filename='.env'):
+    """Write <var_name>=<value> into <app_path>/<env_filename>, preserving any
+    other lines. Replaces any existing line for that variable in place. Creates
+    the file if missing. Returns the file path."""
+    env_path = os.path.join(app_path, env_filename)
+    new_line = '%s=%s\n' % (var_name, value)
+    prefix_eq = var_name + '='
+    prefix_sp = var_name + ' '
+    if os.path.exists(env_path):
+        with open(env_path, 'r') as f:
+            lines = f.readlines()
+        replaced = False
+        for i, line in enumerate(lines):
+            stripped = line.lstrip()
+            if stripped.startswith(prefix_eq) or stripped.startswith(prefix_sp):
+                lines[i] = new_line
+                replaced = True
+                break
+        if not replaced:
+            if lines and not lines[-1].endswith('\n'):
+                lines[-1] = lines[-1] + '\n'
+            lines.append(new_line)
+        with open(env_path, 'w') as f:
+            f.writelines(lines)
+    else:
+        with open(env_path, 'w') as f:
+            f.write(new_line)
+    return env_path
+
+def ensureTestSecret(app_path):
+    """Test commands (`play test`, `play auto-test`) run hermetically and don't
+    care about a stable secret value across runs. If the secret variable named
+    by application.conf isn't already set in the environment (via .env, host
+    env, or a -D flag), generate a fresh one for this process so the launcher
+    isn't blocked on the user running `play secret` first. Returns the var name
+    when generation occurred, None otherwise."""
+    var_name = secretVarName(app_path)
+    if var_name in os.environ:
+        return None
+    os.environ[var_name] = secretKey()
+    return var_name
+
+def writeEnvExample(app_path, var_name=None):
+    """Generate `.env.example` — the committed schema/template that documents
+    which environment variables the app needs. Devs onboarding the project run
+    `cp .env.example .env` and fill in real values. Idempotent: if the file
+    already exists, leaves it alone (so manual additions aren't clobbered)."""
+    if var_name is None:
+        var_name = secretVarName(app_path) or DEFAULT_SECRET_VAR
+    example_path = os.path.join(app_path, '.env.example')
+    if os.path.exists(example_path):
+        return example_path
+    content = (
+        "# Environment variables for this Play application.\n"
+        "#\n"
+        "# Copy this file to `.env` (which is gitignored) and fill in real values:\n"
+        "#     cp .env.example .env\n"
+        "#\n"
+        "# This template lists every variable the app needs at startup. Keep it in\n"
+        "# version control so onboarding teammates know what to set. Do NOT put real\n"
+        "# secrets here — only placeholders or empty values.\n"
+        "#\n"
+        "# At runtime, the Play CLI loads `.env` into the process environment before\n"
+        "# starting the JVM. Values already set in the host environment (or via\n"
+        "# `-D<NAME>=...` JVM flags) take precedence over `.env`.\n"
+        "\n"
+        "# The application secret used for HMAC signing (sessions, CSRF) and\n"
+        "# AES encryption. Generate with `play secret`.\n"
+        + var_name + "=\n"
+    )
+    with open(example_path, 'w') as f:
+        f.write(content)
+    return example_path
+
+def loadDotEnv(app_path):
+    """Load <app_path>/.env into os.environ. Existing environment values win,
+    so a host env var or `-D` flag can still override the .env entry."""
+    env_path = os.path.join(app_path, '.env')
+    if not os.path.exists(env_path):
+        return
+    with open(env_path, 'r') as f:
+        for raw in f:
+            line = raw.strip()
+            if not line or line.startswith('#'):
+                continue
+            if '=' not in line:
+                continue
+            k, _, v = line.partition('=')
+            k = k.strip()
+            v = v.strip()
+            if not k:
+                continue
+            # Strip optional surrounding quotes around the value.
+            if len(v) >= 2 and ((v[0] == '"' and v[-1] == '"') or (v[0] == "'" and v[-1] == "'")):
+                v = v[1:-1]
+            if k not in os.environ:
+                os.environ[k] = v
+
 def isParentOf(path1, path2):
     try:
         relpath = os.path.relpath(path1, path2)
