@@ -639,6 +639,18 @@ public class Play {
             // Clean templates
             TemplateLoader.cleanCompiledCache();
 
+            // Warn on retired virtual-thread toggles. The fork executes the request
+            // invoker, jobs scheduler, and mail dispatcher exclusively on virtual threads;
+            // any legacy play.threads.virtual* property an operator has carried forward
+            // is silently ignored, so emit a one-shot WARN to make the no-op visible.
+            for (Object k : configuration.keySet()) {
+                String key = k.toString();
+                if (key.equals("play.threads.virtual") || key.startsWith("play.threads.virtual.")) {
+                    Logger.warn("Configuration key %s is no longer honored — this fork runs on "
+                            + "virtual threads exclusively. Remove it from application.conf.", key);
+                }
+            }
+
             // SecretKey
             secretKey = configuration.getProperty("application.secret", "").trim();
             if (secretKey.isEmpty() || secretKey.contains("${")) {

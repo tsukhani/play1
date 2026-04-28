@@ -13,7 +13,7 @@ public class InfoConsole extends Controller {
      renderArgs.put("totalmem", Runtime.getRuntime().totalMemory());
      renderArgs.put("threads", Thread.getAllStackTraces().size());
      renderArgs.put("jobs", JobsPlugin.scheduledJobs);
-     renderArgs.put("executor",JobsPlugin.executor);
+     renderArgs.put("executor", JobsPlugin.scheduler);
      render("/console/index.html");
   }
 }

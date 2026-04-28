@@ -28,16 +28,6 @@ public class JobsPlugin extends PlayPlugin {
      * {@link #onApplicationStart()}; nulled on {@link #onApplicationStop()}.
      */
     public static volatile VirtualThreadScheduledExecutor scheduler;
-
-    /** @deprecated Always null on this fork; kept for plugin binary compat. Will be removed. */
-    @Deprecated
-    public static volatile ScheduledThreadPoolExecutor executor;
-    /** @deprecated Mirrors {@link #scheduler}. Will be removed. */
-    @Deprecated
-    public static volatile VirtualThreadScheduledExecutor virtualExecutor;
-    /** @deprecated Always {@code true} on this fork. Will be removed. */
-    @Deprecated
-    public static volatile boolean usingVirtualThreads = true;
     // CopyOnWriteArrayList: writes happen at app start/stop only; reads come from getStatus()
     // and afterInvocation() while requests are in flight. Plain ArrayList is unsafe under VT.
     public static final List<Job<?>> scheduledJobs = new CopyOnWriteArrayList<>();
@@ -188,9 +178,7 @@ public class JobsPlugin extends PlayPlugin {
 
     @Override
     public void onApplicationStart() {
-        VirtualThreadScheduledExecutor v = new VirtualThreadScheduledExecutor("jobs");
-        scheduler = v;
-        virtualExecutor = v;
+        scheduler = new VirtualThreadScheduledExecutor("jobs");
         Logger.info("Jobs using virtual threads");
         scheduledJobs.clear();
     }
@@ -284,7 +272,6 @@ public class JobsPlugin extends PlayPlugin {
             Logger.warn("Jobs scheduler did not terminate within %d ms; forced shutdown", stopTimeoutMs);
         }
         scheduler = null;
-        virtualExecutor = null;
     }
 
     @Override

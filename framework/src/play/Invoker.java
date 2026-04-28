@@ -5,7 +5,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Future;
-import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -22,7 +21,6 @@ import play.exceptions.UnexpectedException;
 import play.i18n.Lang;
 import play.libs.F;
 import play.libs.F.Promise;
-import play.utils.VirtualThreadConfig;
 import play.utils.VirtualThreadScheduledExecutor;
 
 /**
@@ -35,27 +33,6 @@ public class Invoker {
      * application start; nulled by {@link #stop()} during shutdown.
      */
     public static volatile VirtualThreadScheduledExecutor scheduler;
-
-    /**
-     * @deprecated Always null on this fork — Invoker now runs exclusively on virtual
-     *     threads. Kept for one transition release so plugins reading this field
-     *     don't fail to load; reading it returns null. Will be removed.
-     */
-    @Deprecated
-    public static volatile ScheduledThreadPoolExecutor executor = null;
-
-    /**
-     * @deprecated Use {@link #scheduler} directly. Mirrors {@link #scheduler} for the
-     *     transition; will be removed.
-     */
-    @Deprecated
-    public static volatile VirtualThreadScheduledExecutor virtualExecutor = null;
-
-    /**
-     * @deprecated Always {@code true} on this fork. Will be removed.
-     */
-    @Deprecated
-    public static volatile boolean usingVirtualThreads = true;
 
     /**
      * Audit H2-counter: number of invocations currently executing (queued or running).
@@ -430,7 +407,6 @@ public class Invoker {
         if (scheduler != null) return;
         VirtualThreadScheduledExecutor v = new VirtualThreadScheduledExecutor("play");
         scheduler = v;
-        virtualExecutor = v;
     }
 
     /**
@@ -445,7 +421,6 @@ public class Invoker {
         stop();
         VirtualThreadScheduledExecutor v = new VirtualThreadScheduledExecutor("play");
         scheduler = v;
-        virtualExecutor = v;
         Logger.info("Invoker using virtual threads");
     }
 
@@ -458,7 +433,6 @@ public class Invoker {
         VirtualThreadScheduledExecutor s = scheduler;
         if (s != null) s.shutdownNow();
         scheduler = null;
-        virtualExecutor = null;
     }
 
     /**

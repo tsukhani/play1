@@ -24,7 +24,6 @@ import play.libs.mail.AbstractMailSystemFactory;
 import play.libs.mail.MailSystem;
 import play.libs.mail.test.LegacyMockMailSystem;
 import play.utils.Utils.Maps;
-import play.utils.VirtualThreadConfig;
 import play.utils.VirtualThreadFactory;
 
 /**
