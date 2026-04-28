@@ -66,21 +66,22 @@ Run the full Play Framework release deployment:
 
    The release tag is `v{VERSION}` (e.g. `v1.11.13`). It must exist on **all three** of: local repo, `origin` (Bitbucket), `github`. Do not rely on `gh release create` to create the tag — it only creates the tag on GitHub, leaving the local repo and origin untagged and out of sync.
 
-   Match the existing tag style in the repo: lightweight tags (no `-a` / `-m`), pointing at the commit you just pushed in step 4. Confirm with `git cat-file -t v{prior-version}` if unsure (older tags should report `commit`, not `tag`).
+   Use **signed annotated tags**. The repo enforces this via `tag.gpgsign=true` and `tag.forceSignAnnotated=true` in `.git/config`. The tag message is `Play Framework v{VERSION}`. `cat-file -t v{VERSION}` should report `tag` (annotated), not `commit` (lightweight).
 
    ```bash
    # 1. Check whether the local tag already exists (handles re-runs after partial failure).
-   #    If it exists pointing at HEAD, skip the create. If it exists pointing elsewhere,
-   #    STOP and report — never overwrite a tag without explicit user confirmation.
+   #    Annotated tags resolve to the tag-object SHA, so peel to ^{commit} when comparing
+   #    against HEAD. If the tag already points at HEAD, skip the create. If it points
+   #    elsewhere, STOP and report — never overwrite a tag without explicit user confirmation.
    if /usr/bin/git rev-parse -q --verify v{VERSION} >/dev/null; then
-     existing=$(/usr/bin/git rev-parse v{VERSION})
+     existing=$(/usr/bin/git rev-parse "v{VERSION}^{commit}")
      head=$(/usr/bin/git rev-parse HEAD)
      if [ "$existing" != "$head" ]; then
-       echo "ERROR: tag v{VERSION} exists at $existing but HEAD is $head — refusing to retag"
+       echo "ERROR: tag v{VERSION} exists pointing at $existing but HEAD is $head — refusing to retag"
        exit 1
      fi
    else
-     /usr/bin/git tag v{VERSION}
+     /usr/bin/git tag -s v{VERSION} -m "Play Framework v{VERSION}"
    fi
 
    # 2. Push to both remotes. `git push <remote> <tag>` is idempotent when the tag
@@ -88,10 +89,13 @@ Run the full Play Framework release deployment:
    /usr/bin/git push origin v{VERSION}
    /usr/bin/git push github v{VERSION}
 
-   # 3. Verify the tag resolves to the same SHA in all three places.
+   # 3. Verify the tag resolves to the same tag-object SHA in all three places.
+   #    ls-remote emits two lines per annotated tag — the tag-object SHA, and a peeled
+   #    `^{}` line with the underlying commit SHA. Filter out peeled entries so we
+   #    compare like with like.
    /usr/bin/git rev-parse v{VERSION}
-   /usr/bin/git ls-remote --tags origin v{VERSION}
-   /usr/bin/git ls-remote --tags github v{VERSION}
+   /usr/bin/git ls-remote --tags origin v{VERSION} | grep -v '\^{}'
+   /usr/bin/git ls-remote --tags github v{VERSION} | grep -v '\^{}'
    ```
 
    All three lookups must report the same SHA. If any disagrees, stop and report.
