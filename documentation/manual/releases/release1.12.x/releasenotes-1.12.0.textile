@@ -16,7 +16,7 @@ If you need to stay on Java 17 or 21, pin to Play 1.11.x.
 
 h3. Application compiler defaults to @java.source=25@
 
-The hot-reload application compiler (@play.classloading.ApplicationCompiler@) now defaults @java.source@ to *25* (was @17@ in 1.11.x). Any value from @17@ through @25@ is accepted; the compiler still rejects JDKs older than 17 at startup. Apps that do not set @java.source@ explicitly in @application.conf@ will gain access to Java 25 language features (record patterns, sealed types, virtual-thread APIs, etc.) without further configuration. Apps that need to stay on an earlier syntax level should pin @java.source@ explicitly.
+The hot-reload application compiler (@play.classloading.ApplicationCompiler@) defaults @java.source@ to *25* (was @17@ in 1.11.x). The compiler accepts only @25@ as a valid value and rejects JDKs older than 25 at startup; apps that need an earlier source level should stay on Play 1.11.x. Apps that do not set @java.source@ explicitly in @application.conf@ get Java 25 language features (record patterns, sealed types, virtual-thread APIs, etc.) without further configuration.
 
 h3. Public API: ChannelHandlerContext-typed constructors removed
 
@@ -154,5 +154,5 @@ h2. Upgrade checklist
 # If your code subclasses @Http.Inbound@ or constructs @F.BlockingEventStream@ with a @ChannelHandlerContext@, migrate to the @PlayChannel@-typed ctor
 # Decide whether to set @play.netty.maxContentLength@ explicitly (it now hard-rejects with 413 instead of being a chunk-size cap)
 # Optionally tune @play.netty.spoolThresholdBytes@ for your workload pattern
-# If your app needs to stay on an earlier Java syntax level (e.g. 17), pin @java.source@ explicitly in @application.conf@ — the compiler default is now @25@
+# If your app needs an earlier Java syntax level (e.g. 17 or 21), stay on Play 1.11.x — Play 1.12.x accepts only @java.source=25@ and rejects pre-25 JDKs at startup
 # Run your test suite under @-Dio.netty.leakDetection.level=PARANOID@ to catch any application-side @ByteBuf@ refcount issues

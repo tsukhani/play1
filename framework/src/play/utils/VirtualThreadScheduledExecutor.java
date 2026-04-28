@@ -145,12 +145,23 @@ public class VirtualThreadScheduledExecutor {
                     handle.completeExceptionally(t);
                     return;
                 }
-                if (!handle.isCancelled() && !scheduler.isShutdown()) {
-                    try {
-                        handle.setNext(scheduler.schedule(taskRef.get(), delay, unit));
-                    } catch (RejectedExecutionException ignored) {
-                        // scheduler shut down between checks; nothing to do
-                    }
+                // Reschedule, or transition the handle to terminal state when the
+                // scheduler is shut down between runs. Without the explicit cancel
+                // calls below, a periodic future could remain non-terminal forever:
+                // isDone() would return false and get() would block, diverging from
+                // ScheduledThreadPoolExecutor's "shutdown cancels periodic tasks"
+                // contract.
+                if (handle.isCancelled()) {
+                    return;
+                }
+                if (scheduler.isShutdown()) {
+                    handle.cancel(false);
+                    return;
+                }
+                try {
+                    handle.setNext(scheduler.schedule(taskRef.get(), delay, unit));
+                } catch (RejectedExecutionException ree) {
+                    handle.cancel(false);
                 }
             });
             handle.setActiveInner(inner);

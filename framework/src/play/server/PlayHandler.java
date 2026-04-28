@@ -337,6 +337,13 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
                     Scope.RouteArgs.current.remove();
                     Scope.Session.current.remove();
                     Scope.Flash.current.remove();
+                    // ActionInvoker.initActionContext sets these too. Without clearing
+                    // them, a pooled platform thread retains the previous request's
+                    // bound method args and controller-call stack. VT mode masks this
+                    // because each request gets a fresh thread, but platform mode
+                    // (Netty's invoker pool) leaks them across requests.
+                    play.data.binding.CachedBoundActionMethodArgs.clear();
+                    play.classloading.enhancers.ControllersEnhancer.currentAction.remove();
                 }
             }
         }

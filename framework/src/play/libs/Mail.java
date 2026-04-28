@@ -201,8 +201,17 @@ public class Mail {
                 // create unbounded concurrent sends — overwhelming the SMTP server,
                 // tripping rate limits, and amplifying connection storms. The cap
                 // applies regardless of executor type for consistent semantics.
+                //
+                // Interruptible acquire so Future.cancel(true) and resetExecutor() can
+                // unblock waiters cleanly — without this, a saturated gate would let
+                // shutdown leak still-pending sends and run them on the next startup.
                 Semaphore gate = getMailGate();
-                gate.acquireUninterruptibly();
+                try {
+                    gate.acquire();
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return false;
+                }
                 try {
                     msg.setSentDate(new Date());
                     msg.send();

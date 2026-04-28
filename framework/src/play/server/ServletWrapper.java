@@ -184,6 +184,9 @@ public class ServletWrapper extends HttpServlet implements ServletContextListene
             Scope.RenderArgs.current.remove();
             Scope.RouteArgs.current.remove();
             CachedBoundActionMethodArgs.clear();
+            // ActionInvoker.initActionContext also sets ControllersEnhancer.currentAction;
+            // clear it here too so servlet-mode pooled threads don't retain stale stacks.
+            play.classloading.enhancers.ControllersEnhancer.currentAction.remove();
         }
     }
 

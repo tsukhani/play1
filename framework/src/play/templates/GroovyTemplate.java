@@ -426,32 +426,37 @@ public class GroovyTemplate extends BaseTemplate {
                 }
             }
             TagContext.enterTag(tag);
-            Map<String, Object> args = new HashMap<>();
-            args.put("session", getBinding().getVariables().get("session"));
-            args.put("flash", getBinding().getVariables().get("flash"));
-            args.put("request", getBinding().getVariables().get("request"));
-            args.put("params", getBinding().getVariables().get("params"));
-            args.put("play", getBinding().getVariables().get("play"));
-            args.put("lang", getBinding().getVariables().get("lang"));
-            args.put("messages", getBinding().getVariables().get("messages"));
-            args.put("out", getBinding().getVariable("out"));
-            args.put("_attrs", attrs);
-            // all other vars are template-specific
-            args.put("_caller", getBinding().getVariables());
-            if (attrs != null) {
-                for (Map.Entry<String, Object> entry : attrs.entrySet()) {
-                    args.put("_" + entry.getKey(), entry.getValue());
-                }
-            }
-            args.put("_body", body);
             try {
-                tagTemplate.internalRender(args);
-            } catch (TagInternalException e) {
-                throw new TemplateExecutionException(template, fromLine, e.getMessage(), template.cleanStackTrace(e));
-            } catch (TemplateNotFoundException e) {
-                throw new TemplateNotFoundException(e.getPath(), template, fromLine);
+                Map<String, Object> args = new HashMap<>();
+                args.put("session", getBinding().getVariables().get("session"));
+                args.put("flash", getBinding().getVariables().get("flash"));
+                args.put("request", getBinding().getVariables().get("request"));
+                args.put("params", getBinding().getVariables().get("params"));
+                args.put("play", getBinding().getVariables().get("play"));
+                args.put("lang", getBinding().getVariables().get("lang"));
+                args.put("messages", getBinding().getVariables().get("messages"));
+                args.put("out", getBinding().getVariable("out"));
+                args.put("_attrs", attrs);
+                // all other vars are template-specific
+                args.put("_caller", getBinding().getVariables());
+                if (attrs != null) {
+                    for (Map.Entry<String, Object> entry : attrs.entrySet()) {
+                        args.put("_" + entry.getKey(), entry.getValue());
+                    }
+                }
+                args.put("_body", body);
+                try {
+                    tagTemplate.internalRender(args);
+                } catch (TagInternalException e) {
+                    throw new TemplateExecutionException(template, fromLine, e.getMessage(), template.cleanStackTrace(e));
+                } catch (TemplateNotFoundException e) {
+                    throw new TemplateNotFoundException(e.getPath(), template, fromLine);
+                }
+            } finally {
+                // Ensure the TagContext stack is popped even when render throws —
+                // otherwise pooled threads accumulate stale tag entries across requests.
+                TagContext.exitTag();
             }
-            TagContext.exitTag();
         }
 
         
