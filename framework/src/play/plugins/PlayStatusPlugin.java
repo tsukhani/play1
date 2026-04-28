@@ -170,6 +170,12 @@ public class PlayStatusPlugin extends PlayPlugin {
             out.println("Scheduled task count: " + pool.getTaskCount());
             out.println("Queue size: " + pool.getQueue().size());
         }
+        // Audit H2-display: emit invocation counters in both modes so dashboards have a
+        // consistent shape. In platform mode, getActiveCount() approximates inflight but
+        // isn't accurate when work is queued behind the active threads; the explicit
+        // counters above are authoritative in both modes.
+        out.println("Inflight invocations: " + Invoker.inflightInvocations.get());
+        out.println("Total invocations:    " + Invoker.totalInvocations.get());
         out.println();
         try {
             out.println("Monitors:");
@@ -230,6 +236,9 @@ public class PlayStatusPlugin extends PlayPlugin {
                 pool.addProperty("scheduled", invokerPool.getTaskCount());
                 pool.addProperty("queue", invokerPool.getQueue().size());
             }
+            // Audit H2-display: invocation counters in both modes for consistent dashboards.
+            pool.addProperty("inflight", Invoker.inflightInvocations.get());
+            pool.addProperty("total", Invoker.totalInvocations.get());
             status.add("pool", pool);
         }
 

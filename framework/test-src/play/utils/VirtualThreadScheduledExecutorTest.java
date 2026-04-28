@@ -208,6 +208,49 @@ public class VirtualThreadScheduledExecutorTest {
     }
 
     @Test
+    void scheduleWithFixedDelayShutdownBetweenRunsDrainsHandle() throws Exception {
+        // H1: STPE's default "execute existing delayed tasks after shutdown" policy
+        // means a fixed-delay dispatch can still fire after scheduler.shutdown(). The
+        // dispatch's early-return on isShutdown() must drive the handle to terminal
+        // state, not silently return — otherwise terminated never counts down and
+        // get() blocks forever.
+        //
+        // Reproduction: let the task self-reschedule (so the next dispatch is queued
+        // in the scheduler), then call shutdownScheduler(). The queued dispatch will
+        // fire per STPE's default executeExistingDelayedTasksAfterShutdownPolicy and
+        // hit the H1 early-return — pre-fix the handle is never terminal.
+        VirtualThreadScheduledExecutor local = new VirtualThreadScheduledExecutor("h1-test");
+        try {
+            CountDownLatch firstRun = new CountDownLatch(1);
+            ScheduledFuture<?> handle = local.scheduleWithFixedDelay(
+                firstRun::countDown,
+                0, 500, TimeUnit.MILLISECONDS);
+
+            // Wait for the first run to complete.
+            assertThat(firstRun.await(2, TimeUnit.SECONDS)).isTrue();
+            // Give the post-run code time to enqueue the next dispatch (setNext()).
+            // 500ms repeat delay leaves a wide window before the dispatch fires.
+            Thread.sleep(50);
+
+            // Orderly shutdown — the queued dispatch remains in the scheduler and will
+            // fire when its delay elapses. The dispatch's early-return on isShutdown()
+            // is what we're exercising.
+            local.shutdownScheduler();
+
+            // Within ~2 seconds the queued dispatch should fire, observe isShutdown(),
+            // and call handle.cancel(false). Pre-fix: handle.isDone() stays false.
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            while (!handle.isDone() && System.nanoTime() < deadline) {
+                Thread.sleep(20);
+            }
+            assertThat(handle.isDone()).isTrue();
+            assertThat(handle.isCancelled()).isTrue();
+        } finally {
+            local.shutdownNow();
+        }
+    }
+
+    @Test
     void scheduleWithFixedDelayIsNotDoneDuringActiveRun() throws Exception {
         // Periodic-future contract (mirrors ScheduledThreadPoolExecutor): isDone() must
         // remain false while the periodic body is executing. Previously this delegated

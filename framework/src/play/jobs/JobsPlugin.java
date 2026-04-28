@@ -61,6 +61,13 @@ public class JobsPlugin extends PlayPlugin {
         out.println("Jobs execution pool:");
         out.println("~~~~~~~~~~~~~~~~~~~");
         if (scheduler.isUsingVirtualThreads()) {
+            // Audit H2-display: VT mode reports a single line because per-job thread
+            // metrics aren't aggregated. Unlike Invoker (which exposes inflight/total
+            // invocation counters), JobsPlugin has no parallel set of counters; adding
+            // jobs-side observability would require tracking submissions and completions
+            // around scheduler.submit / scheduleWithFixedDelay / scheduleForCRON. Don't
+            // borrow Invoker.inflightInvocations here — those track invoker work, not
+            // jobs work, and conflating them would mislead operators.
             out.println("Mode: virtual threads");
         } else {
             ScheduledThreadPoolExecutor pool = scheduler.platformExecutor();
@@ -298,8 +305,18 @@ public class JobsPlugin extends PlayPlugin {
             }
         }
 
-        // Drain pending platform-mode work before shutting down so a hot-reload doesn't
-        // leave stale Runnables on the queue. Virtual-thread mode has no shared queue.
+        // Audit M5: asymmetric on purpose.
+        //
+        // Platform mode: the inner ScheduledThreadPoolExecutor's queue holds the actual
+        // user tasks (Job runs and after-request actions). Clearing it before shutdown
+        // ensures a hot-reload doesn't leave stale Runnables waiting to fire.
+        //
+        // Virtual-thread mode: the inner STPE inside VirtualThreadScheduledExecutor does
+        // NOT hold user tasks — it holds short-lived dispatch lambdas that hand work off
+        // to the per-task VT executor. Those dispatch lambdas check scheduler state on
+        // entry and no-op when the scheduler is shut down (see VirtualThreadScheduledExecutor
+        // line ~142), so deferred dispatches drop on the floor naturally. Orphan periodic
+        // handles are cancelled separately. Clearing here would be redundant.
         if (!scheduler.isUsingVirtualThreads() && scheduler.platformExecutor() != null) {
             scheduler.platformExecutor().getQueue().clear();
         }
@@ -318,7 +335,23 @@ public class JobsPlugin extends PlayPlugin {
         List<Callable<?>> currentActions = afterInvocationActions.get();
         afterInvocationActions.remove();
         for (Callable<?> callable : currentActions) {
-            scheduler.submit(callable);
+            // Audit C2: wrap so exceptions reach the log. ExecutorService.submit(Callable)
+            // captures throwables in the returned Future; the previous code discarded that
+            // Future, so a failing after-request action vanished silently. The default
+            // VirtualThreadFactory UEH does NOT cover this path (UEH only fires for tasks
+            // routed through Thread.run, not Future-bound submissions), so explicit logging
+            // here is required regardless of factory-level handlers. Pre-VT this also dropped
+            // exceptions, but VT amplifies the silent-failure blast radius (every job
+            // submission gets its own VT with no shared UEH).
+            final Callable<?> action = callable;
+            scheduler.submit(() -> {
+                try {
+                    return action.call();
+                } catch (Throwable t) {
+                    Logger.error(t, "After-request action threw: %s", action.getClass().getName());
+                    throw t;
+                }
+            });
         }
     }
 

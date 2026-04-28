@@ -50,9 +50,15 @@ public class VirtualThreadConfig {
     }
 
     private static boolean isSubsystemEnabled(String subsystem) {
+        // Treat blank/whitespace-only values as "not set" so they fall through to the
+        // global setting rather than being parsed as "false". A line like
+        // `play.threads.virtual.invoker=` in application.conf reads back as an empty
+        // string, not null; without isBlank() that empty value would silently override
+        // a `play.threads.virtual=true` global, surprising operators who expect blank
+        // to mean "inherit".
         String override = Play.configuration.getProperty("play.threads.virtual." + subsystem);
-        if (override != null) {
-            return Boolean.parseBoolean(override);
+        if (override != null && !override.isBlank()) {
+            return Boolean.parseBoolean(override.trim());
         }
         return isGlobalEnabled();
     }

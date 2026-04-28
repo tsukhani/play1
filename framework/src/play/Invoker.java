@@ -10,8 +10,10 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 import com.jamonapi.Monitor;
 import com.jamonapi.MonitorFactory;
@@ -63,6 +65,39 @@ public class Invoker {
     public static volatile boolean usingVirtualThreads = false;
 
     /**
+     * Audit H2-counter: number of invocations currently executing (queued or running).
+     * Incremented at submit time, decremented in the wrapper's finally block once
+     * {@link Invocation#run()} returns. Public for observability tooling
+     * (e.g. PlayStatusPlugin) — do not mutate externally.
+     */
+    public static final AtomicLong inflightInvocations = new AtomicLong();
+
+    /**
+     * Audit H2-counter: cumulative count of invocations submitted since process start.
+     * Incremented once at submit time. Public for observability tooling.
+     */
+    public static final AtomicLong totalInvocations = new AtomicLong();
+
+    /**
+     * Audit H2-counter: submit a Runnable through the scheduler and track it via
+     * {@link #inflightInvocations} / {@link #totalInvocations}. All public dispatch
+     * paths (the two {@code invoke} variants, the {@code WaitForTasksCompletion}
+     * resume submits) flow through this so the counters cover platform-thread mode,
+     * virtual-thread mode, immediate dispatch, delayed dispatch, and Promise-redeem
+     * resume paths uniformly.
+     *
+     * <p>The counters are published as {@code public static final} fields above so
+     * observability tooling (e.g. PlayStatusPlugin) can read them without reflection.</p>
+     */
+    private static Future<?> submitTracked(Runnable r) {
+        totalInvocations.incrementAndGet();
+        inflightInvocations.incrementAndGet();
+        return scheduler.submit(() -> {
+            try { r.run(); } finally { inflightInvocations.decrementAndGet(); }
+        });
+    }
+
+    /**
      * Run the code in a new thread took from a thread pool.
      *
      * @param invocation
@@ -70,13 +105,13 @@ public class Invoker {
      * @return The future object, to know when the task is completed
      */
     public static Future<?> invoke(Invocation invocation) {
+        ensureExecutor();
         if (!scheduler.isUsingVirtualThreads()) {
-            ensureExecutor();
             Monitor monitor = MonitorFactory.getMonitor("Invoker queue size", "elmts.");
             monitor.add(scheduler.platformExecutor().getQueue().size());
         }
         invocation.waitInQueue = MonitorFactory.start("Waiting for execution");
-        return scheduler.submit(invocation);
+        return submitTracked(invocation);
     }
 
     /**
@@ -89,12 +124,20 @@ public class Invoker {
      * @return The future object, to know when the task is completed
      */
     public static Future<?> invoke(Invocation invocation, long millis) {
+        ensureExecutor();
         if (!scheduler.isUsingVirtualThreads()) {
-            ensureExecutor();
             Monitor monitor = MonitorFactory.getMonitor("Invocation queue", "elmts.");
             monitor.add(scheduler.platformExecutor().getQueue().size());
         }
-        return scheduler.schedule(invocation, millis, TimeUnit.MILLISECONDS);
+        // Audit H2-counter: track delayed dispatches too. We wrap so the counter
+        // decrements on completion and totalInvocations bumps when the task fires.
+        // Pre-increment totalInvocations / inflightInvocations here so observability
+        // is consistent with the immediate path (i.e. counted at submission time).
+        totalInvocations.incrementAndGet();
+        inflightInvocations.incrementAndGet();
+        return scheduler.schedule(() -> {
+            try { invocation.run(); } finally { inflightInvocations.decrementAndGet(); }
+        }, millis, TimeUnit.MILLISECONDS);
     }
 
     /**
@@ -402,12 +445,29 @@ public class Invoker {
      * In DEV mode, the first request arrives before Play.start() has called init(),
      * so we create a minimal executor to handle that first invocation.
      * init() will replace it with the properly configured executor.
+     *
+     * <p>Audit C1: consult {@link VirtualThreadConfig#isInvokerEnabled()} so the bootstrap
+     * picks the same executor type init() will install. Without this, a request that
+     * arrives before init() runs would be pinned to a platform thread even though the
+     * app is configured for virtual threads.</p>
      */
     private static synchronized void ensureExecutor() {
-        if (scheduler.platformExecutor() == null && !scheduler.isUsingVirtualThreads()) {
+        // Early-return if the facade is already populated (either mode).
+        if (scheduler.platformExecutor() != null || scheduler.virtualExecutor() != null) {
+            return;
+        }
+        if (VirtualThreadConfig.isInvokerEnabled()) {
+            VirtualThreadScheduledExecutor v = new VirtualThreadScheduledExecutor("play");
+            scheduler.useVirtual(v);
+            virtualExecutor = v;
+            executor = null;
+            usingVirtualThreads = true;
+        } else {
             ScheduledThreadPoolExecutor p = new ScheduledThreadPoolExecutor(1, new PThreadFactory("play"), new ThreadPoolExecutor.AbortPolicy());
             scheduler.usePlatform(p);
             executor = p;
+            virtualExecutor = null;
+            usingVirtualThreads = false;
         }
     }
 
@@ -507,7 +567,7 @@ public class Invoker {
         public static <V> void waitFor(Future<V> task, final Invocation invocation) {
             if (task instanceof Promise) {
                 Promise<V> smartFuture = (Promise<V>) task;
-                smartFuture.onRedeem(result -> scheduler.submit(invocation));
+                smartFuture.onRedeem(result -> resumeQuietly(invocation));
             } else if (scheduler.isUsingVirtualThreads()) {
                 // Block a cheap virtual thread on the future instead of polling. Avoids the
                 // 50 ms scan loop and gives sub-millisecond resume latency. Virtual threads
@@ -520,7 +580,12 @@ public class Invoker {
                     } catch (Exception ignored) {
                         // The invocation will inspect task state itself; we just resume it.
                     }
-                    scheduler.submit(invocation);
+                    // Audit H3: the inner submit can throw RejectedExecutionException if the
+                    // scheduler shut down between task.get() returning and us trying to resume.
+                    // Without this guard the RTE kills the wrapper VT silently and the request
+                    // never resumes. Log at WARN with what context we can attach (the
+                    // wrapper VT is exiting anyway, so don't rethrow).
+                    resumeQuietly(invocation);
                 });
             } else {
                 synchronized (WaitForTasksCompletion.class) {
@@ -534,6 +599,28 @@ public class Invoker {
             }
         }
 
+        /**
+         * Audit H3: submit a suspended-then-ready invocation back through the scheduler,
+         * swallowing {@link RejectedExecutionException} (logged at WARN). Used by both the
+         * Promise.onRedeem callback and the VT-mode wrapper after task.get() returns.
+         * Routes through {@link #submitTracked(Runnable)} so suspended-resume invocations
+         * are counted by the H2-counter observability fields.
+         */
+        private static void resumeQuietly(Invocation invocation) {
+            try {
+                submitTracked(invocation);
+            } catch (RejectedExecutionException rex) {
+                String ctx;
+                try {
+                    InvocationContext ic = invocation.getInvocationContext();
+                    ctx = ic == null ? "unknown" : ic.toString();
+                } catch (Throwable t) {
+                    ctx = "unavailable";
+                }
+                Logger.warn("Cannot resume suspended invocation after scheduler shutdown (%s)", ctx);
+            }
+        }
+
         @Override
         public void run() {
             while (!Thread.currentThread().isInterrupted()) {
@@ -542,7 +629,7 @@ public class Invoker {
                         for (Future<?> task : new HashSet<>(queue.keySet())) {
                             if (task.isDone()) {
                                 Invocation invocation = queue.remove(task);
-                                scheduler.submit(invocation);
+                                resumeQuietly(invocation);
                             }
                         }
                     }

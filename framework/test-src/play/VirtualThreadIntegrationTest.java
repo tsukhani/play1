@@ -39,7 +39,7 @@ public class VirtualThreadIntegrationTest {
         Play.configuration.setProperty("play.threads.virtual", "true");
         Invoker.init();
 
-        assertThat(Invoker.usingVirtualThreads).isTrue();
+        assertThat(Invoker.scheduler.isUsingVirtualThreads()).isTrue();
 
         AtomicBoolean isVirtual = new AtomicBoolean(false);
         AtomicReference<String> threadName = new AtomicReference<>();
@@ -129,7 +129,7 @@ public class VirtualThreadIntegrationTest {
         Play.configuration.setProperty("play.threads.virtual", "false");
         Invoker.init();
 
-        assertThat(Invoker.usingVirtualThreads).isFalse();
+        assertThat(Invoker.scheduler.isUsingVirtualThreads()).isFalse();
 
         AtomicBoolean isVirtual = new AtomicBoolean(true);
         CountDownLatch latch = new CountDownLatch(1);

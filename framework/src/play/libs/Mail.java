@@ -25,6 +25,7 @@ import play.libs.mail.MailSystem;
 import play.libs.mail.test.LegacyMockMailSystem;
 import play.utils.Utils.Maps;
 import play.utils.VirtualThreadConfig;
+import play.utils.VirtualThreadFactory;
 
 /**
  * Mail utils
@@ -278,7 +279,22 @@ public class Mail {
             synchronized (Mail.class) {
                 g = mailGate;
                 if (g == null) {
-                    int max = Integer.parseInt(Play.configuration.getProperty("play.mail.maxConcurrent", "32"));
+                    // Audit H4: defensively handle null configuration (test path) and
+                    // malformed values (`play.mail.maxConcurrent=foo`). Either failure
+                    // mode previously bubbled up as NPE / NumberFormatException out of
+                    // a mail send, killing the request. Default to 32 in both cases.
+                    int max = 32;
+                    String raw = (Play.configuration == null)
+                            ? null
+                            : Play.configuration.getProperty("play.mail.maxConcurrent", "32");
+                    if (raw != null) {
+                        try {
+                            max = Integer.parseInt(raw.trim());
+                        } catch (NumberFormatException nfe) {
+                            Logger.warn("Invalid play.mail.maxConcurrent=%s; using default 32", raw);
+                            max = 32;
+                        }
+                    }
                     g = new Semaphore(max);
                     mailGate = g;
                 }
@@ -292,7 +308,11 @@ public class Mail {
             synchronized (Mail.class) {
                 if (executor == null) {
                     if (VirtualThreadConfig.isMailEnabled()) {
-                        executor = Executors.newVirtualThreadPerTaskExecutor();
+                        // Audit L3: name VTs as "mail-vthread-N" so they're distinguishable
+                        // from the JDK default "virtual-N" in thread dumps. Matches the
+                        // naming used by Invoker ("play-vthread-N") and JobsPlugin
+                        // ("jobs-vthread-N").
+                        executor = Executors.newThreadPerTaskExecutor(new VirtualThreadFactory("mail"));
                         Logger.info("Mail using virtual threads");
                     } else {
                         executor = Executors.newCachedThreadPool();

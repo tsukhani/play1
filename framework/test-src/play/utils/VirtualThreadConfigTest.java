@@ -80,4 +80,27 @@ public class VirtualThreadConfigTest {
         assertThat(VirtualThreadConfig.isJobsEnabled()).isFalse();
         assertThat(VirtualThreadConfig.isMailEnabled()).isFalse();
     }
+
+    @Test
+    void blankSubsystemOverrideInheritsFromGlobal() {
+        // M2: a configured-but-blank override (e.g. `play.threads.virtual.invoker=` in
+        // application.conf) used to read back as "false" via Boolean.parseBoolean, silently
+        // overriding the global setting. Operators expect blank to mean "inherit".
+        Play.configuration.setProperty("play.threads.virtual", "true");
+        Play.configuration.setProperty("play.threads.virtual.invoker", "");
+        Play.configuration.setProperty("play.threads.virtual.jobs", "   ");
+        Play.configuration.setProperty("play.threads.virtual.mail", "\t");
+
+        assertThat(VirtualThreadConfig.isInvokerEnabled()).isTrue();
+        assertThat(VirtualThreadConfig.isJobsEnabled()).isTrue();
+        assertThat(VirtualThreadConfig.isMailEnabled()).isTrue();
+    }
+
+    @Test
+    void whitespaceAroundOverrideIsTrimmed() {
+        Play.configuration.setProperty("play.threads.virtual", "false");
+        Play.configuration.setProperty("play.threads.virtual.invoker", "  true  ");
+
+        assertThat(VirtualThreadConfig.isInvokerEnabled()).isTrue();
+    }
 }

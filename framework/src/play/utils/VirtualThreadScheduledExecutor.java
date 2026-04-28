@@ -134,7 +134,16 @@ public class VirtualThreadScheduledExecutor {
         SelfReschedulingFuture handle = new SelfReschedulingFuture();
         AtomicReference<Runnable> taskRef = new AtomicReference<>();
         taskRef.set(() -> {
-            if (handle.isCancelled() || scheduler.isShutdown()) return;
+            // H1: split the early-return so a shutdown between runs still drives the
+            // handle to terminal state. STPE's default policy executes already-delayed
+            // tasks after shutdown(); without the explicit handle.cancel(false) call,
+            // the dispatch would observe isShutdown(), bail, and never count down the
+            // terminated latch — leaving callers blocked on handle.get() forever.
+            if (handle.isCancelled()) return;
+            if (scheduler.isShutdown()) {
+                handle.cancel(false);
+                return;
+            }
             Future<?> inner = virtualExecutor.submit(() -> {
                 try {
                     command.run();
@@ -179,6 +188,17 @@ public class VirtualThreadScheduledExecutor {
         List<Runnable> pending = scheduler.shutdownNow();
         virtualExecutor.shutdownNow();
         return pending;
+    }
+
+    /**
+     * Orderly shutdown of the scheduler. Already-queued dispatches are still allowed to
+     * fire (STPE's default {@code executeExistingDelayedTasksAfterShutdownPolicy}); each
+     * such firing observes {@link #scheduler}{@code .isShutdown()} and drives its
+     * fixed-delay handle to terminal state via {@code handle.cancel(false)} (see H1).
+     * The virtual executor is left untouched so in-flight runs can complete.
+     */
+    public void shutdownScheduler() {
+        scheduler.shutdown();
     }
 
     /**

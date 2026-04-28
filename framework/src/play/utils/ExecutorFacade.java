@@ -14,18 +14,21 @@ import java.util.concurrent.TimeUnit;
  * if (usingVirtualThreads) virtualExecutor.submit(...) else executor.submit(...)} branch
  * that previously appeared at every call site.
  *
- * <p>The (mode, platform-executor, virtual-executor) tuple is held as a single immutable
+ * <p>The (platform-executor, virtual-executor) pair is held as a single immutable
  * {@link State} read once per submit/schedule call. Without an atomic snapshot, a
  * concurrent {@link #shutdownNow} could clear the executor reference while a submitter
- * still observed {@code virtualMode=true}, dereferencing {@code null}; with the snapshot
- * the submit either sees a fully-populated state or the empty state and rejects cleanly.</p>
+ * still observed the previous mode, dereferencing {@code null}; with the snapshot the
+ * submit either sees a fully-populated state or the empty state and rejects cleanly.</p>
  */
 public final class ExecutorFacade {
 
-    private record State(boolean virtualMode,
-                         ScheduledThreadPoolExecutor platform,
+    // L1: the previous record carried a redundant boolean virtualMode that duplicated
+    // information already encoded in (virtual != null) vs (platform != null). The dispatch
+    // logic never read it — only isUsingVirtualThreads() did — so it was a state-coherency
+    // hazard for no benefit. The two reference fields are now the single source of truth.
+    private record State(ScheduledThreadPoolExecutor platform,
                          VirtualThreadScheduledExecutor virtual) {
-        static final State EMPTY = new State(false, null, null);
+        static final State EMPTY = new State(null, null);
     }
 
     private volatile State state = State.EMPTY;
@@ -36,18 +39,18 @@ public final class ExecutorFacade {
      * {@link #shutdownNow()} before this call).
      */
     public synchronized void useVirtual(VirtualThreadScheduledExecutor virtual) {
-        state = new State(true, null, virtual);
+        state = new State(null, virtual);
     }
 
     /**
      * Install a platform-thread-backed scheduler. Replaces any previous executor.
      */
     public synchronized void usePlatform(ScheduledThreadPoolExecutor platform) {
-        state = new State(false, platform, null);
+        state = new State(platform, null);
     }
 
     public boolean isUsingVirtualThreads() {
-        return state.virtualMode;
+        return state.virtual != null;
     }
 
     /** May be null if the facade is using virtual threads or has not been initialized. */
