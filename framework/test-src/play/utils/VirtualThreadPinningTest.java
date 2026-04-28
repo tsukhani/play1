@@ -47,7 +47,6 @@ public class VirtualThreadPinningTest {
 
     @Test
     void invocationDoesNotPinCarrier() throws Exception {
-        Play.configuration.setProperty("play.threads.virtual", "true");
         Invoker.init();
 
         AtomicInteger pinEvents = new AtomicInteger();

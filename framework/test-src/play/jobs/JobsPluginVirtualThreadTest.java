@@ -65,7 +65,6 @@ public class JobsPluginVirtualThreadTest {
      */
     @Test
     void scheduledFixedDelayJobRunsOnVirtualThread() throws Exception {
-        Play.configuration.setProperty("play.threads.virtual.jobs", "true");
         plugin.onApplicationStart();
 
         AtomicBoolean isVirtual = new AtomicBoolean(false);
@@ -102,7 +101,6 @@ public class JobsPluginVirtualThreadTest {
     @Test
     @SuppressWarnings({"unchecked", "rawtypes"})
     void afterInvocationActionLogsThrowingCallable() throws Exception {
-        Play.configuration.setProperty("play.threads.virtual.jobs", "true");
         plugin.onApplicationStart();
 
         AtomicReference<Throwable> thrownCaught = new AtomicReference<>();

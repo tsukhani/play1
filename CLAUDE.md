@@ -121,20 +121,9 @@ python3 play auto-test samples-and-tests/just-test-cases
 
 `Play.java` is the main entry point — initializes configuration, plugins, classloader, and routes. Two modes: `Play.Mode.DEV` (hot reload, error pages) and `Play.Mode.PROD`.
 
-### Virtual Threads (opt-in)
+### Virtual Threads
 
-Virtual-thread support is **opt-in and disabled by default**. Without explicit configuration, request invocation (`Invoker`), background jobs (`JobsPlugin`), and mail dispatch (`Mail`) run on the same platform-thread `ThreadPoolExecutor` upstream Play 1.x uses. The fork ships the machinery; it does not enable it for you. Do not describe this fork as delivering virtual-thread throughput by default — apps that want it must turn it on.
-
-Toggles are read via `play.utils.VirtualThreadConfig`:
-
-- `play.threads.virtual` — global on/off (default: `false`)
-- `play.threads.virtual.invoker` — per-subsystem override for request invocation (inherits from global when unset)
-- `play.threads.virtual.jobs` — per-subsystem override for background jobs (inherits from global when unset)
-- `play.threads.virtual.mail` — per-subsystem override for mail delivery (inherits from global when unset)
-
-Wire-up call sites: `Invoker.java` line ~410, `JobsPlugin.java` line ~199, `Mail.java` line ~253. Each branches on `VirtualThreadConfig.is*Enabled()` at startup; when off, the platform-thread path runs unchanged.
-
-Note: the property prefix was renamed from `play.virtualThreads.*` (introduced in commit `62d0d83`, Feb 2026) to the current `play.threads.virtual.*`. The old prefix is silently ignored; check your `application.conf` against the property names above if VT appears not to engage despite being enabled.
+This fork runs on virtual threads exclusively. Request invocation (`Invoker`), background jobs (`JobsPlugin`), and mail dispatch (`Mail`) all dispatch through `play.utils.VirtualThreadScheduledExecutor`, which uses two platform threads only for timer dispatch and unbounded VTs for actual work. Java 25's elimination of `synchronized`-pinning (JEP 491) makes the VT path strictly cheaper than platform threads under blocking I/O; the legacy `play.threads.virtual*` toggles are gone. `Play.java` emits a WARN at boot if any of those keys are still in `application.conf` so operators notice.
 
 ### Module System
 

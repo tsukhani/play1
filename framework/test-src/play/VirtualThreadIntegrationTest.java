@@ -15,8 +15,9 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Integration test that verifies virtual thread support works end-to-end
- * when {@code play.threads.virtual = true} is set.
+ * Integration test that verifies the request invoker dispatches onto a virtual
+ * thread end-to-end. VT execution is now unconditional; the legacy
+ * {@code play.threads.virtual} toggle is a no-op.
  */
 public class VirtualThreadIntegrationTest {
 
@@ -36,7 +37,6 @@ public class VirtualThreadIntegrationTest {
 
     @Test
     void requestInvocationExecutesOnVirtualThread() throws Exception {
-        Play.configuration.setProperty("play.threads.virtual", "true");
         Invoker.init();
 
         assertThat(Invoker.scheduler).isNotNull();
@@ -82,7 +82,6 @@ public class VirtualThreadIntegrationTest {
 
     @Test
     void delayedInvocationExecutesOnVirtualThread() throws Exception {
-        Play.configuration.setProperty("play.threads.virtual", "true");
         Invoker.init();
 
         AtomicBoolean isVirtual = new AtomicBoolean(false);

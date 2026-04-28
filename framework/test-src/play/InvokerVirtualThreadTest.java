@@ -46,7 +46,6 @@ public class InvokerVirtualThreadTest {
 
     @Test
     void invocationRunsOnVirtualThread() throws Exception {
-        Play.configuration.setProperty("play.threads.virtual", "true");
         Invoker.init();
 
         AtomicBoolean isVirtual = new AtomicBoolean(false);
@@ -104,7 +103,6 @@ public class InvokerVirtualThreadTest {
      */
     @Test
     void finallyClearsInvocationContextOnVirtualThread() throws Exception {
-        Play.configuration.setProperty("play.threads.virtual", "true");
         Invoker.init();
 
         AtomicBoolean isVirtual = new AtomicBoolean(false);
@@ -171,7 +169,6 @@ public class InvokerVirtualThreadTest {
      */
     @Test
     void inflightCounterIsDecrementedAfterInvocation() throws Exception {
-        Play.configuration.setProperty("play.threads.virtual", "true");
         Invoker.init();
 
         long initialInflight = Invoker.inflightInvocations.get();

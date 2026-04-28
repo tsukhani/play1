@@ -60,7 +60,6 @@ public class MailVirtualThreadTest {
      */
     @Test
     void mailExecutorUsesVirtualThreadsWhenEnabled() throws Exception {
-        Play.configuration.setProperty("play.threads.virtual.mail", "true");
 
         AtomicBoolean isVirtual = new AtomicBoolean(false);
         AtomicReference<String> threadName = new AtomicReference<>();
@@ -89,7 +88,6 @@ public class MailVirtualThreadTest {
      */
     @Test
     void mailGateLimitsConcurrency() throws Exception {
-        Play.configuration.setProperty("play.threads.virtual.mail", "true");
         Play.configuration.setProperty("play.mail.maxConcurrent", "1");
 
         CountDownLatch firstEnteredSend = new CountDownLatch(1);
