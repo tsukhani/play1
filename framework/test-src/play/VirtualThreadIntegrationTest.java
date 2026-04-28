@@ -124,46 +124,4 @@ public class VirtualThreadIntegrationTest {
         assertThat(isVirtual.get()).isTrue();
     }
 
-    @Test
-    void platformThreadModeStillWorks() throws Exception {
-        Play.configuration.setProperty("play.threads.virtual", "false");
-        Invoker.init();
-
-        assertThat(Invoker.scheduler.isUsingVirtualThreads()).isFalse();
-
-        AtomicBoolean isVirtual = new AtomicBoolean(true);
-        CountDownLatch latch = new CountDownLatch(1);
-
-        Invoker.Invocation invocation = new Invoker.Invocation() {
-            @Override
-            public void execute() {
-                isVirtual.set(Thread.currentThread().isVirtual());
-                latch.countDown();
-            }
-
-            @Override
-            public boolean init() {
-                InvocationContext.current.set(getInvocationContext());
-                return true;
-            }
-
-            @Override
-            public InvocationContext getInvocationContext() {
-                return new InvocationContext("IntegrationTest");
-            }
-
-            @Override
-            public void before() {}
-            @Override
-            public void after() {}
-            @Override
-            public void onSuccess() {}
-            @Override
-            public void _finally() {}
-        };
-
-        Invoker.invoke(invocation);
-        assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
-        assertThat(isVirtual.get()).isFalse();
-    }
 }

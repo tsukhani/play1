@@ -217,21 +217,12 @@ public class JobsPlugin extends PlayPlugin {
 
     @Override
     public void onApplicationStart() {
-        if (VirtualThreadConfig.isJobsEnabled()) {
-            VirtualThreadScheduledExecutor v = new VirtualThreadScheduledExecutor("jobs");
-            scheduler.useVirtual(v);
-            virtualExecutor = v;
-            executor = null;
-            usingVirtualThreads = true;
-            Logger.info("Jobs using virtual threads");
-        } else {
-            int core = Integer.parseInt(Play.configuration.getProperty("play.jobs.pool", "10"));
-            ScheduledThreadPoolExecutor p = new ScheduledThreadPoolExecutor(core, new PThreadFactory("jobs"), new ThreadPoolExecutor.AbortPolicy());
-            scheduler.usePlatform(p);
-            executor = p;
-            virtualExecutor = null;
-            usingVirtualThreads = false;
-        }
+        VirtualThreadScheduledExecutor v = new VirtualThreadScheduledExecutor("jobs");
+        scheduler.useVirtual(v);
+        virtualExecutor = v;
+        executor = null;
+        usingVirtualThreads = true;
+        Logger.info("Jobs using virtual threads");
         scheduledJobs.clear();
     }
 

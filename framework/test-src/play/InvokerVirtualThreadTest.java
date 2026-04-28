@@ -32,48 +32,18 @@ public class InvokerVirtualThreadTest {
     }
 
     @Test
-    void initCreatesPlatformExecutorByDefault() {
-        Play.configuration.remove("play.threads.virtual");
-        Play.configuration.remove("play.threads.virtual.invoker");
-
-        Invoker.init();
-
-        assertThat(Invoker.scheduler.isUsingVirtualThreads()).isFalse();
-        assertThat(Invoker.scheduler.platformExecutor()).isNotNull();
-        assertThat(Invoker.scheduler.virtualExecutor()).isNull();
-    }
-
-    @Test
-    void initCreatesVirtualExecutorWhenGlobalEnabled() {
-        Play.configuration.setProperty("play.threads.virtual", "true");
+    void initCreatesVirtualExecutorUnconditionally() {
+        // Platform-thread invoker mode no longer exists; configuration toggles
+        // are no-ops. Verifies the unconditional VT path lands the executor in
+        // the facade regardless of any legacy property the operator may have set.
+        Play.configuration.setProperty("play.threads.virtual", "false");
+        Play.configuration.setProperty("play.threads.virtual.invoker", "false");
 
         Invoker.init();
 
         assertThat(Invoker.scheduler.isUsingVirtualThreads()).isTrue();
         assertThat(Invoker.scheduler.virtualExecutor()).isNotNull();
         assertThat(Invoker.scheduler.platformExecutor()).isNull();
-    }
-
-    @Test
-    void initCreatesVirtualExecutorWhenInvokerEnabled() {
-        Play.configuration.setProperty("play.threads.virtual", "false");
-        Play.configuration.setProperty("play.threads.virtual.invoker", "true");
-
-        Invoker.init();
-
-        assertThat(Invoker.scheduler.isUsingVirtualThreads()).isTrue();
-        assertThat(Invoker.scheduler.virtualExecutor()).isNotNull();
-    }
-
-    @Test
-    void initCreatesPlatformExecutorWhenInvokerDisabledOverridesGlobal() {
-        Play.configuration.setProperty("play.threads.virtual", "true");
-        Play.configuration.setProperty("play.threads.virtual.invoker", "false");
-
-        Invoker.init();
-
-        assertThat(Invoker.scheduler.isUsingVirtualThreads()).isFalse();
-        assertThat(Invoker.scheduler.platformExecutor()).isNotNull();
     }
 
     @Test

@@ -307,16 +307,11 @@ public class Mail {
         if (executor == null) {
             synchronized (Mail.class) {
                 if (executor == null) {
-                    if (VirtualThreadConfig.isMailEnabled()) {
-                        // Audit L3: name VTs as "mail-vthread-N" so they're distinguishable
-                        // from the JDK default "virtual-N" in thread dumps. Matches the
-                        // naming used by Invoker ("play-vthread-N") and JobsPlugin
-                        // ("jobs-vthread-N").
-                        executor = Executors.newThreadPerTaskExecutor(new VirtualThreadFactory("mail"));
-                        Logger.info("Mail using virtual threads");
-                    } else {
-                        executor = Executors.newCachedThreadPool();
-                    }
+                    // VTs named "mail-vthread-N" so they're distinguishable from the JDK
+                    // default "virtual-N" in thread dumps. Matches Invoker ("play-vthread-N")
+                    // and JobsPlugin ("jobs-vthread-N").
+                    executor = Executors.newThreadPerTaskExecutor(new VirtualThreadFactory("mail"));
+                    Logger.info("Mail using virtual threads");
                 }
             }
         }

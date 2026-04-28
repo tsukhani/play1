@@ -452,30 +452,16 @@ public class Invoker {
      * In DEV mode, the first request arrives before Play.start() has called init(),
      * so we create a minimal executor to handle that first invocation.
      * init() will replace it with the properly configured executor.
-     *
-     * <p>Audit C1: consult {@link VirtualThreadConfig#isInvokerEnabled()} so the bootstrap
-     * picks the same executor type init() will install. Without this, a request that
-     * arrives before init() runs would be pinned to a platform thread even though the
-     * app is configured for virtual threads.</p>
      */
     private static synchronized void ensureExecutor() {
-        // Early-return if the facade is already populated (either mode).
-        if (scheduler.platformExecutor() != null || scheduler.virtualExecutor() != null) {
+        if (scheduler.virtualExecutor() != null) {
             return;
         }
-        if (VirtualThreadConfig.isInvokerEnabled()) {
-            VirtualThreadScheduledExecutor v = new VirtualThreadScheduledExecutor("play");
-            scheduler.useVirtual(v);
-            virtualExecutor = v;
-            executor = null;
-            usingVirtualThreads = true;
-        } else {
-            ScheduledThreadPoolExecutor p = new ScheduledThreadPoolExecutor(1, new PThreadFactory("play"), new ThreadPoolExecutor.AbortPolicy());
-            scheduler.usePlatform(p);
-            executor = p;
-            virtualExecutor = null;
-            usingVirtualThreads = false;
-        }
+        VirtualThreadScheduledExecutor v = new VirtualThreadScheduledExecutor("play");
+        scheduler.useVirtual(v);
+        virtualExecutor = v;
+        executor = null;
+        usingVirtualThreads = true;
     }
 
     /**
@@ -488,22 +474,12 @@ public class Invoker {
      */
     public static synchronized void init() {
         stop();
-        if (VirtualThreadConfig.isInvokerEnabled()) {
-            VirtualThreadScheduledExecutor v = new VirtualThreadScheduledExecutor("play");
-            scheduler.useVirtual(v);
-            virtualExecutor = v;
-            executor = null;
-            usingVirtualThreads = true;
-            Logger.info("Invoker using virtual threads");
-        } else {
-            int core = Integer.parseInt(Play.configuration.getProperty("play.pool",
-                    Play.mode == Mode.DEV ? "1" : String.valueOf(Runtime.getRuntime().availableProcessors() + 1)));
-            ScheduledThreadPoolExecutor p = new ScheduledThreadPoolExecutor(core, new PThreadFactory("play"), new ThreadPoolExecutor.AbortPolicy());
-            scheduler.usePlatform(p);
-            executor = p;
-            virtualExecutor = null;
-            usingVirtualThreads = false;
-        }
+        VirtualThreadScheduledExecutor v = new VirtualThreadScheduledExecutor("play");
+        scheduler.useVirtual(v);
+        virtualExecutor = v;
+        executor = null;
+        usingVirtualThreads = true;
+        Logger.info("Invoker using virtual threads");
     }
 
     /**

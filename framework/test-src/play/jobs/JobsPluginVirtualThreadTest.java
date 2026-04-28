@@ -47,26 +47,16 @@ public class JobsPluginVirtualThreadTest {
     }
 
     @Test
-    void onApplicationStartCreatesVirtualSchedulerWhenJobsEnabled() {
-        Play.configuration.setProperty("play.threads.virtual", "true");
+    void onApplicationStartCreatesVirtualSchedulerUnconditionally() {
+        // Platform-thread jobs mode no longer exists; configuration toggles are no-ops.
+        Play.configuration.setProperty("play.threads.virtual", "false");
+        Play.configuration.setProperty("play.threads.virtual.jobs", "false");
 
         plugin.onApplicationStart();
 
         assertThat(JobsPlugin.scheduler.isUsingVirtualThreads()).isTrue();
         assertThat(JobsPlugin.scheduler.virtualExecutor()).isNotNull();
         assertThat(JobsPlugin.scheduler.platformExecutor()).isNull();
-    }
-
-    @Test
-    void onApplicationStartCreatesPlatformSchedulerByDefault() {
-        Play.configuration.remove("play.threads.virtual");
-        Play.configuration.remove("play.threads.virtual.jobs");
-
-        plugin.onApplicationStart();
-
-        assertThat(JobsPlugin.scheduler.isUsingVirtualThreads()).isFalse();
-        assertThat(JobsPlugin.scheduler.platformExecutor()).isNotNull();
-        assertThat(JobsPlugin.scheduler.virtualExecutor()).isNull();
     }
 
     /**
