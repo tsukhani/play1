@@ -91,7 +91,8 @@
             <group title="Libs" packages="play.libs.*"/>
             <arg value="-Xdoclint:all,-missing"/>
             <link offline="false" href="https://docs.oracle.com/en/java/javase/21/docs/api/" />
-            <link offline="false" href="https://javadoc.io/doc/commons-fileupload/commons-fileupload/1.6.0" />
+            <!-- offline=true: javadoc.io is unreliable (intermittent Cloudflare 521); use local package-list, keep href live for reader clicks. -->
+            <link offline="true" href="https://javadoc.io/doc/commons-fileupload/commons-fileupload/1.6.0/" packagelistLoc="javadoc-package-lists/commons-fileupload-1.6.0" />
 <link offline="false" href="https://docs.hibernate.org/orm/4.2/javadocs/" />
             <link offline="false" href="https://www.mchange.com/projects/c3p0/apidocs/" />
         </javadoc>
