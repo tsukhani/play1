@@ -24,9 +24,9 @@ class PlayApplication(object):
 
     def __init__(self, application_path, env, ignoreMissingModules = False):
         self.path = application_path
-        # Load <app>/.env so APP_SECRET (and any other declared variables) are
+        # Load <app>/.env so PLAY_SECRET (and any other declared variables) are
         # visible to the Java subprocess via inherited os.environ. Existing
-        # environment values win, so a host env var or `-DAPP_SECRET=...` flag
+        # environment values win, so a host env var or `-DPLAY_SECRET=...` flag
         # still overrides a value in the file.
         if application_path is not None:
             loadDotEnv(application_path)

@@ -644,8 +644,8 @@ public class Play {
             if (secretKey.isEmpty() || secretKey.contains("${")) {
                 throw new UnexpectedException(
                     "application.secret is not set. Run `play secret` to generate one " +
-                    "(writes APP_SECRET to your application's .env file), or supply it " +
-                    "directly via the APP_SECRET environment variable or a `-DAPP_SECRET=...` " +
+                    "(writes PLAY_SECRET to your application's .env file), or supply it " +
+                    "directly via the PLAY_SECRET environment variable or a `-DPLAY_SECRET=...` " +
                     "JVM flag. Refusing to start without a secret because session and HMAC " +
                     "signing would otherwise be insecure.");
             }

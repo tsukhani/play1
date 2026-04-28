@@ -18,6 +18,8 @@ public class EnvVarConfigTest {
 
     private Path tempDir;
     private File originalAppPath;
+    private static final String PLAY_SECRET_KEY = "PLAY_SECRET";
+    private String savedPlaySecret;
 
     @BeforeEach
     public void setUp() throws IOException {
@@ -27,11 +29,23 @@ public class EnvVarConfigTest {
         Play.applicationPath = tempDir.toFile();
         // Create conf directory
         Files.createDirectories(tempDir.resolve("conf"));
+        // Provide ${PLAY_SECRET} so writeConfig's required-by-validator placeholder resolves
+        // cleanly. Without this, every test in the class logs an "unresolved placeholder" WARN
+        // — which is just noise; this class exercises placeholder substitution on test.key,
+        // not on application.secret. Saving + restoring the prior system property keeps tests
+        // isolated when run alongside others that may set PLAY_SECRET themselves.
+        savedPlaySecret = System.getProperty(PLAY_SECRET_KEY);
+        System.setProperty(PLAY_SECRET_KEY, "envvarconfigtest_secret_placeholder_xyz");
     }
 
     @AfterEach
     public void tearDown() throws IOException {
         Play.applicationPath = originalAppPath;
+        if (savedPlaySecret == null) {
+            System.clearProperty(PLAY_SECRET_KEY);
+        } else {
+            System.setProperty(PLAY_SECRET_KEY, savedPlaySecret);
+        }
         // Clean up temp files
         Files.walk(tempDir)
              .sorted(java.util.Comparator.reverseOrder())
@@ -118,7 +132,11 @@ public class EnvVarConfigTest {
     }
 
     private void writeConfig(String content) throws IOException {
+        // ${PLAY_SECRET} is the only form Play.validateApplicationSecretDeclaration accepts
+        // (literals and ${VAR:default} are both rejected). The system property is set in
+        // setUp so this resolves cleanly without the unresolved-placeholder WARN. Tests
+        // exercising placeholder substitution use the test.key line in `content`.
         Files.writeString(tempDir.resolve("conf/application.conf"),
-                "application.name=test\napplication.secret=${APP_SECRET}\n" + content + "\n");
+                "application.name=test\napplication.secret=${PLAY_SECRET}\n" + content + "\n");
     }
 }
