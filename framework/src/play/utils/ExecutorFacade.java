@@ -2,6 +2,7 @@ package play.utils;
 
 import java.util.concurrent.Callable;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -13,16 +14,21 @@ import java.util.concurrent.TimeUnit;
  * if (usingVirtualThreads) virtualExecutor.submit(...) else executor.submit(...)} branch
  * that previously appeared at every call site.
  *
- * <p>Exactly one of {@link #platformExecutor()} / {@link #virtualExecutor()} is
- * non-null at any moment, mirroring the previous {@code executor} / {@code virtualExecutor}
- * field pair on Invoker and JobsPlugin. Accessors are exposed for status reporting; the
- * normal task path uses {@link #submit}, {@link #schedule}, {@link #scheduleWithFixedDelay}.</p>
+ * <p>The (mode, platform-executor, virtual-executor) tuple is held as a single immutable
+ * {@link State} read once per submit/schedule call. Without an atomic snapshot, a
+ * concurrent {@link #shutdownNow} could clear the executor reference while a submitter
+ * still observed {@code virtualMode=true}, dereferencing {@code null}; with the snapshot
+ * the submit either sees a fully-populated state or the empty state and rejects cleanly.</p>
  */
 public final class ExecutorFacade {
 
-    private volatile ScheduledThreadPoolExecutor platform;
-    private volatile VirtualThreadScheduledExecutor virtual;
-    private volatile boolean usingVirtualThreads;
+    private record State(boolean virtualMode,
+                         ScheduledThreadPoolExecutor platform,
+                         VirtualThreadScheduledExecutor virtual) {
+        static final State EMPTY = new State(false, null, null);
+    }
+
+    private volatile State state = State.EMPTY;
 
     /**
      * Install a virtual-thread-backed scheduler. Replaces any previous executor.
@@ -30,67 +36,74 @@ public final class ExecutorFacade {
      * {@link #shutdownNow()} before this call).
      */
     public synchronized void useVirtual(VirtualThreadScheduledExecutor virtual) {
-        this.virtual = virtual;
-        this.platform = null;
-        this.usingVirtualThreads = true;
+        state = new State(true, null, virtual);
     }
 
     /**
      * Install a platform-thread-backed scheduler. Replaces any previous executor.
      */
     public synchronized void usePlatform(ScheduledThreadPoolExecutor platform) {
-        this.platform = platform;
-        this.virtual = null;
-        this.usingVirtualThreads = false;
+        state = new State(false, platform, null);
     }
 
     public boolean isUsingVirtualThreads() {
-        return usingVirtualThreads;
+        return state.virtualMode;
     }
 
     /** May be null if the facade is using virtual threads or has not been initialized. */
     public ScheduledThreadPoolExecutor platformExecutor() {
-        return platform;
+        return state.platform;
     }
 
     /** May be null if the facade is using platform threads or has not been initialized. */
     public VirtualThreadScheduledExecutor virtualExecutor() {
-        return virtual;
+        return state.virtual;
     }
 
     public Future<?> submit(Runnable task) {
-        return usingVirtualThreads ? virtual.submit(task) : platform.submit(task);
+        State s = state;
+        if (s.virtual != null) return s.virtual.submit(task);
+        if (s.platform != null) return s.platform.submit(task);
+        throw new RejectedExecutionException("ExecutorFacade has been shut down");
     }
 
     public <V> Future<V> submit(Callable<V> task) {
-        return usingVirtualThreads ? virtual.submit(task) : platform.submit(task);
+        State s = state;
+        if (s.virtual != null) return s.virtual.submit(task);
+        if (s.platform != null) return s.platform.submit(task);
+        throw new RejectedExecutionException("ExecutorFacade has been shut down");
     }
 
     public ScheduledFuture<?> schedule(Runnable command, long delay, TimeUnit unit) {
-        return usingVirtualThreads ? virtual.schedule(command, delay, unit) : platform.schedule(command, delay, unit);
+        State s = state;
+        if (s.virtual != null) return s.virtual.schedule(command, delay, unit);
+        if (s.platform != null) return s.platform.schedule(command, delay, unit);
+        throw new RejectedExecutionException("ExecutorFacade has been shut down");
     }
 
     public <V> ScheduledFuture<V> schedule(Callable<V> callable, long delay, TimeUnit unit) {
-        return usingVirtualThreads ? virtual.schedule(callable, delay, unit) : platform.schedule(callable, delay, unit);
+        State s = state;
+        if (s.virtual != null) return s.virtual.schedule(callable, delay, unit);
+        if (s.platform != null) return s.platform.schedule(callable, delay, unit);
+        throw new RejectedExecutionException("ExecutorFacade has been shut down");
     }
 
     public ScheduledFuture<?> scheduleWithFixedDelay(Runnable command, long initialDelay, long delay, TimeUnit unit) {
-        return usingVirtualThreads
-                ? virtual.scheduleWithFixedDelay(command, initialDelay, delay, unit)
-                : platform.scheduleWithFixedDelay(command, initialDelay, delay, unit);
+        State s = state;
+        if (s.virtual != null) return s.virtual.scheduleWithFixedDelay(command, initialDelay, delay, unit);
+        if (s.platform != null) return s.platform.scheduleWithFixedDelay(command, initialDelay, delay, unit);
+        throw new RejectedExecutionException("ExecutorFacade has been shut down");
     }
 
     /**
-     * Shut down whichever executor is currently active and clear the reference.
+     * Shut down whichever executor is currently active and clear the state atomically.
+     * After this returns, every submit/schedule throws {@link RejectedExecutionException}
+     * until {@link #useVirtual} or {@link #usePlatform} installs a new executor.
      */
     public synchronized void shutdownNow() {
-        if (platform != null) {
-            platform.shutdownNow();
-            platform = null;
-        }
-        if (virtual != null) {
-            virtual.shutdownNow();
-            virtual = null;
-        }
+        State s = state;
+        state = State.EMPTY;
+        if (s.platform != null) s.platform.shutdownNow();
+        if (s.virtual != null) s.virtual.shutdownNow();
     }
 }

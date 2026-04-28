@@ -1296,10 +1296,12 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
         ctx.channel().attr(WS_INBOUND).set(inbound);
 
         final Http.Outbound outbound = new Http.Outbound() {
-            // CopyOnWriteArrayList: writes happen at every send(); the EventLoop listener
-            // removes from the list on completion. Lock-free reads/iteration mean the I/O
-            // thread never contends with virtual-thread controllers calling send().
-            final List<ChannelFuture> writeFutures = new java.util.concurrent.CopyOnWriteArrayList<>();
+            // ConcurrentHashMap-backed set: O(1) add/remove without the per-mutation array
+            // copy CopyOnWriteArrayList performs. Each WS frame add()s and the completion
+            // listener remove()s, so under a virtual-thread sender storm we'd otherwise pay
+            // O(n) allocations per frame. Lock-free reads/iteration are preserved, so the
+            // I/O thread still never contends with VT controllers calling send().
+            final java.util.Set<ChannelFuture> writeFutures = java.util.concurrent.ConcurrentHashMap.newKeySet();
             // ReentrantLock instead of `synchronized this`: under virtual threads, a
             // synchronized block bracketing Netty channel operations historically pinned
             // the carrier and serialized the EventLoop listener against VT controllers.

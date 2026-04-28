@@ -206,4 +206,38 @@ public class VirtualThreadScheduledExecutorTest {
         executor.shutdownNow();
         // Just verify shutdownNow returns without hanging
     }
+
+    @Test
+    void scheduleWithFixedDelayIsNotDoneDuringActiveRun() throws Exception {
+        // Periodic-future contract (mirrors ScheduledThreadPoolExecutor): isDone() must
+        // remain false while the periodic body is executing. Previously this delegated
+        // to the scheduler dispatch future, which completes the moment it hands off to
+        // the virtual executor — making isDone() falsely report true mid-run.
+        CountDownLatch running = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+
+        ScheduledFuture<?> future = executor.scheduleWithFixedDelay(() -> {
+            running.countDown();
+            try {
+                release.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            }
+        }, 0, 1, TimeUnit.SECONDS);
+
+        try {
+            assertThat(running.await(2, TimeUnit.SECONDS)).isTrue();
+            assertThat(future.isDone()).isFalse();
+        } finally {
+            release.countDown();
+            future.cancel(true);
+        }
+
+        // After cancellation, isDone must eventually become true.
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (!future.isDone() && System.nanoTime() < deadline) {
+            Thread.sleep(10);
+        }
+        assertThat(future.isDone()).isTrue();
+    }
 }

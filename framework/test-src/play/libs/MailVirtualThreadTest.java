@@ -8,6 +8,7 @@ import play.Play;
 
 import java.util.Properties;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -93,5 +94,40 @@ public class MailVirtualThreadTest {
             Thread.currentThread().interrupt();
         }
         assertThat(isVirtual.get()).isTrue();
+    }
+
+    @Test
+    void mailGateDefaultsTo32Permits() {
+        Play.configuration.remove("play.mail.maxConcurrent");
+
+        Semaphore gate = Mail.getMailGate();
+        assertThat(gate).isNotNull();
+        assertThat(gate.availablePermits()).isEqualTo(32);
+    }
+
+    @Test
+    void mailGateRespectsConfiguredCap() {
+        Play.configuration.setProperty("play.mail.maxConcurrent", "8");
+
+        Semaphore gate = Mail.getMailGate();
+        assertThat(gate.availablePermits()).isEqualTo(8);
+    }
+
+    @Test
+    void mailGateBlocksWhenAllPermitsHeld() throws Exception {
+        // Verify the gate actually blocks: hold all permits, then a fresh acquire must wait.
+        Play.configuration.setProperty("play.mail.maxConcurrent", "2");
+        Semaphore gate = Mail.getMailGate();
+
+        gate.acquire();
+        gate.acquire();
+        assertThat(gate.availablePermits()).isZero();
+
+        // tryAcquire with a tight timeout must time out — proving back-pressure is real.
+        boolean acquired = gate.tryAcquire(50, TimeUnit.MILLISECONDS);
+        assertThat(acquired).isFalse();
+
+        gate.release();
+        gate.release();
     }
 }

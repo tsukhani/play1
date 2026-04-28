@@ -6,6 +6,7 @@ import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 
 import jakarta.mail.Authenticator;
@@ -195,6 +196,13 @@ public class Mail {
     public static Future<Boolean> sendMessage(final Email msg) {
         if (asynchronousSend) {
             return getExecutor().submit(() -> {
+                // Gate the actual SMTP send through a global semaphore. Without this,
+                // virtual-thread mode (newVirtualThreadPerTaskExecutor) lets callers
+                // create unbounded concurrent sends — overwhelming the SMTP server,
+                // tripping rate limits, and amplifying connection storms. The cap
+                // applies regardless of executor type for consistent semantics.
+                Semaphore gate = getMailGate();
+                gate.acquireUninterruptibly();
                 try {
                     msg.setSentDate(new Date());
                     msg.send();
@@ -203,6 +211,8 @@ public class Mail {
                     MailException me = new MailException("Error while sending email", e);
                     Logger.error(me, "The email has not been sent");
                     return false;
+                } finally {
+                    gate.release();
                 }
             });
         } else {
@@ -245,6 +255,28 @@ public class Mail {
     }
 
     static volatile ExecutorService executor;
+    static volatile Semaphore mailGate;
+
+    /**
+     * Returns the back-pressure semaphore that gates concurrent SMTP sends. Capacity
+     * is read once from {@code play.mail.maxConcurrent} (default 32) and cached; call
+     * {@link #resetExecutor()} to pick up a config change. The cap applies in both
+     * platform-thread and virtual-thread executor modes.
+     */
+    static Semaphore getMailGate() {
+        Semaphore g = mailGate;
+        if (g == null) {
+            synchronized (Mail.class) {
+                g = mailGate;
+                if (g == null) {
+                    int max = Integer.parseInt(Play.configuration.getProperty("play.mail.maxConcurrent", "32"));
+                    g = new Semaphore(max);
+                    mailGate = g;
+                }
+            }
+        }
+        return g;
+    }
 
     static ExecutorService getExecutor() {
         if (executor == null) {
@@ -263,7 +295,8 @@ public class Mail {
     }
 
     /**
-     * Reset the executor. Called during application restart to pick up configuration changes.
+     * Reset the executor and the back-pressure semaphore. Called during application
+     * restart so configuration changes (mode, concurrency cap) are picked up.
      */
     public static void resetExecutor() {
         synchronized (Mail.class) {
@@ -271,6 +304,7 @@ public class Mail {
                 executor.shutdownNow();
                 executor = null;
             }
+            mailGate = null;
         }
     }
 

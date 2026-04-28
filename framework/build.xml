@@ -348,24 +348,33 @@
     <target name="test-single" depends="compile-tests" description="run a single test">
         <mkdir dir="tests-results" />
         <mkdir dir="${basedir}/tests-tmp" />
-        <junitlauncher failureproperty="tests.failed" printSummary="true" >
+        <!-- Translate dotted FQN (e.g. play.mvc.RouterTest) to a slash path so the
+             fileset 'includes' actually resolves to the .class file on disk. Without
+             this, dots are treated as literal characters and the include matches no
+             files, producing a 0-test run. -->
+        <loadresource property="testclass.path">
+            <propertyresource name="testclass"/>
+            <filterchain>
+                <tokenfilter>
+                    <replacestring from="." to="/"/>
+                </tokenfilter>
+            </filterchain>
+        </loadresource>
+        <junitlauncher haltonfailure="false" failureproperty="junit.failure" printSummary="true">
+            <classpath refid="classpath.test" />
             <testclasses>
-                <fileset dir="test-classes" includes="${testclass}.class" />
+                <fileset dir="test-classes" includes="${testclass.path}.class" />
                 <fork>
                     <jvmarg value="-javaagent:${basedir}/play-${version}.jar" />
                     <sysproperty key="tests-tmp" value="${basedir}/tests-tmp" />
                 </fork>
             </testclasses>
-            <classpath>
-                <pathelement path="classes"/>
-                <path refid="project.classpath"/>
-            </classpath>
             <listener type="legacy-xml" sendSysOut="true" sendSysErr="true" outputdir="tests-results" />
             <listener type="legacy-plain" sendSysOut="true" sendSysErr="true" outputdir="tests-results"/>
             <listener type="legacy-brief" sendSysOut="true" sendSysErr="true" outputdir="tests-results"  />
         </junitlauncher>
         <delete dir="${basedir}/tests-tmp" />
-        <fail unless="junitlauncher.success" message="Single test failed. See reports!"/>
+        <fail if="junit.failure" message="Single test failed. See reports!"/>
     </target>
 
     <target name="compile-unittest" depends="compile">

@@ -8,7 +8,7 @@ on:
       - master # Check branch after merge
 
 env:
-  DEFAULT_JAVA_VERSION: '21'
+  DEFAULT_JAVA_VERSION: '25'
 
 concurrency:
   # Only run once for latest commit per ref and cancel other (previous) runs.
@@ -21,18 +21,11 @@ jobs:
 
     strategy:
       matrix:
-        jdk: [ 17, 21 ]
+        jdk: [ 25 ]
         os: [ubuntu-latest, windows-latest]
         include:
-          - target: 17
-            jdk: 17
-          - target: 21
-            jdk: 21
-        exclude: # only build specific os on java 17
-          - os: windows-latest
-            jdk: 17
-          - os: windows-latest
-            jdk: 24
+          - target: 25
+            jdk: 25
 
     name: Build / Tests -> JDK-${{ matrix.jdk }}/ Target java-${{ matrix.target }} / ${{ matrix.os }}
     steps:
@@ -103,11 +96,11 @@ jobs:
     name: Build -> JDK-${{ matrix.jdk }}/ Target java-${{ matrix.target }} / ${{ matrix.os }}
     strategy:
       matrix:
-        jdk: [ 21 ]
+        jdk: [ 25 ]
         os: [ macos-latest ]
         include:
-          - target: 21
-            jdk: 21
+          - target: 25
+            jdk: 25
 
     steps:
        - name: Checkout

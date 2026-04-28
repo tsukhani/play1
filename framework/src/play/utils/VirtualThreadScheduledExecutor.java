@@ -349,9 +349,12 @@ public class VirtualThreadScheduledExecutor {
 
         @Override
         public boolean isDone() {
-            if (cancelled.get() || failure.get() != null) return true;
-            ScheduledFuture<?> sf = next.get();
-            return sf != null && sf.isDone();
+            // STPE periodic-future contract: a periodic task is "done" only on terminal
+            // state — cancellation or abnormal termination. The scheduler-side dispatch
+            // future would complete as soon as it hands off to the virtual executor, so
+            // delegating to it would falsely report done while the periodic body is still
+            // running. Track only the terminal state here.
+            return cancelled.get() || failure.get() != null;
         }
 
         @Override
