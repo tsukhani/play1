@@ -62,9 +62,43 @@ Run the full Play Framework release deployment:
    ```
    Report any push errors before continuing.
 
-5. **Publish zip to GitHub release**
+5. **Tag the release in all three places (local, origin, github)**
 
-   The tag for the release is `v{VERSION}` (e.g. `v1.11.10`). First check whether a release already exists for that tag:
+   The release tag is `v{VERSION}` (e.g. `v1.11.13`). It must exist on **all three** of: local repo, `origin` (Bitbucket), `github`. Do not rely on `gh release create` to create the tag — it only creates the tag on GitHub, leaving the local repo and origin untagged and out of sync.
+
+   Match the existing tag style in the repo: lightweight tags (no `-a` / `-m`), pointing at the commit you just pushed in step 4. Confirm with `git cat-file -t v{prior-version}` if unsure (older tags should report `commit`, not `tag`).
+
+   ```bash
+   # 1. Check whether the local tag already exists (handles re-runs after partial failure).
+   #    If it exists pointing at HEAD, skip the create. If it exists pointing elsewhere,
+   #    STOP and report — never overwrite a tag without explicit user confirmation.
+   if /usr/bin/git rev-parse -q --verify v{VERSION} >/dev/null; then
+     existing=$(/usr/bin/git rev-parse v{VERSION})
+     head=$(/usr/bin/git rev-parse HEAD)
+     if [ "$existing" != "$head" ]; then
+       echo "ERROR: tag v{VERSION} exists at $existing but HEAD is $head — refusing to retag"
+       exit 1
+     fi
+   else
+     /usr/bin/git tag v{VERSION}
+   fi
+
+   # 2. Push to both remotes. `git push <remote> <tag>` is idempotent when the tag
+   #    already exists at the same SHA on that remote.
+   /usr/bin/git push origin v{VERSION}
+   /usr/bin/git push github v{VERSION}
+
+   # 3. Verify the tag resolves to the same SHA in all three places.
+   /usr/bin/git rev-parse v{VERSION}
+   /usr/bin/git ls-remote --tags origin v{VERSION}
+   /usr/bin/git ls-remote --tags github v{VERSION}
+   ```
+
+   All three lookups must report the same SHA. If any disagrees, stop and report.
+
+6. **Publish zip to GitHub release**
+
+   The tag now exists on GitHub (pushed in step 5), so `gh release create` will attach to that existing tag rather than creating a new one. First check whether a release already exists:
    ```bash
    gh release view v{VERSION} --repo tsukhani/play1
    ```
@@ -74,7 +108,7 @@ Run the full Play Framework release deployment:
      gh release upload v{VERSION} framework/dist/play-{VERSION}.zip --clobber --repo tsukhani/play1
      ```
 
-   - **If the release does not exist** (command exits non-zero with `release not found`): create it with the zip attached. `gh release create` will auto-create the `v{VERSION}` git tag at the current `main` HEAD on the GitHub remote.
+   - **If the release does not exist** (command exits non-zero with `release not found`): create it with the zip attached. The tag already exists on GitHub from step 5.
      ```bash
      gh release create v{VERSION} framework/dist/play-{VERSION}.zip \
        --repo tsukhani/play1 \
@@ -88,10 +122,11 @@ Run the full Play Framework release deployment:
    gh release view v{VERSION} --repo tsukhani/play1
    ```
 
-6. **Report**
+7. **Report**
 
    Summarise:
    - Version deployed
    - Whether a commit was made (and its hash)
    - Both push results
+   - Tag SHA confirmed on local + origin + github
    - GitHub release URL
