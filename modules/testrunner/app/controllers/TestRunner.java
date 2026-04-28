@@ -48,19 +48,23 @@ public class TestRunner extends Controller {
             seleniumTests = TestEngine.allSeleniumTests();
         }
         
+        // Category prefixes (U:/F:/S:) let FirePhoque batch unit tests off to a
+        // parallel VT pool while keeping functional + Selenium tests on the serial
+        // WebClient path (FunctionalTest's static savedCookies/renderArgs would race
+        // under parallelism — see Stage 2 of the test-parallelism roadmap).
         if(unitTests != null){
             for(Class c : unitTests) {
-                p.println(c.getName() + ".class");
+                p.println("U:" + c.getName() + ".class");
             }
         }
         if(functionalTests != null){
             for(Class c : functionalTests) {
-                p.println(c.getName() + ".class");
+                p.println("F:" + c.getName() + ".class");
             }
         }
         if(seleniumTests != null){
             for(String c : seleniumTests) {
-                p.println(c);
+                p.println("S:" + c);
             }
         }
         renderText(list);

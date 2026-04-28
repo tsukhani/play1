@@ -16,10 +16,20 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.net.URI;
 import java.net.URL;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 
 import org.htmlunit.corejs.javascript.Context;
@@ -161,10 +171,28 @@ public class FirePhoque {
             firephoque.getOptions().setThrowExceptionOnScriptError(false);
             firephoque.getOptions().setPrintContentOnFailingStatusCode(false);
 
-            // Go!
+            // Split tests by category. Unit tests are independent and ship to a
+            // parallel VT pool; functional and Selenium tests go through the serial
+            // WebClient path so FunctionalTest's static savedCookies/renderArgs
+            // (and HtmlUnit's non-thread-safe WebClient) don't race.
+            List<String> unitTests = new ArrayList<>();
+            List<String> serialTests = new ArrayList<>();
+            for (String entry : tests) {
+                if (entry.startsWith("U:")) {
+                    unitTests.add(entry.substring(2));
+                } else if (entry.startsWith("F:") || entry.startsWith("S:")) {
+                    serialTests.add(entry.substring(2));
+                } else {
+                    // Older TestRunner without category prefixes: treat as serial
+                    // for safety (functional/selenium semantics are stricter).
+                    serialTests.add(entry);
+                }
+            }
+
             int maxLength = 0;
             for (String test : tests) {
-                String testName = test.replace(".class", "").replace(".test.html", "").replace(".", "/").replace("$", "/");
+                String body = test.startsWith("U:") || test.startsWith("F:") || test.startsWith("S:") ? test.substring(2) : test;
+                String testName = body.replace(".class", "").replace(".test.html", "").replace(".", "/").replace("$", "/");
                 if (testName.length() > maxLength) {
                     maxLength = testName.length();
                 }
@@ -172,55 +200,12 @@ public class FirePhoque {
             System.out.println("~ " + tests.size() + " test" + (tests.size() != 1 ? "s" : "") + " to run:");
             System.out.println("~");
             firephoque.openWindow(new URL(app + "/@tests/init"), "headless");
-            boolean ok = true;
-            for (String test : tests) {
-                long start = System.currentTimeMillis();
-                String testName = test.replace(".class", "").replace(".test.html", "").replace(".", "/").replace("$", "/");
-                System.out.print("~ " + testName + "... ");
-                for (int i = 0; i < maxLength - testName.length(); i++) {
-                    System.out.print(" ");
-                }
-                System.out.print("    ");
-                URL url;
-                if (test.endsWith(".class")) {
-                    url = new URL(app + "/@tests/" + test);
-                } else {
-                    url = new URL(app + selenium + "?baseUrl=" + app + "&test=/@tests/" + test + ".suite&auto=true&resultsUrl=/@tests/" + test);
-                }
-                firephoque.openWindow(url, "headless");
-                firephoque.waitForBackgroundJavaScript(5 * 60 * 1000);
-                int retry = 0;
-                while (retry < 5) {
-                    if (new File(root, test.replace('/', '.') + ".passed.html").exists()) {
-                        System.out.print("PASSED     ");
-                        break;
-                    } else if (new File(root, test.replace('/', '.') + ".failed.html").exists()) {
-                        System.out.print("FAILED  !  ");
-                        ok = false;
-                        break;
-                    } else {
-                        if (retry++ == 4) {
-                            System.out.print("ERROR   ?  ");
-                            ok = false;
-                            break;
-                        } else {
-                            Thread.sleep(1000);
-                        }
-                    }
-                }
+            AtomicBoolean ok = new AtomicBoolean(true);
 
-                //
-                int duration = (int) (System.currentTimeMillis() - start);
-                int seconds = (duration / 1000) % 60;
-                int minutes = (duration / (1000 * 60)) % 60;
+            runUnitTestsInParallel(app, unitTests, root, maxLength, ok);
+            runSerialTests(firephoque, app, selenium, serialTests, root, maxLength, ok);
 
-                if (minutes > 0) {
-                    System.out.println(minutes + " min " + seconds + "s");
-                } else {
-                    System.out.println(seconds + "s");
-                }
-            }
-            firephoque.openWindow(new URL(app + "/@tests/end?result=" + (ok ? "passed" : "failed")), "headless");
+            firephoque.openWindow(new URL(app + "/@tests/end?result=" + (ok.get() ? "passed" : "failed")), "headless");
             // FirePhoque is a one-shot process whose only job is driving the test run
             // and writing result-marker files. HtmlUnit's WebClient leaks non-daemon
             // threads (HTTP connection-pool keep-alive, Rhino's setTimeout scheduler)
@@ -232,6 +217,136 @@ public class FirePhoque {
             // entirely; in-flight keep-alive connections get RST'd, which the Play
             // server tolerates fine.
             System.exit(0);
+        }
+    }
+
+    /**
+     * Lock for atomic line printing across parallel unit-test workers. Each test
+     * builds its full result line into a {@link StringBuilder} then prints it under
+     * this lock so output remains coherent even with 16+ tests completing concurrently.
+     */
+    private static final Object PRINT_LOCK = new Object();
+
+    /**
+     * Run unit tests concurrently via a virtual-thread executor capped by a
+     * {@link Semaphore}. Each test fires a plain HTTP GET (no browser semantics —
+     * the response is server-rendered HTML written by {@code TestRunner.run}) and
+     * then polls for the result file the controller writes. Output order becomes
+     * completion-order; pass/fail aggregates into the shared {@code ok} flag.
+     */
+    private static void runUnitTestsInParallel(String app, List<String> unitTests, File root,
+                                                int maxLength, AtomicBoolean ok) {
+        if (unitTests.isEmpty()) return;
+
+        int parallelism = Integer.parseInt(System.getProperty("unitTestParallelism", "16"));
+        Semaphore gate = new Semaphore(parallelism);
+        HttpClient httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(30))
+                .build();
+
+        try (ExecutorService pool = Executors.newThreadPerTaskExecutor(
+                Thread.ofVirtual().name("firephoque-unit-", 1).factory())) {
+            List<Future<?>> futures = new ArrayList<>(unitTests.size());
+            for (String test : unitTests) {
+                futures.add(pool.submit(() -> {
+                    gate.acquire();
+                    try {
+                        runOneUnitTest(httpClient, app, test, root, maxLength, ok);
+                    } finally {
+                        gate.release();
+                    }
+                    return null;
+                }));
+            }
+            for (Future<?> f : futures) {
+                try {
+                    f.get();
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    ok.set(false);
+                }
+            }
+        }
+    }
+
+    private static void runOneUnitTest(HttpClient httpClient, String app, String test,
+                                        File root, int maxLength, AtomicBoolean ok) {
+        long start = System.currentTimeMillis();
+        String testName = test.replace(".class", "").replace(".", "/").replace("$", "/");
+        String resultStatus;
+        try {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(app + "/@tests/" + test))
+                    .timeout(Duration.ofMinutes(5))
+                    .GET()
+                    .build();
+            httpClient.send(request, HttpResponse.BodyHandlers.discarding());
+            resultStatus = pollResultFile(root, test, ok);
+        } catch (Exception e) {
+            ok.set(false);
+            resultStatus = "ERROR   ?  ";
+        }
+        emitResultLine(testName, maxLength, resultStatus, System.currentTimeMillis() - start);
+    }
+
+    /**
+     * Poll for the result HTML the controller writes after the test completes.
+     * The HTTP response from {@code TestRunner.run} returns AFTER the file is written,
+     * so the file should be visible immediately on first check; the retry budget is a
+     * defensive safety net for filesystem flush latency.
+     */
+    private static String pollResultFile(File root, String test, AtomicBoolean ok)
+            throws InterruptedException {
+        for (int retry = 0; retry < 5; retry++) {
+            if (new File(root, test.replace('/', '.') + ".passed.html").exists()) {
+                return "PASSED     ";
+            }
+            if (new File(root, test.replace('/', '.') + ".failed.html").exists()) {
+                ok.set(false);
+                return "FAILED  !  ";
+            }
+            Thread.sleep(1000);
+        }
+        ok.set(false);
+        return "ERROR   ?  ";
+    }
+
+    private static void emitResultLine(String testName, int maxLength, String resultStatus,
+                                        long durationMs) {
+        int seconds = (int) ((durationMs / 1000) % 60);
+        int minutes = (int) ((durationMs / (1000 * 60)) % 60);
+        StringBuilder line = new StringBuilder();
+        line.append("~ ").append(testName).append("... ");
+        for (int i = 0; i < maxLength - testName.length(); i++) line.append(' ');
+        line.append("    ").append(resultStatus);
+        if (minutes > 0) line.append(minutes).append(" min ").append(seconds).append('s');
+        else line.append(seconds).append('s');
+        synchronized (PRINT_LOCK) {
+            System.out.println(line);
+        }
+    }
+
+    /**
+     * Run functional + Selenium tests serially through the existing WebClient path.
+     * FunctionalTest's static savedCookies/renderArgs and HtmlUnit's non-thread-safe
+     * WebClient both forbid parallelism here without a deeper refactor.
+     */
+    private static void runSerialTests(WebClient firephoque, String app, String selenium,
+                                        List<String> serialTests, File root, int maxLength,
+                                        AtomicBoolean ok) throws Exception {
+        for (String test : serialTests) {
+            long start = System.currentTimeMillis();
+            String testName = test.replace(".class", "").replace(".test.html", "").replace(".", "/").replace("$", "/");
+            URL url;
+            if (test.endsWith(".class")) {
+                url = new URL(app + "/@tests/" + test);
+            } else {
+                url = new URL(app + selenium + "?baseUrl=" + app + "&test=/@tests/" + test + ".suite&auto=true&resultsUrl=/@tests/" + test);
+            }
+            firephoque.openWindow(url, "headless");
+            firephoque.waitForBackgroundJavaScript(5 * 60 * 1000);
+            String resultStatus = pollResultFile(root, test, ok);
+            emitResultLine(testName, maxLength, resultStatus, System.currentTimeMillis() - start);
         }
     }
 }
