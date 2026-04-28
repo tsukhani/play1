@@ -161,19 +161,7 @@ public class PlayStatusPlugin extends PlayPlugin {
         out.println();
         out.println("Requests execution pool:");
         out.println("~~~~~~~~~~~~~~~~~~~~~~~~");
-        if (Invoker.scheduler.isUsingVirtualThreads()) {
-            out.println("Mode: virtual threads");
-        } else {
-            ScheduledThreadPoolExecutor pool = Invoker.scheduler.platformExecutor();
-            out.println("Pool size: " + pool.getPoolSize());
-            out.println("Active count: " + pool.getActiveCount());
-            out.println("Scheduled task count: " + pool.getTaskCount());
-            out.println("Queue size: " + pool.getQueue().size());
-        }
-        // Audit H2-display: emit invocation counters in both modes so dashboards have a
-        // consistent shape. In platform mode, getActiveCount() approximates inflight but
-        // isn't accurate when work is queued behind the active threads; the explicit
-        // counters above are authoritative in both modes.
+        out.println("Mode: virtual threads");
         out.println("Inflight invocations: " + Invoker.inflightInvocations.get());
         out.println("Total invocations:    " + Invoker.totalInvocations.get());
         out.println();
@@ -227,16 +215,7 @@ public class PlayStatusPlugin extends PlayPlugin {
 
         {
             JsonObject pool = new JsonObject();
-            if (Invoker.scheduler.isUsingVirtualThreads()) {
-                pool.addProperty("mode", "virtual-threads");
-            } else {
-                ScheduledThreadPoolExecutor invokerPool = Invoker.scheduler.platformExecutor();
-                pool.addProperty("size", invokerPool.getPoolSize());
-                pool.addProperty("active", invokerPool.getActiveCount());
-                pool.addProperty("scheduled", invokerPool.getTaskCount());
-                pool.addProperty("queue", invokerPool.getQueue().size());
-            }
-            // Audit H2-display: invocation counters in both modes for consistent dashboards.
+            pool.addProperty("mode", "virtual-threads");
             pool.addProperty("inflight", Invoker.inflightInvocations.get());
             pool.addProperty("total", Invoker.totalInvocations.get());
             status.add("pool", pool);

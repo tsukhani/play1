@@ -11,9 +11,6 @@ import play.libs.Expression;
 import play.libs.Time;
 import play.mvc.Http.Request;
 import play.utils.ExecutorFacade;
-import play.utils.Java;
-import play.utils.PThreadFactory;
-import play.utils.VirtualThreadConfig;
 import play.utils.VirtualThreadScheduledExecutor;
 
 import java.io.PrintWriter;
@@ -52,7 +49,7 @@ public class JobsPlugin extends PlayPlugin {
     public String getStatus() {
         StringWriter sw = new StringWriter();
         PrintWriter out = new PrintWriter(sw);
-        if (scheduler.platformExecutor() == null && scheduler.virtualExecutor() == null) {
+        if (scheduler.virtualExecutor() == null) {
             out.println("Jobs execution pool:");
             out.println("~~~~~~~~~~~~~~~~~~~");
             out.println("(not yet started)");
@@ -60,22 +57,13 @@ public class JobsPlugin extends PlayPlugin {
         }
         out.println("Jobs execution pool:");
         out.println("~~~~~~~~~~~~~~~~~~~");
-        if (scheduler.isUsingVirtualThreads()) {
-            // Audit H2-display: VT mode reports a single line because per-job thread
-            // metrics aren't aggregated. Unlike Invoker (which exposes inflight/total
-            // invocation counters), JobsPlugin has no parallel set of counters; adding
-            // jobs-side observability would require tracking submissions and completions
-            // around scheduler.submit / scheduleWithFixedDelay / scheduleForCRON. Don't
-            // borrow Invoker.inflightInvocations here — those track invoker work, not
-            // jobs work, and conflating them would mislead operators.
-            out.println("Mode: virtual threads");
-        } else {
-            ScheduledThreadPoolExecutor pool = scheduler.platformExecutor();
-            out.println("Pool size: " + pool.getPoolSize());
-            out.println("Active count: " + pool.getActiveCount());
-            out.println("Scheduled task count: " + pool.getTaskCount());
-            out.println("Queue size: " + pool.getQueue().size());
-        }
+        // Single-line VT status: per-job thread metrics aren't aggregated. Unlike Invoker
+        // (which exposes inflight/total invocation counters), JobsPlugin has no parallel
+        // set of counters; adding jobs-side observability would require tracking
+        // submissions and completions around scheduler.submit / scheduleWithFixedDelay /
+        // scheduleForCRON. Don't borrow Invoker.inflightInvocations here — those track
+        // invoker work, not jobs work, and conflating them would mislead operators.
+        out.println("Mode: virtual threads");
         SimpleDateFormat df = new SimpleDateFormat("MM/dd/yyyy HH:mm:ss");
         if (!scheduledJobs.isEmpty()) {
             out.println();
@@ -111,21 +99,6 @@ public class JobsPlugin extends PlayPlugin {
                     out.print(" (has never run)");
                 }
                 out.println();
-            }
-        }
-        ScheduledThreadPoolExecutor pool = scheduler.platformExecutor();
-        if (!scheduler.isUsingVirtualThreads() && pool != null && !pool.getQueue().isEmpty()) {
-            out.println();
-            out.println("Waiting jobs:");
-            out.println("~~~~~~~~~~~~~~~~~~~~~~~~~~~");
-            ScheduledFuture<?>[] q = pool.getQueue().toArray(new ScheduledFuture[0]);
-
-            for (ScheduledFuture<?> task : q) {
-                Object callable = Java.extractUnderlyingCallable((FutureTask<?>) task);
-                // extractUnderlyingCallable returns null on Java module-encapsulation failures;
-                // print the future itself rather than a literal "null" in that case.
-                Object label = callable != null ? callable : task;
-                out.println(label + " will run in " + task.getDelay(TimeUnit.SECONDS) + " seconds");
             }
         }
         return sw.toString();
