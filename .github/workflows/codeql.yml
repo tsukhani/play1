@@ -9,7 +9,7 @@ on:
     - cron: '15 1 * * 6'
 
 env:
-  DEFAULT_JAVA_VERSION: '21'
+  DEFAULT_JAVA_VERSION: '25'
 
 jobs:
   analyze:
