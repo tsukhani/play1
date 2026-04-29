@@ -5,7 +5,7 @@ on:
 
   push:
     branches:
-      - master # Check branch after merge
+      - main # Check branch after merge
 
 env:
   DEFAULT_JAVA_VERSION: '25'
