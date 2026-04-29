@@ -1,8 +1,7 @@
 # Welcome to Play framework
 
-[![Build Status](https://github.com/playframework/play1/actions/workflows/build-test.yml/badge.svg)](https://github.com/playframework/play1/actions/workflows/build-test.yml)
-[![Repository size](https://img.shields.io/github/repo-size/playframework/play1.svg?logo=git)](https://github.com/playframework/play1)
-[![Mergify Status](https://img.shields.io/endpoint.svg?url=https://api.mergify.com/v1/badges/playframework/play1&style=flat)](https://mergify.com)
+[![Build Status](https://github.com/tsukhani/play1/actions/workflows/build-test.yml/badge.svg)](https://github.com/tsukhani/play1/actions/workflows/build-test.yml)
+[![Repository size](https://img.shields.io/github/repo-size/tsukhani/play1.svg?logo=git)](https://github.com/tsukhani/play1)
 
 
 Play framework makes it easier to build Web applications with Java. It is a clean alternative to bloated Enterprise Java stacks. It focuses on developer productivity and targets RESTful architectures. Play is a perfect companion to agile software development.
