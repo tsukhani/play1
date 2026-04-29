@@ -17,6 +17,7 @@ A modernized Play 1 fork built on top of Java 25:
 - **Netty 4.2.x** — full migration from Netty 3 to Netty 4.2.x. Reference-counted `ByteBuf`s with explicit refcount discipline, request-body spooling above a configurable threshold (`play.netty.spoolThresholdBytes`), and hard body-size caps via `play.netty.maxContentLength`. The HTTP server, WebSocket handling, and SSL paths all run on Netty 4.
 - **Virtual threads, unconditionally** — request invocation (`Invoker`), background jobs (`JobsPlugin`), and mail dispatch (`Mail`) all dispatch through `play.utils.VirtualThreadScheduledExecutor`. Only two platform threads are kept, used solely for timer dispatch; everything else runs on virtual threads. Requires Java 25+ — JEP 491's elimination of `synchronized`-pinning makes the VT path strictly cheaper than platform threads under blocking I/O.
 - **No legacy Play 1.x code** — Continuations / Javaflow, the `play.threads.virtual*` / `play.pool` / `play.jobs.pool` configuration toggles, `ExecutorFacade`, deprecated executor mirrors, and other 1.x-era plumbing have been removed. The framework emits a `WARN` at boot if any retired configuration keys are still present in `application.conf` (including profile-prefixed forms like `%test.play.pool=3`), so operators upgrading from upstream Play 1.x see exactly which lines to delete.
+- **HTTP/2 over TLS (opt-in)** — set `play.http2.enabled=true` to advertise HTTP/2 via ALPN on the existing HTTPS listener. ALPN-capable clients negotiate `h2`; older clients fall back to `http/1.1` and are served by the same controllers. Works with both PEM cert+key (`certificate.file` / `certificate.key.file`) and JKS keystore (`keystore.file` / `keystore.password`) — same precedence as the HTTP/1.1 path, so existing HTTPS deployments can flip the flag without re-configuring cert paths. Disabled by default; existing HTTPS deployments behave exactly as before. Per-stream concurrency: HTTP/2 multiplexes streams over a single connection, so per-connection logs may show interleaved request lines from one client. Plain-HTTP h2c upgrade is out of scope (browsers don't use it).
 
 ## Getting started
 
@@ -44,6 +45,76 @@ play run /opt/myFirstApp
 * [Tutorial — Play guide, a real world app step-by-step](https://www.playframework.com/documentation/1.5.x/guide1)
 * [The essential documentation](https://www.playframework.com/documentation/1.5.x/home)
 * [Java API](https://www.playframework.com/documentation/1.5.x/api/index.html)
+
+## Enabling HTTP/2
+
+HTTP/2 is opt-in. The flag does nothing on plain HTTP — h2 in this fork is strictly h2-over-TLS, negotiated via ALPN. To enable it you need:
+
+1. **An HTTPS port bound** (`https.port` in `application.conf`).
+2. **A cert source** — either PEM (`certificate.file` + `certificate.key.file`) or a JKS keystore (`keystore.file` + `keystore.password`).
+3. **`play.http2.enabled = true`**.
+4. **A restart** — `application.conf` is read at boot.
+
+If `play.http2.enabled=true` but no cert source is found, the first HTTPS connection fails with an `IllegalStateException` pointing at the missing files. If only `http.port` is set, the flag is silently ignored — there's no h2c upgrade path.
+
+### Quick start (local development)
+
+Generate a self-signed keystore valid for `localhost`:
+
+```bash
+keytool -genkeypair -alias play \
+  -keyalg RSA -keysize 2048 \
+  -validity 365 \
+  -keystore conf/certificate.jks \
+  -storetype JKS \
+  -storepass changeme -keypass changeme \
+  -dname "CN=localhost" \
+  -ext "san=dns:localhost,ip:127.0.0.1"
+```
+
+Add to `conf/application.conf`:
+
+```
+https.port = 8443
+keystore.file = conf/certificate.jks
+keystore.password = changeme
+play.http2.enabled = true
+```
+
+Start the app and verify with curl:
+
+```bash
+curl --http2 -kv https://localhost:8443/
+```
+
+Look for `ALPN: server accepted h2` in the curl handshake output. ALPN-capable clients negotiate `h2`; older clients (or `curl --http1.1`) fall back to HTTP/1.1 against the same controllers.
+
+### Production cert
+
+Get a real cert from a CA — Let's Encrypt with `certbot` is the lowest-friction option — and import the PEM bundle into a JKS:
+
+```bash
+keytool -importkeystore \
+  -srckeystore <(openssl pkcs12 -export -in fullchain.pem -inkey privkey.pem -name play -passout pass:tmp) \
+  -srcstoretype PKCS12 -srcstorepass tmp \
+  -destkeystore conf/certificate.jks -deststoretype JKS \
+  -deststorepass "$KEYSTORE_PASSWORD" -destkeypass "$KEYSTORE_PASSWORD"
+```
+
+Then read the password from the environment instead of checking it into config:
+
+```
+keystore.password = ${KEYSTORE_PASSWORD}
+```
+
+The JKS must contain exactly one `PrivateKeyEntry`. The `application.secret = ${PLAY_SECRET}` line in the bundled `application-skel/conf/application.conf` is the established pattern for env-var-backed secrets.
+
+### Operational notes
+
+- **Cert rotation requires a restart.** The `SslContext` is built lazily on the first HTTPS connection and cached for the JVM's lifetime. There is no live-reload path today.
+- **Per-connection logs may interleave.** HTTP/2 multiplexes multiple requests over one TCP connection, so a single client can have several requests in flight against the same socket. Logs keyed by connection id will show interleaved request lines that look out of order if you're used to the HTTP/1.1 one-request-per-socket pattern.
+- **`PlayHandler` is unchanged.** Routing, controllers, sessions, and templates work identically whether the request arrived as HTTP/1.1 or as an h2 stream. The protocol-version difference is absorbed entirely inside the Netty pipeline.
+- **`netty-tcnative-boringssl-static`** is not required. The JDK SSLEngine handles TLS; Netty's `SslContextBuilder` handles ALPN selection deterministically. Adding tcnative would speed up TLS handshakes via OpenSSL but isn't needed for correctness.
 
 ## Get the source
 

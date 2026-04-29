@@ -87,10 +87,21 @@ require:    &allDependencies
     # HttpServerPipelineFactory wire brotli when it constructs the compressor.
     - io.netty -> netty-codec-compression 4.2.12.Final
     - io.netty -> netty-codec-http 4.2.12.Final
+    # PF-58: HTTP/2 codec + multiplex handler. Activated only when play.http2.enabled=true;
+    # SslHttpServerPipelineFactory installs Http2FrameCodec + Http2MultiplexHandler in the
+    # ALPN h2 branch. Same Netty version as the other codec-* artifacts.
+    - io.netty -> netty-codec-http2 4.2.12.Final
     - io.netty -> netty-common 4.2.12.Final
     - io.netty -> netty-handler 4.2.12.Final
     - io.netty -> netty-resolver 4.2.12.Final
     - io.netty -> netty-transport 4.2.12.Final
+    # PF-58: Netty 4.2 SslHandler.handlerAdded -> setOpensslEngineSocketFd loads
+    # io.netty.channel.unix.UnixChannel unconditionally (not guarded behind an
+    # OpenSSL-only branch). Without this artifact every HTTPS connection fails
+    # at pipeline init with NoClassDefFoundError. The fork's HTTPS path was
+    # latently broken since the Netty 4.2 migration (PF-31); surfaced when PF-58
+    # added the first integration test that opens a real TLS socket.
+    - io.netty -> netty-transport-native-unix-common 4.2.12.Final
     # com.aayushatharva.brotli4j is the JNI wrapper around the Brotli C lib that
     # StandardCompressionOptions.brotli() loads. brotli4j publishes per-platform
     # natives as separate artifactIds (NOT Ivy classifiers); the `service` jar is
