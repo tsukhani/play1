@@ -232,13 +232,24 @@ public class TestRunner extends Controller {
      * Hibernate / Jackson / etc.
      */
     private static boolean usesDatabase(Class<?> testClass, Set<String> entityInternalNames) {
+        // Apps that don't use JPA (e.g., Riak/Mongo/custom stores) leave
+        // entityInternalNames empty, so the marker walk below has nothing to match
+        // against and would mis-classify every test as pure-unit. Running those
+        // through the parallel lane causes cross-test data races on the shared
+        // application data store. Conservative default: route through the
+        // single-permit DB lane. Apps with JPA entities still get the precise
+        // per-test classification via the marker walk below.
+        Set<String> appMarkers = applicationDbMarkers();
+        if (entityInternalNames.isEmpty() && appMarkers.isEmpty()) {
+            return true;
+        }
         Set<String> visited = new HashSet<>();
         Deque<String> queue = new ArrayDeque<>();
         queue.add(testClass.getName().replace('.', '/'));
         while (!queue.isEmpty()) {
             String classInternal = queue.poll();
             if (!visited.add(classInternal)) continue;
-            if (matchesDbMarker(classInternal, entityInternalNames)) {
+            if (matchesDbMarker(classInternal, entityInternalNames, appMarkers)) {
                 return true;
             }
             // Only walk through application classes; framework / JDK / libs end
@@ -286,10 +297,43 @@ public class TestRunner extends Controller {
         return false;
     }
 
-    private static boolean matchesDbMarker(String classInternal, Set<String> entityInternalNames) {
-        return classInternal.equals("play/test/Fixtures")
+    private static boolean matchesDbMarker(String classInternal, Set<String> entityInternalNames,
+                                            Set<String> appMarkers) {
+        if (classInternal.equals("play/test/Fixtures")
                 || classInternal.startsWith("play/db/")
-                || entityInternalNames.contains(classInternal);
+                || entityInternalNames.contains(classInternal)) {
+            return true;
+        }
+        for (String marker : appMarkers) {
+            if (classInternal.equals(marker) || classInternal.startsWith(marker)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Application-supplied DB markers, configured via the
+     * {@code testrunner.dbMarkers} system property as a comma-separated list of
+     * fully qualified class names or package prefixes. Each entry is matched
+     * exactly (FQCN) or as a prefix (package). Use this on non-JPA apps to point
+     * the classifier at your own persistence layer (e.g., a Riak {@code Persistence}
+     * facade or an {@code AbstractPersistenceModel} base class) so tests that
+     * touch real storage are routed through the serial DB lane.
+     *
+     * @return set of internal-form ({@code com/foo/Bar}) markers; empty if not configured
+     */
+    private static Set<String> applicationDbMarkers() {
+        String prop = System.getProperty("testrunner.dbMarkers", "");
+        if (prop.isBlank()) return Set.of();
+        Set<String> set = new HashSet<>();
+        for (String entry : prop.split(",")) {
+            String trimmed = entry.trim();
+            if (!trimmed.isEmpty()) {
+                set.add(trimmed.replace('.', '/'));
+            }
+        }
+        return set;
     }
 
     private static Set<String> entityInternalNames() {
