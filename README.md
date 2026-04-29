@@ -1,6 +1,8 @@
 # Welcome to Play framework
 
 [![Build Status](https://github.com/tsukhani/play1/actions/workflows/build-test.yml/badge.svg)](https://github.com/tsukhani/play1/actions/workflows/build-test.yml)
+[![CodeQL](https://github.com/tsukhani/play1/actions/workflows/codeql.yml/badge.svg)](https://github.com/tsukhani/play1/actions/workflows/codeql.yml)
+[![Release Drafter](https://github.com/tsukhani/play1/actions/workflows/release-drafter.yml/badge.svg)](https://github.com/tsukhani/play1/actions/workflows/release-drafter.yml)
 [![Repository size](https://img.shields.io/github/repo-size/tsukhani/play1.svg?logo=git)](https://github.com/tsukhani/play1)
 
 
