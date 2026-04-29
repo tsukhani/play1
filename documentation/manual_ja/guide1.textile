@@ -206,8 +206,6 @@ h2. <a>バージョン管理システムを使った変更管理</a>
 
 Play アプリケーションを VCS に格納する場合、 @tmp/@, @modules/@, @lib/@, @test-result/@ そして @logs/@ ディレクトリを除外することは重要です。
 
-Eclipse と @play eclipsify@ コマンドを使っている場合、 @.classpath@ と @eclipse/@ も除外すべきです。
-
 h3. <a name="bazaar">Bazaar</a>
 
 ここでは例として Bazaar を使用します。"Bazaar":http://bazaar-vcs.org/ は分散バージョン管理システムです。

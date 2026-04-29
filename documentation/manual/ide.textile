@@ -2,59 +2,8 @@ h1. Setting-up your preferred IDE
 
 Working with Play is easy. You don’t even need a sophisticated IDE as Play compiles and refreshes the modifications you make to your source files automatically. So you can easily work using a simple text editor.
 
-However, using a modern Java IDE provides cool productivity features like auto-completion, on-the-fly compilation, assisted refactoring and debugging. Play supports the "NetBeans":http://www.netbeans.org, "IntelliJ IDEA":http://www.jetbrains.com/idea/index.html and "Eclipse":http://www.eclipse.org platforms.
+However, using a modern Java IDE provides cool productivity features like auto-completion, on-the-fly compilation, assisted refactoring and debugging. Play has dedicated support for "IntelliJ IDEA":http://www.jetbrains.com/idea/index.html.
 
-
-h2(#eclipse). <a>Eclipse</a>
-
-h3. Generate configuration
-
-Play provides a command to simplify Eclipse configuration. To transform a Play application into a working Eclipse project, use the @eclipsify@ command:
-
-bc. # play eclipsify myApp
-
-You then need to import the application into your Workspace with the **File/Import/General/Existing project…** menu.
-
-!images/eclipse!
-
-If you make any important changes to your application, such as changing the classpath, use @eclipsify@ again to regenerate the configuration files.
-
-p(note). **Do not commit Eclipse configuration files when you work in a team!**
-
-The generated configuration files contain absolute references to your framework installation. These are specific to your own installation. When you work in a team, each developer must keep his Eclipse configuration files private. 
-
-h3. Launchers
-
-The @eclipsify@ command generates several launchers for the application. For example, running @eclipsify@ on an application called **Nice app** (see screen shot above) will create the following launchers in the @eclipse/@ folder:
-
-* @Nice app.launch@ - the main launcher, equivalent to the @play run@ command, which you can use to run your application by right-clicking it and selecting **Run As > Nice app**
-* @Test Nice app.launch@ - the test launcher, equivalent to the @play test@ command, which you also run by right-clicking it and selecting **Run As > Test Nice app**
-* @Connect JPDA Nice app.launch@ - the JPDA debugging session connector, which you can use to connect the Eclipse debugger to an already-running Play instance and start a debugging session, by right-clicking the launch file and selecting **Debug As > Connect JPDA Nice app**. Stopping the debugging session will not stop the server.
-
-h3. Play Eclipse plug-in
-
-Additionally, Play comes with an Eclipse plug-in that provides editors for HTML view templates, @application.conf@ and the @routes@ file.
-
-To install, copy the JAR file from @$PLAY_HOME/support/eclipse@ to @$ECLIPSE_HOME/dropins@.
-
-
-h2(#netbeans). <a>NetBeans</a>
-
-Play provides a command to simplify NetBeans configuration. To transform an existing application to a valid NetBeans project, use the @netbeansify@ command:
-
-bc. # play netbeansify myApp
-
-Then you can just open the application as a NetBeans project.
-
-!images/netbeans!
-
-Use the standard *Run* button to start the application. When the application is started you can attach a debugging session at any time using the *Debug* button. Stopping the debugging session doesn’t stop the server.
-
-If you make any important change to your application such as changing the classpath, use @netbeansify@ again to regenerate the configuration files. 
-
-p(note). **Do not commit the @nbproject/@ directory when you work in a team!**
- 
-The generated configuration files contains absolute references to your framework installation. These are specific to your own installation. When you work in a team on the same application, each developer must keep his NetBeans configuration files private.
 
 h2(#intellij). <a>IntelliJ IDEA</a>
 

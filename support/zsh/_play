@@ -96,7 +96,7 @@ _play() {
         (new-module)
           _arguments '1:Module directory:_files -/' && ret=0
         ;;
-        (test|precompile|run|start|war|auto-test|classpath|cp|eclipsify|ec|idealize|idea|modules|netbeansify|nb)
+        (test|precompile|run|start|war|auto-test|classpath|cp|idealize|idea|modules)
           local cmd_args; cmd_args=(
             '1:: :_play_apps'
             '(--deps)--deps[Resolve and install dependencies before running the command]'
@@ -143,7 +143,6 @@ _play_cmds() {
     {classpath,cp}':Display the computed classpath'
     'clean:Delete temporary files (including the bytecode cache)'
     {dependencies,deps}':Resolve and retrieve project dependencies'
-    {eclipsify,ec}':Create all Eclipse configuration files'
     'evolutions:Run the evolution check'
     'evolutions\:apply:Automatically apply pending evolutions'
     'evolutions\:mark:AppliedMark pending evolutions as manually applied'
@@ -155,7 +154,6 @@ _play_cmds() {
     {javadoc,jd}':Generate your application Javadoc'
     {list-modules,lm}':List modules available from the central modules repository'
     'modules:Display the computed modules list'
-    {netbeansify,nb}':Create all NetBeans configuration files'
     'new:Create a new application'
     {new-module,nm}':Create a module'
     'out:Follow logs/system.out file'

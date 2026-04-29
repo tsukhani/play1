@@ -27,12 +27,6 @@ h2. Command line - play command
 *build-module*
 モジュールをビルドし、パッケージングします。
 
-*eclipsify*
-Eclipse の全ての設定ファイルを作成します。
-
-*netbeansify*
-NetBeans の全ての設定ファイルを作成します。
-
 *idealize*
 IntelliJ Idea の全ての設定ファイルを作成します。
 
