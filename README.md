@@ -1,10 +1,5 @@
 # Welcome to Play framework
 
-[![GitHub Discussions](https://img.shields.io/github/discussions/playframework/play1?&logo=github&color=brightgreen)](https://github.com/playframework/play1/discussions)
-[![Discord](https://img.shields.io/discord/931647755942776882?logo=discord&logoColor=white)](https://discord.gg/YVRgAp2Zj4)
-[![Contributors](https://img.shields.io/github/contributors/playframework/play1)](https://github.com/playframework/play1/graphs/contributors)
-[![StackOverflow](https://img.shields.io/static/v1?label=stackoverflow&logo=stackoverflow&logoColor=fe7a16&color=brightgreen&message=playframework)](https://stackoverflow.com/tags/playframework)
-
 [![Build Status](https://github.com/playframework/play1/actions/workflows/build-test.yml/badge.svg)](https://github.com/playframework/play1/actions/workflows/build-test.yml)
 [![Repository size](https://img.shields.io/github/repo-size/playframework/play1.svg?logo=git)](https://github.com/playframework/play1)
 [![Mergify Status](https://img.shields.io/endpoint.svg?url=https://api.mergify.com/v1/badges/playframework/play1&style=flat)](https://mergify.com)
