@@ -829,10 +829,21 @@ public class Play {
     /**
      * Detect sources modifications
      */
-    public static synchronized void detectChanges() {
+    public static void detectChanges() {
+        // PF-61: unsynchronized PROD fast-path. Hoisting the mode check above the
+        // synchronized boundary breaks the lock-ordering deadlock between Play.stop
+        // (holds Play.class while waiting up to 30s for VTs to drain) and concurrently-
+        // dispatched @Every iterations (Invoker.init -> detectChanges, blocked at the
+        // synchronized entry). In PROD the body is a no-op anyway. mode is set once
+        // during Play.init before any VT dispatches, so the unsynchronized read is
+        // safely published via the thread-start happens-before edge.
         if (mode == Mode.PROD) {
             return;
         }
+        detectChangesLocked();
+    }
+
+    private static synchronized void detectChangesLocked() {
         try {
             pluginCollection.beforeDetectingChanges();
             if (!pluginCollection.detectClassesChange()) {
