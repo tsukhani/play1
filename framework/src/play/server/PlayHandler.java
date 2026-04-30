@@ -97,9 +97,39 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
      */
     private static final Set<String> allowedHttpMethodOverride;
 
+    /**
+     * PF-57: pre-formatted {@code Alt-Svc} header value to advertise an HTTP/3 endpoint
+     * to TCP clients. {@code null} when {@code play.http3.enabled=false}; emitted on every
+     * response over a TLS-protected request when set. Read once at class load — the same
+     * static-config-read pattern other PlayHandler config keys use, so changing the value
+     * requires a JVM restart.
+     */
+    private static final String altSvcHeaderValue;
+
     static {
         exposePlayServer = !"false".equals(Play.configuration.getProperty("http.exposePlayServer"));
         allowedHttpMethodOverride = Stream.of(Play.configuration.getProperty("http.allowed.method.override", "").split(",")).collect(Collectors.toUnmodifiableSet());
+        altSvcHeaderValue = computeAltSvcHeader();
+    }
+
+    /**
+     * Build the {@code Alt-Svc} value: {@code h3=":<port>"; ma=86400}. The port is
+     * {@code play.http3.port} if set, falling back to {@code https.port} (the standard
+     * deployment shape). {@code ma=86400} is the cache lifetime in seconds — clients
+     * remember the h3 endpoint for 24h and try QUIC for subsequent requests.
+     */
+    private static String computeAltSvcHeader() {
+        if (!Boolean.parseBoolean(Play.configuration.getProperty("play.http3.enabled", "false"))) {
+            return null;
+        }
+        String httpsPort = Play.configuration.getProperty("https.port");
+        String port = Play.configuration.getProperty("play.http3.port", httpsPort);
+        if (port == null || port.isBlank() || "-1".equals(port.trim())) {
+            // h3 enabled but no usable port — Server.java will fail-fast at boot anyway,
+            // so just don't emit an Alt-Svc header pointing at a phantom port.
+            return null;
+        }
+        return "h3=\":" + port.trim() + "\"; ma=86400";
     }
 
     @Override
@@ -446,6 +476,23 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
 
         nettyResponse.headers().set(DATE, Utils.formatHttpDate(new Date()));
 
+        // PF-57: advertise the HTTP/3 endpoint via Alt-Svc on every TLS-protected response.
+        // RFC 7838: a browser that has discovered Alt-Svc remembers the endpoint and uses
+        // QUIC for subsequent requests; it ignores Alt-Svc on plain-HTTP responses, so
+        // gating on request.secure both matches that semantic and avoids advertising an
+        // h3 endpoint to users who connected over plain HTTP. User-set Alt-Svc headers
+        // win — the previous loop ran before this set(), so an explicit value in
+        // response.headers takes precedence over the framework default.
+        if (altSvcHeaderValue != null && !nettyResponse.headers().contains("Alt-Svc")) {
+            Request currentRequest = null;
+            try {
+                currentRequest = Request.current();
+            } catch (Throwable ignored) { /* request thread-local not bound on edge paths */ }
+            if (currentRequest != null && currentRequest.secure) {
+                nettyResponse.headers().set("Alt-Svc", altSvcHeaderValue);
+            }
+        }
+
         Map<String, Http.Cookie> cookies = response.cookies;
 
         for (Http.Cookie cookie : cookies.values()) {
@@ -632,7 +679,15 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
     }
 
     static String getRemoteIPAddress(ChannelHandlerContext ctx) {
-        String fullAddress = ((InetSocketAddress) ctx.channel().remoteAddress()).getAddress().getHostAddress();
+        java.net.SocketAddress raw = resolveRemoteSocketAddress(ctx);
+        if (!(raw instanceof InetSocketAddress)) {
+            // Defensive fallback for unexpected SocketAddress shapes (e.g. future protocols).
+            // Returning a documented placeholder is safer than throwing here — getRemoteIPAddress
+            // is called per-request and propagates into Request.remoteAddress, which controllers
+            // use for logging/auth decisions, not for security boundaries.
+            return "0.0.0.0";
+        }
+        String fullAddress = ((InetSocketAddress) raw).getAddress().getHostAddress();
         if (fullAddress.matches("/[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+[:][0-9]+")) {
             fullAddress = fullAddress.substring(1);
             fullAddress = fullAddress.substring(0, fullAddress.indexOf(':'));
@@ -640,6 +695,39 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
             fullAddress = fullAddress.substring(0, fullAddress.indexOf('%'));
         }
         return fullAddress;
+    }
+
+    /**
+     * PF-57: walk to the underlying transport-level peer address. For TCP (HTTP/1.1, HTTP/2)
+     * {@code ctx.channel().remoteAddress()} is already an {@link InetSocketAddress}. For HTTP/3
+     * the channel is a {@code QuicStreamChannel} whose {@code remoteAddress()} is a
+     * {@code QuicStreamAddress} (a stream-id wrapper, not a network address); the actual peer
+     * lives on the parent {@code QuicChannel} via {@code remoteSocketAddress()}.
+     *
+     * <p>Reflection is used because {@code remoteSocketAddress()} is declared on the
+     * package-private concrete {@code QuicheQuicChannel}, not on the public {@code QuicChannel}
+     * interface. This keeps PlayHandler decoupled from the QUIC artifacts: no compile-time
+     * dependency on {@code netty-codec-classes-quic} for non-h3 deployments.
+     */
+    private static java.net.SocketAddress resolveRemoteSocketAddress(ChannelHandlerContext ctx) {
+        java.net.SocketAddress addr = ctx.channel().remoteAddress();
+        if (addr instanceof InetSocketAddress) return addr;
+        // Stream sub-channel — check parent chain for a node that exposes remoteSocketAddress().
+        io.netty.channel.Channel cur = ctx.channel().parent();
+        while (cur != null) {
+            try {
+                java.lang.reflect.Method m = cur.getClass().getMethod("remoteSocketAddress");
+                Object result = m.invoke(cur);
+                if (result instanceof InetSocketAddress) return (InetSocketAddress) result;
+            } catch (NoSuchMethodException ignored) {
+                // try next parent
+            } catch (Exception e) {
+                Logger.trace("PF-57: remoteSocketAddress reflection failed on %s: %s", cur, e);
+            }
+            if (cur.remoteAddress() instanceof InetSocketAddress) return cur.remoteAddress();
+            cur = cur.parent();
+        }
+        return null;
     }
 
     public Request parseRequest(ChannelHandlerContext ctx, FullHttpRequest nettyRequest)

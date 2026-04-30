@@ -1,6 +1,5 @@
 package integration;
 
-import java.io.File;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -12,14 +11,11 @@ import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
 
-import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
-import play.Play;
-import play.server.Server;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -44,27 +40,7 @@ public class Http2FunctionalTest {
 
     @BeforeAll
     static void startServer() {
-        synchronized (Play.class) {
-            if (!Play.started) {
-                File testApp = new File(System.getProperty("user.dir"), "test-src/integration/testapp");
-                if (!testApp.isDirectory()) {
-                    throw new RuntimeException("Integration testapp not found at " + testApp.getAbsolutePath());
-                }
-                Play.init(testApp, "test");
-                if (!Play.started) {
-                    Play.start();
-                }
-            }
-        }
-        // Server constructor binds synchronously (syncUninterruptibly), so the listener
-        // is up by the time this returns. Reads https.port + cert paths + play.http2.enabled
-        // from the testapp's %test config block.
-        new Server(new String[0]);
-    }
-
-    @AfterAll
-    static void stopServer() {
-        Server.shutdownEventLoops();
+        IntegrationServer.ensureStarted();
     }
 
     @Test
@@ -97,6 +73,24 @@ public class Http2FunctionalTest {
         // is corrupting the response shape on its way through Http2StreamPlayHandler.
         assertEquals(h1.body(), h2.body(),
                 "controller body must be identical regardless of negotiated HTTP version");
+    }
+
+    @Test
+    void tlsResponsesAdvertiseH3ViaAltSvc() throws Exception {
+        // PF-57 cascade: when play.http3.enabled=true, every TLS-protected response
+        // carries an Alt-Svc header pointing browsers at the QUIC endpoint. Asserting
+        // this on the h2 path (since h2 is what cold browsers will land on first when
+        // both flags are on) verifies the negotiation chain wires up correctly:
+        // TCP → TLS → ALPN h2 → Alt-Svc → next request flips to h3.
+        HttpResponse<String> h2 = client(HttpClient.Version.HTTP_2)
+                .send(HttpRequest.newBuilder(URI.create(BASE + "/json")).build(),
+                        HttpResponse.BodyHandlers.ofString());
+        String altSvc = h2.headers().firstValue("alt-svc").orElse(null);
+        assertNotNull(altSvc, "Alt-Svc header must be present on TLS responses when play.http3.enabled=true");
+        assertTrue(altSvc.contains("h3=\":19443\""),
+                "Alt-Svc must advertise h3 endpoint at the configured port; got: " + altSvc);
+        assertTrue(altSvc.contains("ma="),
+                "Alt-Svc must include max-age (ma=) for client-side caching; got: " + altSvc);
     }
 
     private static HttpClient client(HttpClient.Version version) throws Exception {

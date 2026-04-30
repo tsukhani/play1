@@ -102,6 +102,21 @@ require:    &allDependencies
     # latently broken since the Netty 4.2 migration (PF-31); surfaced when PF-58
     # added the first integration test that opens a real TLS socket.
     - io.netty -> netty-transport-native-unix-common 4.2.12.Final
+    # PF-57: HTTP/3 over QUIC. Activated only when play.http3.enabled=true.
+    # netty-codec-http3 ships the Http3* frame codec + Http3ServerConnectionHandler;
+    # netty-codec-classes-quic ships the QUIC transport classes (QuicSslContextBuilder,
+    # QuicServerCodecBuilder, QuicChannel, QuicStreamChannel). The native-quic artifact
+    # ships per-platform Quiche static library compiled to JNI — Quic.ensureAvailability()
+    # gates QuicServer.start() at boot so unsupported platforms (e.g. linux-riscv64,
+    # which has no upstream native) get an actionable IllegalStateException instead of
+    # a silent UDP bind failure.
+    - io.netty -> netty-codec-http3 4.2.12.Final
+    - io.netty -> netty-codec-classes-quic 4.2.12.Final
+    - io.netty -> netty-codec-native-quic 4.2.12.Final osx-aarch_64
+    - io.netty -> netty-codec-native-quic 4.2.12.Final osx-x86_64
+    - io.netty -> netty-codec-native-quic 4.2.12.Final linux-aarch_64
+    - io.netty -> netty-codec-native-quic 4.2.12.Final linux-x86_64
+    - io.netty -> netty-codec-native-quic 4.2.12.Final windows-x86_64
     # com.aayushatharva.brotli4j is the JNI wrapper around the Brotli C lib that
     # StandardCompressionOptions.brotli() loads. brotli4j publishes per-platform
     # natives as separate artifactIds (NOT Ivy classifiers); the `service` jar is
@@ -140,7 +155,14 @@ repositories:
 
     - playCoreDependencies:
         type:       local
-        artifact:   "${play.path}/framework/lib/[artifact]-[revision].jar"
+        # PF-57: the (-[classifier]) optional segment is Ivy syntax for "include only if
+        # the classifier extra-attribute is set". Lets entries declare native artifacts
+        # via "io.netty -> netty-codec-native-quic 4.2.12.Final osx-aarch_64" and the
+        # resolver looks up the classifier-suffixed jar on disk; classifier-less entries
+        # like "io.netty -> netty-codec-http 4.2.12.Final" continue to resolve to plain
+        # name-revision.jar. YamlParser already populates the classifier extra-attribute
+        # via the regex at YamlParser.java:172-187.
+        artifact:   "${play.path}/framework/lib/[artifact]-[revision](-[classifier]).jar"
         contains:   *allDependencies
         
     - playCoreCrud:

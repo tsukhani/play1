@@ -18,6 +18,7 @@ A modernized Play 1 fork built on top of Java 25:
 - **Virtual threads, unconditionally** — request invocation (`Invoker`), background jobs (`JobsPlugin`), and mail dispatch (`Mail`) all dispatch through `play.utils.VirtualThreadScheduledExecutor`. Only two platform threads are kept, used solely for timer dispatch; everything else runs on virtual threads. Requires Java 25+ — JEP 491's elimination of `synchronized`-pinning makes the VT path strictly cheaper than platform threads under blocking I/O.
 - **No legacy Play 1.x code** — Continuations / Javaflow, the `play.threads.virtual*` / `play.pool` / `play.jobs.pool` configuration toggles, `ExecutorFacade`, deprecated executor mirrors, and other 1.x-era plumbing have been removed. The framework emits a `WARN` at boot if any retired configuration keys are still present in `application.conf` (including profile-prefixed forms like `%test.play.pool=3`), so operators upgrading from upstream Play 1.x see exactly which lines to delete.
 - **HTTP/2 over TLS (opt-in)** — set `play.http2.enabled=true` to advertise HTTP/2 via ALPN on the existing HTTPS listener. ALPN-capable clients negotiate `h2`; older clients fall back to `http/1.1` and are served by the same controllers. Works with both PEM cert+key (`certificate.file` / `certificate.key.file`) and JKS keystore (`keystore.file` / `keystore.password`) — same precedence as the HTTP/1.1 path, so existing HTTPS deployments can flip the flag without re-configuring cert paths. Disabled by default; existing HTTPS deployments behave exactly as before. Per-stream concurrency: HTTP/2 multiplexes streams over a single connection, so per-connection logs may show interleaved request lines from one client. Plain-HTTP h2c upgrade is out of scope (browsers don't use it).
+- **HTTP/3 over QUIC (opt-in)** — set `play.http3.enabled=true` to bind a UDP listener that speaks HTTP/3, alongside the existing TCP HTTPS listener. Browsers discover the h3 endpoint via the `Alt-Svc: h3=":<port>"` header automatically emitted on every TLS-protected response when h3 is enabled, then switch to QUIC for subsequent requests. Reuses the same cert source as HTTP/2 (PEM or JKS); same routing through the same controllers. Disabled by default. Native QUIC libraries are bundled for `osx-{aarch_64,x86_64}`, `linux-{aarch_64,x86_64}`, and `windows-x86_64` — `linux-riscv64` is unsupported (no upstream native), and the framework refuses to start with a clear error if the flag is enabled on an unsupported platform. Best paired with `play.http2.enabled=true` for the full negotiation cascade (TCP → TLS → ALPN h2 → Alt-Svc → h3 over QUIC).
 
 ## Getting started
 
@@ -115,6 +116,59 @@ The JKS must contain exactly one `PrivateKeyEntry`. The `application.secret = ${
 - **Per-connection logs may interleave.** HTTP/2 multiplexes multiple requests over one TCP connection, so a single client can have several requests in flight against the same socket. Logs keyed by connection id will show interleaved request lines that look out of order if you're used to the HTTP/1.1 one-request-per-socket pattern.
 - **`PlayHandler` is unchanged.** Routing, controllers, sessions, and templates work identically whether the request arrived as HTTP/1.1 or as an h2 stream. The protocol-version difference is absorbed entirely inside the Netty pipeline.
 - **`netty-tcnative-boringssl-static`** is not required. The JDK SSLEngine handles TLS; Netty's `SslContextBuilder` handles ALPN selection deterministically. Adding tcnative would speed up TLS handshakes via OpenSSL but isn't needed for correctness.
+
+## Enabling HTTP/3
+
+HTTP/3 is opt-in and rides on top of HTTP/2 in the negotiation cascade. The fork ships with platform-native QUIC libraries and binds a UDP listener alongside the existing TCP HTTPS listener when enabled.
+
+### Prerequisites
+
+1. **An HTTPS port bound** (`https.port`). HTTP/3 has no plaintext mode — QUIC does TLS 1.3 inline.
+2. **A cert source** — same as HTTP/2 (PEM or JKS). The h3 server reuses whatever the h2 path uses.
+3. **`play.http3.enabled = true`**.
+4. **A supported platform.** Native QUIC bundles ship for `osx-aarch_64`, `osx-x86_64`, `linux-aarch_64`, `linux-x86_64`, and `windows-x86_64`. On `linux-riscv64` (no upstream native), the framework refuses to start with a clear `IllegalStateException` rather than silently falling back to TCP.
+
+### Quick start
+
+Build on the HTTP/2 quickstart above, then add:
+
+```
+play.http3.enabled = true
+```
+
+That's the only new flag. By default the UDP listener uses the same port number as `https.port` (TCP and UDP have separate port spaces). To use a different UDP port, set `play.http3.port = 4433` explicitly.
+
+Verify with curl built against `nghttp3`:
+
+```bash
+curl --http3 -kv https://localhost:8443/
+```
+
+Look for `Alt-Svc: h3=":8443"` in the response headers from a normal `curl -k` (TCP) request — that's how browsers discover the h3 endpoint. Subsequent requests from the same browser switch to UDP automatically.
+
+### Full negotiation cascade
+
+Best paired with `play.http2.enabled=true` so cold clients land on h2 first:
+
+| Browser action | What the server speaks |
+|---|---|
+| First TCP request | HTTP/2 (negotiated via ALPN) |
+| Server response | Carries `Alt-Svc: h3=":443"; ma=86400` |
+| Browser remembers Alt-Svc | Tries QUIC for next request |
+| Subsequent requests | HTTP/3 over QUIC, fall back to h2 if QUIC blocked |
+
+Without h2 enabled, cold clients get HTTP/1.1 first and the cascade still works — they just take longer to discover the h3 endpoint.
+
+### Production hardening
+
+The shipped configuration uses `InsecureQuicTokenHandler` for QUIC retry-token validation. This accepts any retry token without cryptographic verification — fine for dev, staging, and deployments behind a DDoS-mitigating edge. Production deployments directly exposed to the internet should swap to a server-secret-keyed token handler (planned PF-57 phase 3 follow-up). The framework does not currently expose a configuration toggle for this; track the follow-up issue if you need it.
+
+### Operational notes
+
+- **Native binary required at runtime.** If the JNI loader can't link the platform's native QUIC library, `Quic.isAvailable()` returns false and the framework refuses to start with `play.http3.enabled=true`. The error message names the platform and the underlying cause.
+- **UDP firewall rules.** Many container runtimes and cloud LBs block UDP egress/ingress by default. Verify the load balancer forwards UDP on the configured port; AWS ALB doesn't, NLB does.
+- **Cert rotation requires a restart.** Same as the h2 path — the `QuicSslContext` is built lazily on first packet and cached for the JVM's lifetime.
+- **0-RTT and HTTP/3 server push are out of scope.** 0-RTT brings replay-attack tradeoffs that should be opted into deliberately; server push is deprecated in modern browsers.
 
 ## Get the source
 

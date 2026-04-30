@@ -2,7 +2,7 @@
 
 <project name="play! framework" default="jar" basedir="." xmlns:if="ant:if" xmlns:unless="ant:unless">
 
-    <property name="baseversion" value="1.12.8" />
+    <property name="baseversion" value="1.12.9" />
     <property name="build-release" value="25" />
     <!-- Loaded as a startup -javaagent in test forks so Mockito's inline mock-maker
          doesn't have to self-attach byte-buddy-agent at runtime (which JDK 21+ warns
@@ -246,6 +246,9 @@
                     <jvmarg value="-javaagent:${basedir}/play-${version}.jar" />
                     <jvmarg value="-javaagent:${bytebuddy.agent.jar}" />
                     <jvmarg value="-DPLAY_SECRET=integrationtestsecretkey1234567890integrationtest" />
+                    <!-- PF-57: Netty 4.2 QUIC + brotli4j use JNI; native-access flag below avoids
+                         silent JNI restrictions on JDK 25 that the play CLI sets via deps.py. -->
+                    <jvmarg value="--enable-native-access=ALL-UNNAMED" />
                 </fork>
             </testclasses>
             <classpath>
