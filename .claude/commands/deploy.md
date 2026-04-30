@@ -126,7 +126,23 @@ Run the full Play Framework release deployment:
    gh release view v{VERSION} --repo tsukhani/play1
    ```
 
-7. **Report**
+7. **Restore Latest to the highest v1.12.x release**
+
+   `gh release create` auto-marks the new v1.11.x release as Latest because GitHub picks Latest by publish date when not told otherwise. The semver-correct Latest is whatever the highest released v1.12.x version is — which will change over time as v1.12.x continues to ship. Compute it dynamically rather than hardcoding a specific version:
+
+   ```bash
+   LATEST_V12=$(gh release list --repo tsukhani/play1 --limit 100 --json tagName --jq '.[] | .tagName' | grep '^v1\.12\.' | sort -V | tail -1)
+   if [ -n "$LATEST_V12" ]; then
+     gh release edit "$LATEST_V12" --repo tsukhani/play1 --latest
+     echo "Latest restored to $LATEST_V12"
+   else
+     echo "No v1.12.x release found — nothing to restore"
+   fi
+   ```
+
+   `sort -V` (version sort) handles semver ordering, so when v1.12.12 / v1.12.20 / v1.12.100 ship in the future they'll be picked correctly. The `if -n` guard handles the edge case where every v1.12.x release has been removed (then v1.11.x stays Latest by default, which is correct in that scenario).
+
+8. **Report**
 
    Summarise:
    - Version deployed
