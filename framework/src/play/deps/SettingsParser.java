@@ -187,16 +187,21 @@ public class SettingsParser {
                 String module = null;
                 String organisation = null;
                 String revision = null;
+                String classifier = null;
                 // PF-57: trailing "(\\s+[^\\s]+)?" optionally absorbs an Ivy classifier token
                 // (e.g. "io.netty -> netty-codec-native-quic 4.2.12.Final osx-aarch_64"). The
                 // YamlParser already accepted classifier syntax for the require: list, but the
                 // contains: list in repository definitions flows through this regex separately.
-                // The classifier is informational here — SettingsParser maps repo->module for
-                // resolution routing and doesn't need to track classifiers. Only the FIRST regex
-                // (org -> module rev) gets the optional classifier; widening the second regex
-                // (module rev, no org) caused "play -> play" to accidentally match it with
-                // revision="->" because optional-group addition made the regex more permissive
-                // and short-circuited the third (org -> module no-rev) regex below.
+                // PF-59: also forward the classifier to IvySettings.addModuleConfiguration via
+                // the attributes map so classifier-bearing module requests actually match this
+                // repo's contains: declaration. Without forwarding, a require: line that asked for
+                // {org:name:rev:classifier} fell through to mavenCentral because the contains:
+                // mapping below only registered {org:name:rev} (no classifier extra-attribute).
+                // Only the FIRST regex (org -> module rev) gets the optional classifier;
+                // widening the second regex (module rev, no org) caused "play -> play" to
+                // accidentally match it with revision="->" because the optional-group addition
+                // made the regex permissive enough to short-circuit the third (org -> module
+                // no-rev) regex below.
                 Matcher m = Pattern.compile("([^\\s]+)\\s*[-][>]\\s*([^\\s]+)\\s+([^\\s]+)(\\s+[^\\s]+)?").matcher(v);
                 if (m.matches()) {
                     if (m.groupCount() > 0) {
@@ -207,6 +212,9 @@ public class SettingsParser {
                     }
                     if (m.groupCount() > 2) {
                         revision = m.group(3).replace("$version", System.getProperty("play.version"));
+                    }
+                    if (m.groupCount() > 3 && m.group(4) != null && !m.group(4).trim().isEmpty()) {
+                        classifier = m.group(4).trim();
                     }
                 } else {
                     m = Pattern.compile("(([^\\s]+))\\s+([^\\s]+)").matcher(v);
@@ -242,6 +250,13 @@ public class SettingsParser {
                 }
                 if (revision != null) {
                     attributes.put("revision", revision);
+                }
+                // PF-59: forward classifier as an Ivy extra-attribute so module configurations
+                // matching {org:name:rev:classifier} route to this repo. Only set when the
+                // contains: line actually carried a classifier; otherwise the mapping stays
+                // classifier-agnostic and matches plain {org:name:rev} requests as before.
+                if (classifier != null) {
+                    attributes.put("classifier", classifier);
                 }
                 attributes.put("resolver", repName);
                 modules.add(attributes);
