@@ -2,7 +2,7 @@
 
 <project name="play! framework" default="jar" basedir="." xmlns:if="ant:if" xmlns:unless="ant:unless">
 
-    <property name="baseversion" value="1.12.16" />
+    <property name="baseversion" value="1.12.17" />
     <property name="build-release" value="25" />
     <!-- Loaded as a startup -javaagent in test forks so Mockito's inline mock-maker
          doesn't have to self-attach byte-buddy-agent at runtime (which JDK 21+ warns
@@ -117,6 +117,30 @@
                 </section>
             </manifest>
         </jar>
+    </target>
+
+    <!-- PF-62: resolve framework deps from dependencies.yml via Ivy and populate
+         framework/lib/ to match. Replaces the manual "curl from Maven Central +
+         shasum verify + commit jars" flow. Idempotent. Run after editing
+         framework/dependencies.yml. Pass -Dprune=true to delete jars in lib/
+         that are no longer in the manifest; -Dverbose to see Ivy's resolution
+         detail. lib/ stays committed — the target updates it in place so PR
+         diffs still show jar adds/removes. -->
+    <target name="resolve" depends="compile" description="Resolve framework deps from dependencies.yml via Ivy; updates framework/lib/ in place. -Dprune=true deletes strays.">
+        <property name="prune" value="false"/>
+        <property name="verbose" value="false"/>
+        <java classname="play.deps.FrameworkResolve" fork="true" failonerror="true">
+            <classpath>
+                <pathelement location="classes"/>
+                <fileset dir="lib">
+                    <include name="*.jar"/>
+                </fileset>
+            </classpath>
+            <sysproperty key="framework.path" value="${basedir}"/>
+            <sysproperty key="play.version" value="${baseversion}"/>
+            <sysproperty key="prune" value="${prune}"/>
+            <sysproperty key="verbose" value="${verbose}"/>
+        </java>
     </target>
 
     <target name="support">

@@ -90,6 +90,7 @@ ant compile-tests                # Compile tests without running
 # Other
 ant javadoc                      # Generate API docs
 ant package                      # Create distribution ZIP
+ant resolve                      # Resolve framework/dependencies.yml via Ivy and update framework/lib/ in place. Run after editing dependencies.yml. Idempotent. -Dprune=true to delete stray jars; -Dverbose for Ivy detail (PF-62)
 ```
 
 To run functional tests on a sample app:
