@@ -251,6 +251,34 @@ public class VirtualThreadScheduledExecutorTest {
     }
 
     @Test
+    void shutdownGracefullyDrainsLongDelayPeriodicWithinBudget() throws Exception {
+        // PF-60: scheduleWithFixedDelay parks a one-shot dispatch at +delay between runs,
+        // and STPE's default policy keeps queued one-shots alive across shutdown(). Pre-fix,
+        // shutdownGracefully always blocked for the full timeout when any long-delay periodic
+        // existed, even with zero in-flight work — JobsPlugin's @Every("24h") cleanup job
+        // pinned every JVM shutdown to the configured stop-timeout budget.
+        VirtualThreadScheduledExecutor local = new VirtualThreadScheduledExecutor("pf60-test");
+        try {
+            CountDownLatch firstRun = new CountDownLatch(1);
+            // 1-hour repeat delay — longer than any plausible shutdown budget.
+            local.scheduleWithFixedDelay(firstRun::countDown, 0, 1, TimeUnit.HOURS);
+            assertThat(firstRun.await(2, TimeUnit.SECONDS)).isTrue();
+            // Let the post-run path enqueue the next dispatch.
+            Thread.sleep(50);
+
+            long start = System.nanoTime();
+            boolean clean = local.shutdownGracefully(5_000);
+            long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+
+            assertThat(clean).isTrue();
+            // Should return as soon as in-flight VT work is done, not after the budget.
+            assertThat(elapsedMs).isLessThan(2_000L);
+        } finally {
+            local.shutdownNow();
+        }
+    }
+
+    @Test
     void scheduleWithFixedDelayIsNotDoneDuringActiveRun() throws Exception {
         // Periodic-future contract (mirrors ScheduledThreadPoolExecutor): isDone() must
         // remain false while the periodic body is executing. Previously this delegated

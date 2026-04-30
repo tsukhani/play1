@@ -210,24 +210,40 @@ public class VirtualThreadScheduledExecutor {
     }
 
     /**
-     * Orderly shutdown — block accepting new work, wait up to {@code timeoutMs} for
-     * in-flight tasks to complete, then escalate to {@link #shutdownNow} if anything
-     * is still running. Lets background jobs mid-DB-transaction commit cleanly during
-     * a hot reload or app stop instead of being interrupted and corrupting data.
+     * Orderly shutdown — drop scheduler-queued dispatches that have not yet fired, then
+     * wait up to {@code timeoutMs} for in-flight virtual-thread work to complete (so a
+     * job mid-DB-transaction can commit cleanly during a hot reload or app stop instead
+     * of being interrupted and corrupting data). Escalate to {@link #shutdownNow} on the
+     * virtual executor if anything is still running after the budget.
      *
-     * @return true if everything terminated within the timeout, false if shutdownNow
-     *         had to fire.
+     * <p>The scheduler queue is drained via {@link ScheduledThreadPoolExecutor#shutdownNow}
+     * rather than {@link ScheduledThreadPoolExecutor#shutdown} (PF-60). STPE's default
+     * {@code executeExistingDelayedTasksAfterShutdownPolicy(true)} keeps queued one-shot
+     * delayed tasks alive across {@code shutdown()}, so {@code awaitTermination} cannot
+     * return until each queued dispatch's delay elapses — and {@link #scheduleWithFixedDelay}
+     * implements its periodic chain as a series of self-rescheduling one-shots, so an
+     * {@code @Every("24h")} job parks a 24-hour dispatch in that queue at all times.
+     * Without this drain, every clean shutdown blocks for the full {@code timeoutMs}
+     * even with zero in-flight work. Cancelled queued dispatches turn into
+     * {@link RejectedExecutionException} on the next self-reschedule attempt, which the
+     * lambda already converts to {@code handle.cancel(false)} — so periodic-future
+     * consumers blocked on {@code get()} still see a terminal state.</p>
+     *
+     * @return true if in-flight virtual-thread work terminated within the timeout, false
+     *         if {@code shutdownNow} had to fire.
      */
     public boolean shutdownGracefully(long timeoutMs) {
         try {
-            shutdown();
-            if (!awaitTermination(timeoutMs, TimeUnit.MILLISECONDS)) {
-                shutdownNow();
+            scheduler.shutdownNow();
+            virtualExecutor.shutdown();
+            if (!virtualExecutor.awaitTermination(timeoutMs, TimeUnit.MILLISECONDS)) {
+                virtualExecutor.shutdownNow();
                 return false;
             }
             return true;
         } catch (InterruptedException ie) {
-            shutdownNow();
+            scheduler.shutdownNow();
+            virtualExecutor.shutdownNow();
             Thread.currentThread().interrupt();
             return false;
         }
