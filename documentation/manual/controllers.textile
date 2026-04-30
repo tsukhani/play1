@@ -449,7 +449,7 @@ h3. <a name="renderxml">Return an XML String</a>
 
 As with the JSON methods, there are several methods for rendering XML directly from the controller. The @renderXml(…)@ methods return XML strings with the content type set to @text/xml@.
 
-Here you can specify your own XML string, pass a @org.w3c.dom.Document@ object, or pass a POJO which will be serialised by the XStream serialiser.
+Here you can specify your own XML string, pass a @org.w3c.dom.Document@ object, or pass a POJO which will be serialised by Jackson XML (via @com.fasterxml.jackson.dataformat.xml.XmlMapper@).
 
 Example:
 

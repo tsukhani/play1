@@ -18,7 +18,6 @@ import org.w3c.dom.Document;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonSerializer;
-import com.thoughtworks.xstream.XStream;
 
 import play.Invoker.Suspend;
 import play.Logger;
@@ -217,26 +216,16 @@ public class Controller implements PlayController, ControllerSupport, LocalVaria
     }
 
     /**
-     * Return a 200 OK text/xml response. Use renderXml(Object, XStream) to customize the result.
+     * Return a 200 OK text/xml response. The object is serialized via Jackson XML
+     * ({@link com.fasterxml.jackson.dataformat.xml.XmlMapper}); annotate fields with
+     * Jackson's {@code @JacksonXmlProperty}, {@code @JacksonXmlElementWrapper},
+     * {@code @JacksonXmlRootElement}, etc. for fine-grained control.
      *
      * @param o
      *            the object to serialize
      */
     protected static void renderXml(Object o) {
         throw new RenderXml(o);
-    }
-
-    /**
-     * Return a 200 OK text/xml response
-     *
-     * @param o
-     *            the object to serialize
-     * @param xstream
-     *            the XStream object to use for serialization. See XStream's documentation for details about customizing
-     *            the output.
-     */
-    protected static void renderXml(Object o, XStream xstream) {
-        throw new RenderXml(o, xstream);
     }
 
     /**

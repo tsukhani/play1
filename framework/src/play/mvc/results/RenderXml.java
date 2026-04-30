@@ -7,12 +7,17 @@ import play.libs.XML;
 import play.mvc.Http.Request;
 import play.mvc.Http.Response;
 
-import com.thoughtworks.xstream.XStream;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.dataformat.xml.XmlMapper;
 
 /**
  * 200 OK with a text/xml
  */
 public class RenderXml extends Result {
+
+    // XmlMapper is thread-safe once configured and non-trivial to construct.
+    // Jackson's documented pattern is one shared instance.
+    private static final XmlMapper XML_MAPPER = new XmlMapper();
 
     private final String xml;
 
@@ -24,12 +29,12 @@ public class RenderXml extends Result {
         this.xml = XML.serialize(document);
     }
 
-    public RenderXml(Object o, XStream xstream) {
-        this.xml = xstream.toXML(o);
-    }
-
     public RenderXml(Object o) {
-        this(o, new XStream());
+        try {
+            this.xml = XML_MAPPER.writeValueAsString(o);
+        } catch (JsonProcessingException e) {
+            throw new UnexpectedException(e);
+        }
     }
 
     @Override

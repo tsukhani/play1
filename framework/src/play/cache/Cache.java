@@ -10,7 +10,7 @@ import play.exceptions.CacheException;
 import play.libs.Time;
 
 /**
- * The Cache. Mainly an interface to memcached or EhCache.
+ * The Cache. Mainly an interface to memcached or Caffeine.
  *
  * Note: When specifying expiration == "0s" (zero seconds) the actual expiration-time may vary between different cache implementations
  */
@@ -237,10 +237,10 @@ public abstract class Cache {
             } catch (Exception e) {
                 Logger.error(e, "Error while connecting to memcached");
                 Logger.warn("Fallback to local cache");
-                cacheImpl = EhCacheImpl.newInstance();
+                cacheImpl = CaffeineImpl.newInstance();
             }
         } else {
-            cacheImpl = EhCacheImpl.newInstance();
+            cacheImpl = CaffeineImpl.newInstance();
         }
     }
 
