@@ -2,6 +2,7 @@ package play;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.FileSystemNotFoundException;
@@ -697,7 +698,18 @@ public class Logger {
         }
 
         public boolean access() throws URISyntaxException {
-            return Paths.get(log4jConf.toURI()).startsWith(Play.applicationPath.toPath());
+            // PF-65: jar:-scheme URIs (the framework's bundled default at
+            // play-{VERSION}.jar!/log4j.properties) have no installed
+            // FileSystemProvider, so Paths.get throws FileSystemNotFoundException.
+            // The bundled default is by definition not user-supplied — return
+            // false directly. Without this guard the exception was caught and
+            // swallowed in Logger.init, leaving log4j unconfigured and tripping
+            // the spurious "auto configuration log4j2" warning on every fresh app.
+            URI uri = log4jConf.toURI();
+            if (!"file".equals(uri.getScheme())) {
+                return false;
+            }
+            return Paths.get(uri).startsWith(Play.applicationPath.toPath());
         }
     }
     /**

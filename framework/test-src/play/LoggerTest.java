@@ -12,6 +12,7 @@ import org.apache.logging.log4j.LogManager;
 import org.junit.jupiter.api.*;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 /**
  * Test the Logger class. At the moment only a few methods.
@@ -143,6 +144,19 @@ public class LoggerTest {
         org.apache.logging.log4j.Logger log4jLogger = Logger.log4j;
         //then
         assertEquals(Level.DEBUG, log4jLogger.getLevel());
+    }
+
+    @Test
+    public void accessReturnsFalseForBundledJarUriWithoutThrowing() throws Exception {
+        // PF-65: jar:-scheme URIs (the framework's bundled default at
+        // play-{VERSION}.jar!/log4j.properties) have no installed
+        // FileSystemProvider. Pre-fix, access() let Paths.get throw
+        // FileSystemNotFoundException, which Logger.init swallowed and
+        // tripped a spurious "auto configuration log4j2" warning on every
+        // fresh app start.
+        Logger.LoggerInit loggerInit = new Logger.LoggerInit();
+        loggerInit.log4jConf = new URL("jar:file:/tmp/play-test.jar!/log4j.properties");
+        assertFalse(loggerInit.access());
     }
 
     private void init() {
