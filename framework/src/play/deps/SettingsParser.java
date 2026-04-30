@@ -187,7 +187,13 @@ public class SettingsParser {
                 String module = null;
                 String organisation = null;
                 String revision = null;
-                Matcher m = Pattern.compile("([^\\s]+)\\s*[-][>]\\s*([^\\s]+)\\s+([^\\s]+)").matcher(v);
+                // PF-57: trailing "(\\s+[^\\s]+)?" optionally absorbs an Ivy classifier token
+                // (e.g. "io.netty -> netty-codec-native-quic 4.2.12.Final osx-aarch_64"). The
+                // YamlParser already accepted classifier syntax for the require: list, but the
+                // contains: list in repository definitions flows through this regex separately.
+                // The classifier is informational here — SettingsParser maps repo->module for
+                // resolution routing and doesn't need to track classifiers.
+                Matcher m = Pattern.compile("([^\\s]+)\\s*[-][>]\\s*([^\\s]+)\\s+([^\\s]+)(\\s+[^\\s]+)?").matcher(v);
                 if (m.matches()) {
                     if (m.groupCount() > 0) {
                         organisation = m.group(1);
@@ -199,7 +205,7 @@ public class SettingsParser {
                         revision = m.group(3).replace("$version", System.getProperty("play.version"));
                     }
                 } else {
-                    m = Pattern.compile("(([^\\s]+))\\s+([^\\s]+)").matcher(v);
+                    m = Pattern.compile("(([^\\s]+))\\s+([^\\s]+)(\\s+[^\\s]+)?").matcher(v);
                     if (m.matches()) {
                         if (m.groupCount() > 0) {
                             organisation = m.group(1);
