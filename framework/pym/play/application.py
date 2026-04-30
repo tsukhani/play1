@@ -302,8 +302,9 @@ class PlayApplication(object):
             java_version = get_java_version()
         print("~ using java version \"%s\"" % java_version)
 
-        if not is_java_version_supported(java_version):
-            print("~ ERROR: java version prior to %s are no longer supported: current version \"%s\" : please update" % (get_minimal_supported_java_version(), java_version))
+        # PF-64: route through the shared helper so app-level commands get
+        # the same multi-line error and fail-fast exit as the top-level CLI.
+        enforce_supported_java_version()
 
         java_policy = self.readConf('java.policy')
         if java_policy != '':

@@ -69,6 +69,11 @@ try:
     if showLogo:
         print("~ play! %s, https://www.playframework.com" % (play_env["version"]))
 
+    # PF-64: pre-flight Java version check before any command dispatch or
+    # Java fork. Catches `play new` and other pre-app-init commands that
+    # don't reach application.py's check.
+    enforce_supported_java_version()
+
     # ~~~~~~~~~~~~~~~~~~~~~~ Where is the application?
     application_path = None
     remaining_args = []

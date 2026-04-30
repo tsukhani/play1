@@ -383,20 +383,27 @@ def java_path():
         return os.path.normpath("%s/bin/java" % os.environ['JAVA_HOME'])
 
 def get_java_version():
-    sp = subprocess.Popen([java_path(), "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    java_version = sp.communicate()
+    try:
+        sp = subprocess.Popen([java_path(), "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        java_version = sp.communicate()
+    except (OSError, FileNotFoundError):
+        # java executable not found at all — the enforce helper turns this
+        # into a friendly "install JDK N+" message via the empty-string path.
+        return ""
     java_version = str(java_version)
-    
+
     result = re.search(r'version "([a-zA-Z0-9\.\-_]{1,})"', java_version)
-    
+
     if result:
         return result.group(1)
     else:
-        print("Unable to retrieve java version from " + java_version)
         return ""
 
 def get_minimal_supported_java_version():
-    return 17
+    # Must match framework/build.xml's build-release property. Bumping this
+    # without recompiling, or vice versa, will surface as cryptic
+    # UnsupportedClassVersionError at runtime — see PF-64.
+    return 25
 
 def is_java_version_supported(java_version):
     try:
@@ -407,5 +414,26 @@ def is_java_version_supported(java_version):
         else:
             num = int(java_version)
         return num >= get_minimal_supported_java_version()
-    except ValueError:
-        return True
+    except (ValueError, AttributeError):
+        # Fail-closed on unparseable / missing version strings: a sub-25 JVM
+        # whose `java -version` output we couldn't parse should not silently
+        # be allowed through.
+        return False
+
+def enforce_supported_java_version():
+    """PF-64: pre-flight Java version check. Called from the top-level `play`
+    entry script before any command dispatch (covers `play new`, `play deps`,
+    etc.) and from application.py for app-level commands. On unsupported
+    runtime, prints a multi-line friendly error and exits non-zero before any
+    Java fork or filesystem mutation."""
+    java_version = get_java_version()
+    if is_java_version_supported(java_version):
+        return
+    minimum = get_minimal_supported_java_version()
+    print("~ ERROR: Play 1.12.x requires Java %d or later." % minimum)
+    if java_version:
+        print("~        Detected: Java %s at %s" % (java_version, java_path()))
+    else:
+        print("~        Could not detect Java at %s — is it installed and on PATH?" % java_path())
+    print("~        Install JDK %d+ and set JAVA_HOME accordingly, or update your PATH." % minimum)
+    sys.exit(1)
