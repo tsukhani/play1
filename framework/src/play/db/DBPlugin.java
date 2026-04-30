@@ -39,14 +39,7 @@ public class DBPlugin extends PlayPlugin {
                 if (!DB.datasources.isEmpty()) {
                     DB.destroyAll();
                 }
-                
-                // Define common parameter here
-                if (play.Logger.usesJuli()) {
-                    System.setProperty("com.mchange.v2.log.MLog", "jul");
-                } else {
-                    System.setProperty("com.mchange.v2.log.MLog", "log4j");
-                }
-                
+
                 Set<String> dbNames = Configuration.getDbNames();
                 for (String name : dbNames) {
                     dbName = name;
@@ -170,7 +163,7 @@ public class DBPlugin extends PlayPlugin {
                     return true;
                 }
             } else {
-                // Internal pool is c3p0, we should call the close() method to destroy it.
+                // Internal pool (HikariCP) needs close() to release connections on shutdown.
                 check(dbConfig, "internal pool", "db.destroyMethod");
 
                 dbConfig.put("db.destroyMethod", "close");

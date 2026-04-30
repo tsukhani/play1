@@ -14,8 +14,7 @@ Most of these libraries are simple helpers that are really straightforward to us
 * "Images":/@api/play/libs/Images.html: Image manipulation utilities.
 * "Mail":/@api/play/libs/Mail.html: E-mail functions.
 * "MimeTypes":/@api/play/libs/MimeTypes.html: Dealing with MIME types.
-* "OAuth":/@api/play/libs/OAuth.html: OAuth client protocol.
-* "OAuth2":/@api/play/libs/OAuth2.html: OAuth2 client protocol.
+* "OAuth2":/@api/play/libs/OAuth2.html: OAuth 2.0 client protocol.
 * "OpenID":/@api/play/libs/OpenID.html: OpenID client protocol.
 * "Time":/@api/play/libs/Time.html: Time and duration utilities.
 * "WS":/@api/play/libs/WS.html: Powerful Web Service client.
@@ -168,66 +167,15 @@ Promise p = Promise.waitEither(p1, p2, p3)
 
 h2. OAuth
 
-"OAuth":http://oauth.net/ is an open protocol for secure API authorization, using a simple and standard approach, from desktop and web applications.
-
-Two different specifications exist: OAuth 1.0 and OAuth 2.0. Play provides libraries to connect as a consumer to services proposing either of these specifications.
+"OAuth 2.0":https://oauth.net/2/ is the standard authorization protocol used by every modern provider. It is used by services such as "Facebook":http://developers.facebook.com/docs/authentication/, Google, GitHub, and most SaaS APIs.
 
 The general process is the following:
 
-* Redirect the user to the provider’s authorization page
-* After the user grants authorization, he is redirected back to your server along with an unauthorized token
-* Your server exchanges the unauthorized token with an access token specific to the current user, that needs to be saved in order to perform requests to the service. This step is done as server-to-server communication.
+* Redirect the user to the provider's authorization page
+* After the user grants authorization, the provider redirects back to your server with a code
+* Your server exchanges the code for an access token specific to the current user, which needs to be saved in order to perform requests to the service. This step is server-to-server.
 
-The Play framework takes care of most of the process.
-
-h3. <a>OAuth 1.0</a>
-
-The OAuth 1.0 functionality is provided by the @play.libs.OAuth@ class and is based on "oauth-signpost":http://code.google.com/p/oauth-signpost/. It is used by services such as "Twitter":http://apiwiki.twitter.com/ or "Google":http://code.google.com/apis/accounts/docs/OAuth.html
-
-To connect to a service, you need the create a OAuth.ServiceInfo instance using the following information, obtained from the service provider:
-* Request token URL
-* Access token URL
-* Authorize URL
-* Consumer key
-* Consumer secret
-
-The access token can be retrieved this way:
-
-bc. public static void authenticate() {
-    // TWITTER is a OAuth.ServiceInfo object
-    // getUser() is a method returning the current user 
-    if (OAuth.isVerifierResponse()) {
-        // We got the verifier; 
-        // now get the access tokens using the request tokens
-        OAuth.Response resp = OAuth.service(TWITTER).retrieveAccessToken(
-            getUser().token, getUser().secret
-        );
-        // let's store them and go back to index
-        getUser().token = resp.token; getUser().secret = resp.secret;
-        getUser().save()
-        index();
-    }
-    OAuth twitt = OAuth.service(TWITTER);
-    Response resp = twitt.retrieveRequestToken();
-    // We received the unauthorized tokens 
-    // we need to store them before continuing
-    getUser().token = resp.token; getUser().secret = resp.secret;
-    getUser().save()
-    // Redirect the user to the authorization page
-    redirect(twitt.redirectUrl(resp.token));
-}
-
-Calls can now be done by signing the requests using the token pair:
-
-bc. mentions = WS.url(url).oauth(TWITTER, getUser().token, getUser().secret).get().getString();
-
-While the example doesn't check for errors, in production you should. The OAuth.Response object holds an error field that is non-null when an error occurred. Most likely it could be that the user didn't grant you access, that the provider is down or buggy.
-
-The full example usage is available in @samples-and-tests/twitter-oauth@.
-
-h3. <a>OAuth 2.0</a>
-
-OAuth 2.0 is much simpler than OAuth 1.0 because it doesn’t involve signing requests. It is used by "Facebook":http://developers.facebook.com/docs/authentication/ and "37signals":http://37signals.com.
+Play takes care of most of the process.
 
 Functionality is provided by @play.libs.OAuth2@.
 

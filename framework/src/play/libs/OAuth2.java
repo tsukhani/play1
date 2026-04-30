@@ -12,8 +12,7 @@ import play.mvc.Scope.Params;
 import play.mvc.results.Redirect;
 
 /**
- * Library to access resources protected by OAuth 2.0. For OAuth 1.0a, see play.libs.OAuth. See the facebook-oauth2
- * example for usage.
+ * Library to access resources protected by OAuth 2.0.
  */
 public class OAuth2 {
 

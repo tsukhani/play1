@@ -50,11 +50,9 @@ public class CryptoTest {
 
     @Test
     public void testPasswordHashPBKDF2RoundTrip() {
-        // Requires Crypto.passwordHashPBKDF2 / checkPasswordPBKDF2 to be present
-        // (added by the security-hardening patch). Un-comment once that is merged.
-        // String hash = Crypto.passwordHashPBKDF2("password");
-        // assertThat(Crypto.checkPasswordPBKDF2("password", hash)).isTrue();
-        // assertThat(Crypto.checkPasswordPBKDF2("wrong", hash)).isFalse();
+        String hash = Crypto.passwordHashPBKDF2("password");
+        assertThat(Crypto.checkPasswordPBKDF2("password", hash)).isTrue();
+        assertThat(Crypto.checkPasswordPBKDF2("wrong", hash)).isFalse();
     }
 
     @Test

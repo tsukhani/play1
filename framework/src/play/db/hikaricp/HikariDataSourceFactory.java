@@ -45,30 +45,10 @@ public class HikariDataSourceFactory implements DataSourceFactory {
     if (dbConfig.getProperty("db.pool.connectionInitSql") != null) {
       ds.setConnectionInitSql(dbConfig.getProperty("db.pool.connectionInitSql"));
     }
-    
-    // not used in HikariCP:
-    // db.pool.initialSize
-    // db.pool.idleConnectionTestPeriod
-    // db.pool.maxIdleTimeExcessConnections
-    // db.pool.acquireIncrement - HikariCP opens connections one at a time, as needed
-    // db.pool.cache.statements - HikariCP does not offer statement caching
-    // db.pool.idle.testInterval - HikariCP tests connections when they're leased, not on a timer
-    // db.pool.connection.threshold - HikariCP doesn't have a percentile idle threshold; db.pool.size.idle can be used to keep a fixed number of connections idle
-    // db.pool.threads - HikariCP does not use extra threads to "aid" connection release
-    // db.pool.maxStatements - HikariCP does not offer PreparedStatement caching
-    // db.pool.maxStatementsPerConnection - HikariCP does not offer PreparedStatement caching
 
-    // I could not find an analogue for HikariCP:
-//    ds.setAcquireRetryAttempts(parseInt(dbConfig.getProperty("db.pool.acquireRetryAttempts", "10")));
-//    ds.setAcquireRetryDelay(parseInt(dbConfig.getProperty("db.pool.acquireRetryDelay", "1000")));
-//    ds.setBreakAfterAcquireFailure(Boolean.parseBoolean(dbConfig.getProperty("db.pool.breakAfterAcquireFailure", "false")));
-//    ds.setTestConnectionOnCheckin(Boolean.parseBoolean(dbConfig.getProperty("db.pool.testConnectionOnCheckin", "true")));
-//    ds.setTestConnectionOnCheckout(Boolean.parseBoolean(dbConfig.getProperty("db.pool.testConnectionOnCheckout", "false")));
-//    ds.setMaxAdministrativeTaskTime(parseInt(dbConfig.getProperty("db.pool.maxAdministrativeTaskTime", "0")));
-//    ds.setNumHelperThreads(parseInt(dbConfig.getProperty("db.pool.numHelperThreads", "3")));
-//    ds.setDebugUnreturnedConnectionStackTraces(Boolean.parseBoolean(dbConfig.getProperty("db.pool.debugUnreturnedConnectionStackTraces", "false")));
-//    ds.setContextClassLoaderSource("library");
-//    ds.setPrivilegeSpawnedThreads(true);
+    if (dbConfig.getProperty("db.isolation") != null) {
+      ds.setTransactionIsolation(toHikariIsolation(dbConfig.getProperty("db.isolation")));
+    }
 
     if (dbConfig.getProperty("db.testquery") != null) {
       ds.setConnectionTestQuery(dbConfig.getProperty("db.testquery"));
@@ -83,13 +63,18 @@ public class HikariDataSourceFactory implements DataSourceFactory {
       }
     }
 
-    // This check is not required, but here to make it clear that nothing changes for people
-    // that don't set this configuration property. It may be safely removed.
-    if(dbConfig.getProperty("db.isolation") != null) {
-//    TODO not yet migrated from c3p0 to Hikari CP:
-//      ds.setConnectionCustomizerClassName(PlayConnectionCustomizer.class.getName());
-    }
     return ds;
+  }
+
+  /**
+   * HikariCP only accepts the JDBC enum-name form (TRANSACTION_*). Map the legacy
+   * Play short names (NONE/READ_UNCOMMITTED/READ_COMMITTED/REPEATABLE_READ/SERIALIZABLE)
+   * to the HikariCP form for backward compat with apps configured against the older c3p0
+   * path. Already-prefixed values pass through unchanged.
+   */
+  private static String toHikariIsolation(String value) {
+    if (value.startsWith("TRANSACTION_")) return value;
+    return "TRANSACTION_" + value;
   }
 
   @Override

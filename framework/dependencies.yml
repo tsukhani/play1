@@ -8,7 +8,6 @@ transitiveDependencies: false
 # This core dependencies are required by Play framework
 require:    &allDependencies
     - antlr4-runtime 4.13.0
-    - com.mchange -> c3p0 0.10.2
     - com.zaxxer -> HikariCP 5.1.0
     - org.ow2.asm -> asm 9.8
     - org.ow2.asm -> asm-commons 9.8
@@ -53,7 +52,6 @@ require:    &allDependencies
     - net.sf.jsr107cache -> jsr107cache 1.1
     - net.sf.oval -> oval 4.0.0
     - com.mysql -> mysql-connector-j 9.3.0
-    - oauth.signpost -> signpost-core 1.2.1.2
     - jakarta.servlet -> jakarta.servlet-api 6.0.0
     - org.apache.ivy -> ivy 2.5.3
     - org.bouncycastle -> bcprov-jdk18on 1.81
@@ -73,9 +71,7 @@ require:    &allDependencies
     - jakarta.xml.bind -> jakarta.xml.bind-api 4.0.2
     - org.glassfish.jaxb -> jaxb-runtime 2.3.9
     - com.fasterxml -> classmate 1.7.0
-    - org.hibernate.orm -> hibernate-c3p0 7.2.0.Final
     - org.hibernate.orm -> hibernate-jcache 7.2.0.Final
-    - com.mchange -> mchange-commons-java 0.3.2
     - org.javassist -> javassist 3.30.2-GA
     - io.netty -> netty-buffer 4.2.12.Final
     - io.netty -> netty-codec-base 4.2.12.Final

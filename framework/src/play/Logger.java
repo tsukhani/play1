@@ -53,8 +53,6 @@ public class Logger {
      */
     public static boolean configuredManually = false;
 
-    public static boolean usesJuli() { return forceJuli || log4j == null; }
-
     /**
      * Try to init stuff.
      */
@@ -567,9 +565,6 @@ public class Logger {
                         continue; // not very interesting
                     }
                     if (se.getClassName().startsWith("java.lang.reflect.")) {
-                        continue; // not very interesting
-                    }
-                    if (se.getClassName().startsWith("com.mchange.v2.c3p0.")) {
                         continue; // not very interesting
                     }
                     if (se.getClassName().startsWith("scala.tools.")) {

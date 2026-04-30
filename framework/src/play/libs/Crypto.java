@@ -1,7 +1,6 @@
 package play.libs;
 
 import java.security.InvalidKeyException;
-import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.security.spec.KeySpec;
@@ -27,28 +26,6 @@ import static java.nio.charset.StandardCharsets.UTF_8;
  * Cryptography utils
  */
 public class Crypto {
-
-    /**
-     * Define a hash type enumeration for strong-typing
-     */
-    public enum HashType {
-        MD5("MD5"), SHA1("SHA-1"), SHA256("SHA-256"), SHA512("SHA-512");
-        private final String algorithm;
-
-        HashType(String algorithm) {
-            this.algorithm = algorithm;
-        }
-
-        @Override
-        public String toString() {
-            return this.algorithm;
-        }
-    }
-
-    /**
-     * Default hash type kept for legacy compatibility via passwordHash(String, HashType)
-     */
-    private static final HashType DEFAULT_HASH_TYPE = HashType.MD5;
 
     static final char[] HEX_CHARS = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f' };
 
@@ -95,7 +72,7 @@ public class Crypto {
     }
 
     /**
-     * Create a password hash using PBKDF2WithHmacSHA256
+     * Create a password hash using PBKDF2WithHmacSHA256 with a random salt.
      *
      * @param input
      *            The password
@@ -103,25 +80,6 @@ public class Crypto {
      */
     public static String passwordHash(String input) {
         return passwordHashPBKDF2(input);
-    }
-
-    /**
-     * Create a password hash using specific hashing algorithm
-     *
-     * @param input
-     *            The password
-     * @param hashType
-     *            The hashing algorithm
-     * @return The password hash
-     */
-    public static String passwordHash(String input, HashType hashType) {
-        try {
-            MessageDigest m = MessageDigest.getInstance(hashType.toString());
-            byte[] out = m.digest(input.getBytes(UTF_8));
-            return new String(Base64.encodeBase64(out));
-        } catch (NoSuchAlgorithmException e) {
-            throw new RuntimeException(e);
-        }
     }
 
     /**

@@ -25,10 +25,6 @@ import java.util.Map;
 
 import javax.net.ssl.SSLContext;
 
-import oauth.signpost.AbstractOAuthConsumer;
-import oauth.signpost.exception.OAuthCommunicationException;
-import oauth.signpost.exception.OAuthExpectationFailedException;
-import oauth.signpost.exception.OAuthMessageSignerException;
 
 import org.apache.commons.lang3.NotImplementedException;
 
@@ -36,7 +32,6 @@ import play.Logger;
 import play.Play;
 import play.libs.F.Promise;
 import play.libs.MimeTypes;
-import play.libs.OAuth.ServiceInfo;
 import play.libs.WS;
 import play.libs.WS.FileParam;
 import play.mvc.Http.Header;
@@ -175,42 +170,36 @@ public class WSAsync implements WS.WSImpl {
         @Override
         public WS.HttpResponse get() {
             this.type = "GET";
-            sign();
             return executeSync();
         }
 
         @Override
         public Promise<WS.HttpResponse> getAsync() {
             this.type = "GET";
-            sign();
             return executeAsync();
         }
 
         @Override
         public WS.HttpResponse patch() {
             this.type = "PATCH";
-            sign();
             return executeSync();
         }
 
         @Override
         public Promise<WS.HttpResponse> patchAsync() {
             this.type = "PATCH";
-            sign();
             return executeAsync();
         }
 
         @Override
         public WS.HttpResponse post() {
             this.type = "POST";
-            sign();
             return executeSync();
         }
 
         @Override
         public Promise<WS.HttpResponse> postAsync() {
             this.type = "POST";
-            sign();
             return executeAsync();
         }
 
@@ -272,17 +261,6 @@ public class WSAsync implements WS.WSImpl {
         public Promise<WS.HttpResponse> traceAsync() {
             this.type = "TRACE";
             throw new NotImplementedException();
-        }
-
-        private void sign() {
-            if (this.oauthToken != null && this.oauthSecret != null) {
-                WSOAuthConsumer consumer = new WSOAuthConsumer(oauthInfo, oauthToken, oauthSecret);
-                try {
-                    consumer.sign(this, this.type);
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
-                }
-            }
         }
 
         private java.net.http.HttpRequest buildRequest() {
@@ -583,90 +561,4 @@ public class WSAsync implements WS.WSImpl {
         }
     }
 
-    private static class WSOAuthConsumer extends AbstractOAuthConsumer {
-
-        public WSOAuthConsumer(String consumerKey, String consumerSecret) {
-            super(consumerKey, consumerSecret);
-        }
-
-        public WSOAuthConsumer(ServiceInfo info, String token, String secret) {
-            super(info.consumerKey, info.consumerSecret);
-            setTokenWithSecret(token, secret);
-        }
-
-        @Override
-        protected oauth.signpost.http.HttpRequest wrap(Object request) {
-            if (!(request instanceof WS.WSRequest)) {
-                throw new IllegalArgumentException("WSOAuthConsumer expects requests of type play.libs.WS.WSRequest");
-            }
-            return new WSRequestAdapter((WS.WSRequest) request);
-        }
-
-        public WS.WSRequest sign(WS.WSRequest request, String method)
-                throws OAuthMessageSignerException, OAuthExpectationFailedException, OAuthCommunicationException {
-            WSRequestAdapter req = (WSRequestAdapter) wrap(request);
-            req.setMethod(method);
-            sign(req);
-            return request;
-        }
-
-        public static class WSRequestAdapter implements oauth.signpost.http.HttpRequest {
-
-            private final WS.WSRequest request;
-            private String method;
-
-            public WSRequestAdapter(WS.WSRequest request) {
-                this.request = request;
-            }
-
-            @Override
-            public Map<String, String> getAllHeaders() {
-                return request.headers;
-            }
-
-            @Override
-            public String getContentType() {
-                return request.mimeType;
-            }
-
-            @Override
-            public Object unwrap() {
-                return null;
-            }
-
-            @Override
-            public String getHeader(String name) {
-                return request.headers.get(name);
-            }
-
-            @Override
-            public InputStream getMessagePayload() throws IOException {
-                return null;
-            }
-
-            @Override
-            public String getMethod() {
-                return this.method;
-            }
-
-            private void setMethod(String method) {
-                this.method = method;
-            }
-
-            @Override
-            public String getRequestUrl() {
-                return request.url;
-            }
-
-            @Override
-            public void setHeader(String name, String value) {
-                request.setHeader(name, value);
-            }
-
-            @Override
-            public void setRequestUrl(String url) {
-                request.url = url;
-            }
-        }
-    }
 }

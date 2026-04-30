@@ -42,7 +42,7 @@ python3 play auto-test samples-and-tests/just-test-cases
 ### Key Packages (`framework/src/play/`)
 
 - **`mvc/`** — `Controller`, `Router`, `ActionInvoker`, `Http` (request/response/session objects)
-- **`db/`** and **`db/jpa/`** — Database connectivity (HikariCP/c3p0), JPA/Hibernate integration, `Evolutions` for schema migrations
+- **`db/`** and **`db/jpa/`** — Database connectivity (HikariCP), JPA/Hibernate integration, `Evolutions` for schema migrations
 - **`data/binding/`** — HTTP parameter → Java object binding (`TypeBinder`/`TypeUnbinder`, `BeanWrapper`)
 - **`data/validation/`** — Form validation framework
 - **`templates/`** — Groovy-based template engine, `FastTags` for custom template tags

@@ -19,8 +19,6 @@ import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSocketFactory;
 
-import oauth.signpost.OAuthConsumer;
-import oauth.signpost.basic.DefaultOAuthConsumer;
 import play.Logger;
 import play.Play;
 import play.libs.IO;
@@ -240,11 +238,6 @@ public class WSUrlFetch implements WSImpl {
                     connection.setRequestProperty(key, headers.get(key));
                 }
 
-                if (this.oauthToken != null && this.oauthSecret != null) {
-                    OAuthConsumer consumer = new DefaultOAuthConsumer(oauthInfo.consumerKey, oauthInfo.consumerSecret);
-                    consumer.setTokenWithSecret(oauthToken, oauthSecret);
-                    consumer.sign(connection);
-                }
                 checkFileBody((HttpURLConnection) connection);
                 return (HttpURLConnection) connection;
             } catch (Exception e) {
