@@ -192,7 +192,11 @@ public class SettingsParser {
                 // YamlParser already accepted classifier syntax for the require: list, but the
                 // contains: list in repository definitions flows through this regex separately.
                 // The classifier is informational here — SettingsParser maps repo->module for
-                // resolution routing and doesn't need to track classifiers.
+                // resolution routing and doesn't need to track classifiers. Only the FIRST regex
+                // (org -> module rev) gets the optional classifier; widening the second regex
+                // (module rev, no org) caused "play -> play" to accidentally match it with
+                // revision="->" because optional-group addition made the regex more permissive
+                // and short-circuited the third (org -> module no-rev) regex below.
                 Matcher m = Pattern.compile("([^\\s]+)\\s*[-][>]\\s*([^\\s]+)\\s+([^\\s]+)(\\s+[^\\s]+)?").matcher(v);
                 if (m.matches()) {
                     if (m.groupCount() > 0) {
@@ -205,7 +209,7 @@ public class SettingsParser {
                         revision = m.group(3).replace("$version", System.getProperty("play.version"));
                     }
                 } else {
-                    m = Pattern.compile("(([^\\s]+))\\s+([^\\s]+)(\\s+[^\\s]+)?").matcher(v);
+                    m = Pattern.compile("(([^\\s]+))\\s+([^\\s]+)").matcher(v);
                     if (m.matches()) {
                         if (m.groupCount() > 0) {
                             organisation = m.group(1);
