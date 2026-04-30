@@ -112,7 +112,7 @@ Run the full Play Framework release deployment:
      ```bash
      gh release create v{VERSION} framework/dist/play-{VERSION}.zip \
        --repo tsukhani/play1 \
-       --title "Play Framework {VERSION}" \
+       --title "Play Framework v{VERSION}" \
        --notes "Maintenance release."
      ```
      If there are noteworthy commits between the previous release and this one (run `git log <previous-tag>..HEAD --oneline` to see), write a short release-notes summary in place of the default `Maintenance release.` text.
