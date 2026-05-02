@@ -126,7 +126,35 @@ Run the full Play Framework release deployment:
    gh release view v{VERSION} --repo tsukhani/play1
    ```
 
-7. **Report**
+7. **Trim old releases — keep only the 5 most recent per major.minor series**
+
+   The repo retains at most 5 releases per `major.minor` series (e.g. 5 of `1.12.x`, 5 of `1.11.x`). Older releases are deleted to keep the Releases tab focused on actively-supported versions. **Git tags are preserved** so source archaeology (`git checkout v1.12.20`) still works — only the GitHub Release wrapper and its attached zip go away.
+
+   Group by `major.minor`, sort each group by patch number descending, slice off the first 5 (keepers), and delete the rest:
+
+   ```bash
+   gh release list --repo tsukhani/play1 --limit 100 --json tagName --jq '
+     [.[].tagName]
+     | group_by(. | capture("v(?<series>\\d+\\.\\d+)\\.").series)
+     | map(sort_by(. | capture("\\.(?<patch>\\d+)$").patch | tonumber) | reverse | .[5:])
+     | flatten
+     | .[]
+   ' \
+     | while read -r tag; do
+         echo "trimming $tag (preserving git tag)"
+         gh release delete "$tag" --repo tsukhani/play1 --yes
+       done
+   ```
+
+   Verify the cap:
+   ```bash
+   gh release list --repo tsukhani/play1 --limit 50 --json tagName --jq '.[].tagName' | sort -V
+   ```
+   No `major.minor` series should have more than 5 entries. If the just-published `v{VERSION}` is missing, something went wrong — stop and investigate (the trim should never delete the release we just made; a fresh release is always among the top 5 of its series by patch number).
+
+   Note: this step assumes strict semver tags like `v1.12.25`. Pre-release tags (`v1.12.25-rc1`) will break the patch regex — that is intentional, the script fails loudly so we re-think the policy when we add pre-releases.
+
+8. **Report**
 
    Summarise:
    - Version deployed
@@ -134,3 +162,4 @@ Run the full Play Framework release deployment:
    - Both push results
    - Tag SHA confirmed on local + origin + github
    - GitHub release URL
+   - Number of old releases trimmed (if any)
