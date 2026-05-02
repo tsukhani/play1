@@ -97,39 +97,27 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
      */
     private static final Set<String> allowedHttpMethodOverride;
 
-    /**
-     * PF-57: pre-formatted {@code Alt-Svc} header value to advertise an HTTP/3 endpoint
-     * to TCP clients. {@code null} when {@code play.http3.enabled=false}; emitted on every
-     * response over a TLS-protected request when set. Read once at class load — the same
-     * static-config-read pattern other PlayHandler config keys use, so changing the value
-     * requires a JVM restart.
-     */
-    private static final String altSvcHeaderValue;
-
     static {
         exposePlayServer = !"false".equals(Play.configuration.getProperty("http.exposePlayServer"));
         allowedHttpMethodOverride = Stream.of(Play.configuration.getProperty("http.allowed.method.override", "").split(",")).collect(Collectors.toUnmodifiableSet());
-        altSvcHeaderValue = computeAltSvcHeader();
     }
 
     /**
-     * Build the {@code Alt-Svc} value: {@code h3=":<port>"; ma=86400}. The port is
-     * {@code play.http3.port} if set, falling back to {@code https.port} (the standard
-     * deployment shape). {@code ma=86400} is the cache lifetime in seconds — clients
-     * remember the h3 endpoint for 24h and try QUIC for subsequent requests.
+     * PF-57 + flag-removal: build the {@code Alt-Svc} value if h3 is actually serving on
+     * this JVM. The advertisement is gated on {@link play.server.Server#http3BoundOnHttpsPort}
+     * — set by Server.java only after a successful UDP bind — so we never advertise h3 on a
+     * platform where the native-quic library is missing or the UDP bind failed. The h3
+     * endpoint is always on the same port as HTTPS (TCP and UDP have separate port spaces);
+     * {@code ma=86400} is the cache lifetime in seconds (clients remember the endpoint for
+     * 24h and try QUIC for subsequent requests). Computed per-response rather than cached
+     * at class load because PlayHandler may load before {@link play.server.Server#start}
+     * finishes its UDP bind.
      */
-    private static String computeAltSvcHeader() {
-        if (!Boolean.parseBoolean(Play.configuration.getProperty("play.http3.enabled", "false"))) {
+    private static String currentAltSvcHeaderValue() {
+        if (!play.server.Server.http3BoundOnHttpsPort) {
             return null;
         }
-        String httpsPort = Play.configuration.getProperty("https.port");
-        String port = Play.configuration.getProperty("play.http3.port", httpsPort);
-        if (port == null || port.isBlank() || "-1".equals(port.trim())) {
-            // h3 enabled but no usable port — Server.java will fail-fast at boot anyway,
-            // so just don't emit an Alt-Svc header pointing at a phantom port.
-            return null;
-        }
-        return "h3=\":" + port.trim() + "\"; ma=86400";
+        return "h3=\":" + play.server.Server.httpsPort + "\"; ma=86400";
     }
 
     @Override
@@ -483,13 +471,14 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
         // h3 endpoint to users who connected over plain HTTP. User-set Alt-Svc headers
         // win — the previous loop ran before this set(), so an explicit value in
         // response.headers takes precedence over the framework default.
-        if (altSvcHeaderValue != null && !nettyResponse.headers().contains("Alt-Svc")) {
+        String altSvc = currentAltSvcHeaderValue();
+        if (altSvc != null && !nettyResponse.headers().contains("Alt-Svc")) {
             Request currentRequest = null;
             try {
                 currentRequest = Request.current();
             } catch (Throwable ignored) { /* request thread-local not bound on edge paths */ }
             if (currentRequest != null && currentRequest.secure) {
-                nettyResponse.headers().set("Alt-Svc", altSvcHeaderValue);
+                nettyResponse.headers().set("Alt-Svc", altSvc);
             }
         }
 

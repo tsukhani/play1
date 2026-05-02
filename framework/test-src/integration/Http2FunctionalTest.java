@@ -77,16 +77,18 @@ public class Http2FunctionalTest {
 
     @Test
     void tlsResponsesAdvertiseH3ViaAltSvc() throws Exception {
-        // PF-57 cascade: when play.http3.enabled=true, every TLS-protected response
-        // carries an Alt-Svc header pointing browsers at the QUIC endpoint. Asserting
-        // this on the h2 path (since h2 is what cold browsers will land on first when
-        // both flags are on) verifies the negotiation chain wires up correctly:
+        // PF-57 cascade: when h3 is bound (which is automatic when https.port is set
+        // and native QUIC is available), every TLS-protected response carries an
+        // Alt-Svc header pointing browsers at the QUIC endpoint on the SAME port as
+        // HTTPS (TCP and UDP have separate port spaces). Asserting this on the h2
+        // path (since h2 is what cold browsers land on first) verifies the
+        // negotiation chain wires up correctly:
         // TCP → TLS → ALPN h2 → Alt-Svc → next request flips to h3.
         HttpResponse<String> h2 = client(HttpClient.Version.HTTP_2)
                 .send(HttpRequest.newBuilder(URI.create(BASE + "/json")).build(),
                         HttpResponse.BodyHandlers.ofString());
         String altSvc = h2.headers().firstValue("alt-svc").orElse(null);
-        assertNotNull(altSvc, "Alt-Svc header must be present on TLS responses when play.http3.enabled=true");
+        assertNotNull(altSvc, "Alt-Svc header must be present on TLS responses when h3 is bound");
         assertTrue(altSvc.contains("h3=\":19443\""),
                 "Alt-Svc must advertise h3 endpoint at the configured port; got: " + altSvc);
         assertTrue(altSvc.contains("ma="),

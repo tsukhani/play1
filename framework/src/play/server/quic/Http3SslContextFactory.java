@@ -57,12 +57,12 @@ public final class Http3SslContextFactory {
         }
 
         // JKS path: load the configured keystore and wrap a KeyManagerFactory. Same defaults
-        // as the h2/h1 path so an existing keystore deployment can flip
-        // play.http3.enabled=true without re-configuring cert paths.
+        // as the h2/h1 path so an existing keystore deployment activates HTTP/3 implicitly
+        // when https.port is set (no separate cert config needed).
         File keystoreFile = Play.getFile(p.getProperty("keystore.file", "conf/certificate.jks"));
         if (!keystoreFile.exists()) {
             throw new IllegalStateException(
-                    "PF-57: play.http3.enabled=true but no cert source found. Configure either "
+                    "PF-57: HTTP/3 needs an HTTPS cert source. Configure either "
                             + "PEM (certificate.file + certificate.key.file) or JKS (keystore.file). "
                             + "Looked for cert at " + certFile.getAbsolutePath()
                             + ", key at " + keyFile.getAbsolutePath()

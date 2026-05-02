@@ -9,9 +9,20 @@
 ~ Description:
 ~ ~~~~~~~~~~~~
 ~ Configures the application to listen for HTTPS on port 9443 alongside
-~ the plain HTTP listener on port 9000. ALPN h2 negotiation is always
-~ enabled at the framework level — modern clients get HTTP/2; older
-~ clients automatically fall back to HTTP/1.1 over the same socket.
+~ the plain HTTP listener on port 9000. The framework activates ALL
+~ three modern HTTP versions automatically when HTTPS is on:
+~
+~   • HTTP/1.1 over TLS (ALPN fallback for old clients)
+~   • HTTP/2 over TLS (ALPN h2 — modern browsers, curl --http2, etc.)
+~   • HTTP/3 over QUIC (UDP same-port; advertised via Alt-Svc header so
+~     clients discover it after their first HTTPS request)
+~
+~ Graceful degradation: HTTP/3 needs the Netty native QUIC library,
+~ shipped for osx-{aarch_64,x86_64}, linux-{aarch_64,x86_64}, and
+~ windows-x86_64. On linux-riscv64 (or anywhere the native binary won't
+~ link), the framework logs a WARN and skips the UDP listener; HTTPS,
+~ HTTP/2, and HTTP/1.1 keep working normally on TCP.
+~
 ~ Performs three steps idempotently:
 ~
 ~   1. If conf/certificate.jks does not exist, generate a self-signed JKS

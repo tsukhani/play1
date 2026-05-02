@@ -102,7 +102,8 @@ require:    &allDependencies
     # latently broken since the Netty 4.2 migration (PF-31); surfaced when PF-58
     # added the first integration test that opens a real TLS socket.
     - io.netty -> netty-transport-native-unix-common 4.2.12.Final
-    # PF-57: HTTP/3 over QUIC. Activated only when play.http3.enabled=true.
+    # PF-57: HTTP/3 over QUIC. Activated automatically when https.port is set
+    # (subject to native QUIC availability — see Http3SslContextFactory).
     # netty-codec-http3 ships the Http3* frame codec + Http3ServerConnectionHandler;
     # netty-codec-classes-quic ships the QUIC transport classes (QuicSslContextBuilder,
     # QuicServerCodecBuilder, QuicChannel, QuicStreamChannel). The native-quic artifact

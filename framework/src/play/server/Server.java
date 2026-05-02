@@ -34,6 +34,14 @@ public class Server {
     public static int httpPort;
     public static int httpsPort;
 
+    /**
+     * PF-57 + flag-removal: set to {@code true} after a successful UDP-bound h3 listener
+     * on {@link #httpsPort}. PlayHandler reads this when deciding whether to emit the
+     * {@code Alt-Svc} header — we only advertise h3 if it actually bound, so platforms
+     * without native QUIC don't lure clients into UDP timeouts.
+     */
+    public static volatile boolean http3BoundOnHttpsPort = false;
+
     public static final String PID_FILE = "server.pid";
 
     /**
@@ -157,73 +165,65 @@ public class Server {
             Play.fatalServerErrorOccurred();
         }
 
-        // PF-57: HTTP/3 over QUIC. Opt-in via play.http3.enabled. Binds a UDP listener
-        // alongside the existing TCP HTTP/HTTPS listeners. UDP port defaults to the HTTPS
-        // port so a single externally-visible port number serves both TCP+TLS (h1.1/h2)
-        // and UDP+QUIC (h3) — the standard h3 deployment shape.
-        boolean http3Enabled = Boolean.parseBoolean(Play.configuration.getProperty("play.http3.enabled", "false"));
-        if (http3Enabled) {
-            if (httpsPort == -1) {
-                Logger.error("play.http3.enabled=true requires https.port to be set (HTTP/3 has no plaintext mode)");
-                Play.fatalServerErrorOccurred();
-            }
-            // Quic.isAvailable() returns false on platforms without a published native-quic
-            // artifact (e.g. linux-riscv64) or when the JNI loader couldn't link the binary.
-            // Fail loudly with the underlying cause so operators see exactly what's missing.
-            if (!Quic.isAvailable()) {
+        // PF-57 + flag-removal: HTTP/3 over QUIC, implicitly activated when HTTPS is
+        // configured (no separate play.http3.enabled flag). Binds a UDP listener on the
+        // same port number as HTTPS — TCP and UDP have separate port spaces, so TCP:9443
+        // and UDP:9443 coexist. This is the standard h3 deployment shape; clients
+        // discover the h3 endpoint via the Alt-Svc header on TCP HTTPS responses
+        // (PlayHandler) and switch to QUIC for subsequent requests.
+        //
+        // Graceful degradation: on platforms without a native-quic artifact
+        // (linux-riscv64, plus any future arch we haven't shipped a binary for) or when
+        // Netty's QUIC JNI fails to link, the framework logs a WARN and skips the UDP
+        // listener. HTTPS+h2+h1.1 keep working normally on TCP. The matching Alt-Svc
+        // suppression in PlayHandler reads the same Server.http3BoundOnHttpsPort flag.
+        if (httpsPort != -1) {
+            if (Quic.isAvailable()) {
+                try {
+                    EventLoopGroup quicGroup = new NioEventLoopGroup(1);
+                    registerForShutdown(quicGroup);
+                    ChannelHandler quicCodec = Http3.newQuicServerCodecBuilder()
+                            .sslContext(Http3SslContextFactory.getServerContext())
+                            // Generous stream + data limits matching Netty's HTTP/3 example. PlayHandler
+                            // already enforces play.netty.maxContentLength via StreamChunkAggregator;
+                            // these limits gate the QUIC flow-control window before that.
+                            .maxIdleTimeout(30_000, java.util.concurrent.TimeUnit.MILLISECONDS)
+                            .initialMaxData(10_000_000)
+                            .initialMaxStreamDataBidirectionalLocal(1_000_000)
+                            .initialMaxStreamDataBidirectionalRemote(1_000_000)
+                            .initialMaxStreamsBidirectional(100)
+                            .initialMaxStreamsUnidirectional(100)
+                            // PF-57 phase 1+2 ships with InsecureQuicTokenHandler — accepts any retry
+                            // token without cryptographic validation. Suitable for dev + non-DDoS-exposed
+                            // deployments. Phase 3 follow-up: replace with a token handler keyed by a
+                            // server-side secret so retry tokens can't be forged.
+                            .tokenHandler(InsecureQuicTokenHandler.INSTANCE)
+                            .handler(new Http3ServerInitializer())
+                            .build();
+                    Bootstrap bootstrap = new Bootstrap();
+                    bootstrap.group(quicGroup)
+                            .channel(NioDatagramChannel.class)
+                            .handler(quicCodec);
+                    bootstrap.bind(new InetSocketAddress(secureAddress, httpsPort)).syncUninterruptibly();
+                    http3BoundOnHttpsPort = true;
+                    if (secureAddress == null) {
+                        Logger.info("Listening for HTTP/3 on UDP port %s ...", httpsPort);
+                    } else {
+                        Logger.info("Listening for HTTP/3 at %2$s:%1$s  ...", httpsPort, secureAddress);
+                    }
+                } catch (ChannelException e) {
+                    Logger.warn(e, "Could not bind QUIC on UDP port %s — HTTP/3 disabled, HTTPS+h2+h1.1 still active.", httpsPort);
+                } catch (Exception e) {
+                    Logger.warn(e, "Could not initialize HTTP/3 server — HTTPS+h2+h1.1 still active.");
+                }
+            } else {
                 Throwable cause = Quic.unavailabilityCause();
                 String arch = System.getProperty("os.arch");
                 String os = System.getProperty("os.name");
-                Logger.error(cause, "play.http3.enabled=true but Netty QUIC native is unavailable on %s/%s. "
-                        + "PF-57 ships native-quic for osx-{aarch_64,x86_64}, linux-{aarch_64,x86_64}, "
-                        + "windows-x86_64; other platforms (e.g. linux-riscv64) must run with play.http3.enabled=false.",
+                Logger.warn(cause, "Netty QUIC native is unavailable on %s/%s — HTTP/3 disabled, "
+                        + "HTTPS+h2+h1.1 still active. PF-57 ships native-quic for "
+                        + "osx-{aarch_64,x86_64}, linux-{aarch_64,x86_64}, windows-x86_64.",
                         os, arch);
-                Play.fatalServerErrorOccurred();
-            }
-            int http3Port;
-            try {
-                http3Port = Integer.parseInt(Play.configuration.getProperty("play.http3.port", String.valueOf(httpsPort)));
-            } catch (NumberFormatException nfe) {
-                Logger.error(nfe, "Invalid play.http3.port; falling back to https.port=%s", httpsPort);
-                http3Port = httpsPort;
-            }
-            try {
-                EventLoopGroup quicGroup = new NioEventLoopGroup(1);
-                registerForShutdown(quicGroup);
-                ChannelHandler quicCodec = Http3.newQuicServerCodecBuilder()
-                        .sslContext(Http3SslContextFactory.getServerContext())
-                        // Generous stream + data limits matching Netty's HTTP/3 example. PlayHandler
-                        // already enforces play.netty.maxContentLength via StreamChunkAggregator;
-                        // these limits gate the QUIC flow-control window before that.
-                        .maxIdleTimeout(30_000, java.util.concurrent.TimeUnit.MILLISECONDS)
-                        .initialMaxData(10_000_000)
-                        .initialMaxStreamDataBidirectionalLocal(1_000_000)
-                        .initialMaxStreamDataBidirectionalRemote(1_000_000)
-                        .initialMaxStreamsBidirectional(100)
-                        .initialMaxStreamsUnidirectional(100)
-                        // PF-57 phase 1+2 ships with InsecureQuicTokenHandler — accepts any retry
-                        // token without cryptographic validation. Suitable for dev + non-DDoS-exposed
-                        // deployments. Phase 3 follow-up: replace with a token handler keyed by a
-                        // server-side secret so retry tokens can't be forged.
-                        .tokenHandler(InsecureQuicTokenHandler.INSTANCE)
-                        .handler(new Http3ServerInitializer())
-                        .build();
-                Bootstrap bootstrap = new Bootstrap();
-                bootstrap.group(quicGroup)
-                        .channel(NioDatagramChannel.class)
-                        .handler(quicCodec);
-                bootstrap.bind(new InetSocketAddress(secureAddress, http3Port)).syncUninterruptibly();
-                if (secureAddress == null) {
-                    Logger.info("Listening for HTTP/3 on UDP port %s ...", http3Port);
-                } else {
-                    Logger.info("Listening for HTTP/3 at %2$s:%1$s  ...", http3Port, secureAddress);
-                }
-            } catch (ChannelException e) {
-                Logger.error("Could not bind QUIC on UDP port " + http3Port, e);
-                Play.fatalServerErrorOccurred();
-            } catch (Exception e) {
-                Logger.error(e, "Could not initialize HTTP/3 server");
-                Play.fatalServerErrorOccurred();
             }
         }
 
