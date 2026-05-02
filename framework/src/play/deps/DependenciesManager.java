@@ -4,6 +4,7 @@ import java.io.File;
 import java.io.FileFilter;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -126,11 +127,24 @@ public class DependenciesManager {
 
         List<File> notSync = new ArrayList<>();
 
+        // PF-70: install() canonicalizes its return path, but path.listFiles() returns
+        // non-canonicalized Files. When the application root traverses a symlink
+        // (e.g. /tmp -> /private/tmp on macOS) the two forms don't equal each other,
+        // and every freshly installed jar/module gets reported as "unknown" and
+        // deleted on the very same sync pass that just installed it. Canonicalize
+        // both sides so the comparison is symlink-agnostic.
+        Set<File> installedCanonical = new HashSet<>();
+        for (File f : installed) {
+            if (f != null) {
+                installedCanonical.add(canonicalOrSelf(f));
+            }
+        }
+
         File[] paths = new File[] { new File(application, "lib"), new File(application, "modules") };
         for (File path : paths) {
             if (path.exists()) {
                 for (File f : path.listFiles()) {
-                    if (!installed.contains(f)) {
+                    if (!installedCanonical.contains(canonicalOrSelf(f))) {
                         notSync.add(f);
                     }
                 }
@@ -158,6 +172,14 @@ public class DependenciesManager {
                 System.out.println("~ \tUnknown: " + f.getAbsolutePath());
             }
             System.out.println("~ *****************************************************************************");
+        }
+    }
+
+    private static File canonicalOrSelf(File f) {
+        try {
+            return f.getCanonicalFile();
+        } catch (IOException e) {
+            return f;
         }
     }
 
