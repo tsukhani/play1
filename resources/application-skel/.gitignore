@@ -1,10 +1,9 @@
-# Real environment values (with secrets) — never committed.
-# `.env.example` (without leading dot-env-anything-else) is the committed template.
-.env
-.env.local
-
-# TLS certs + keys + PF-71 secret env file all live here. Never commit.
-/certs/
+# All runtime security material lives in /certs/: TLS host.cert + host.key
+# (PF-69), and the populated .env with real secrets (PF-71). Never commit any
+# of those. The committed exception is .env.example — a template documenting
+# which env vars the app needs, with placeholder values only.
+/certs/*
+!/certs/.env.example
 
 # Play artifacts
 /tmp/

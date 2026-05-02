@@ -290,8 +290,8 @@ class TestPlaySecret(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_play_new_writes_secret_to_certs_dotenv(self):
-        # After `play new`, the secret file lives at certs/.env, NOT at the
-        # project-root .env (which was the legacy location pre-PF-71).
+        # After `play new`, the secret file lives at certs/.env. Project-root
+        # .env should never exist (PF-71 alpha — no legacy back-compat).
         certs_env = os.path.join(self.app_path, 'certs', '.env')
         legacy_env = os.path.join(self.app_path, '.env')
         self.assertTrue(os.path.isfile(certs_env), '%s should exist' % certs_env)
@@ -300,11 +300,15 @@ class TestPlaySecret(unittest.TestCase):
             content = f.read()
         self.assertIn('PLAY_SECRET=', content)
 
-    def test_dotenv_example_stays_at_project_root(self):
-        # .env.example is a committed template, not a secret — it stays at the
-        # project root so onboarding `cp .env.example certs/.env` is discoverable.
-        example = os.path.join(self.app_path, '.env.example')
-        self.assertTrue(os.path.isfile(example), '%s should exist' % example)
+    def test_dotenv_example_lives_under_certs(self):
+        # PF-71: .env.example moved to certs/ to keep template + populated file
+        # adjacent. The legacy project-root .env.example must not exist.
+        example_certs = os.path.join(self.app_path, 'certs', '.env.example')
+        example_legacy = os.path.join(self.app_path, '.env.example')
+        self.assertTrue(os.path.isfile(example_certs),
+                        '%s should exist' % example_certs)
+        self.assertFalse(os.path.exists(example_legacy),
+                         '%s should NOT exist (PF-71)' % example_legacy)
 
     def test_secret_file_mode_is_600(self):
         # Production-grade hardening: the secret file must not be world-/group-
@@ -313,6 +317,29 @@ class TestPlaySecret(unittest.TestCase):
         mode = os.stat(certs_env).st_mode & 0o777
         self.assertEqual(mode, 0o600,
                          'expected mode 0o600, got 0o%o' % mode)
+
+    def test_gitignore_protects_certs_dotenv_but_tracks_template(self):
+        # PF-71: every fresh app must have a .gitignore that ignores the
+        # populated certs/.env (which holds the real secret) but tracks
+        # certs/.env.example (the template). Without this, operators could
+        # accidentally commit their PLAY_SECRET via `git add .`.
+        gitignore = os.path.join(self.app_path, '.gitignore')
+        self.assertTrue(os.path.isfile(gitignore),
+                        '.gitignore must be in every fresh app')
+        # Initialize a real git repo so check-ignore can verify the patterns.
+        subprocess.run(['git', 'init', '-q'], cwd=self.app_path,
+                       capture_output=True, check=True)
+        env_check = subprocess.run(
+            ['git', 'check-ignore', '-q', 'certs/.env'],
+            cwd=self.app_path, capture_output=True)
+        self.assertEqual(env_check.returncode, 0,
+                         'certs/.env should be gitignored')
+        example_check = subprocess.run(
+            ['git', 'check-ignore', '-q', 'certs/.env.example'],
+            cwd=self.app_path, capture_output=True)
+        self.assertEqual(example_check.returncode, 1,
+                         'certs/.env.example should NOT be gitignored '
+                         '(it is the committed template)')
 
     def test_play_secret_rerun_updates_in_place(self):
         # Re-running `play secret` rewrites the same certs/.env file with a

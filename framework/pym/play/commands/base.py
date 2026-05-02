@@ -95,6 +95,13 @@ def new(app, args, env, cmdloader=None):
     if application_name == "":
         application_name = os.path.basename(app.path)
     copy_directory(os.path.join(env["basedir"], 'resources/application-skel'), app.path)
+    # copy_directory deliberately skips dot-files (legacy commit dc9b54104:
+    # avoids picking up .DS_Store, .idea, etc.). But .gitignore is a real
+    # asset we want in every fresh app — without it, certs/.env would be
+    # accidentally committed. Explicitly copy it here.
+    skel_gitignore = os.path.join(env["basedir"], 'resources/application-skel', '.gitignore')
+    if os.path.exists(skel_gitignore):
+        shutil.copyfile(skel_gitignore, os.path.join(app.path, '.gitignore'))
     os.mkdir(os.path.join(app.path, 'app/models'))
     os.mkdir(os.path.join(app.path, 'lib'))
     app.check()

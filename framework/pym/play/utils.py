@@ -127,29 +127,36 @@ def ensureTestSecret(app_path):
     os.environ[var_name] = secretKey()
     return var_name
 
+EXAMPLE_ENV_RELPATH = os.path.join('certs', '.env.example')
+
 def writeEnvExample(app_path, var_name=None):
-    """Generate `.env.example` — the committed schema/template that documents
-    which environment variables the app needs. Devs onboarding the project run
-    `cp .env.example .env` and fill in real values. Idempotent: if the file
-    already exists, leaves it alone (so manual additions aren't clobbered)."""
+    """Generate `certs/.env.example` — the committed schema/template that
+    documents which environment variables the app needs. Devs onboarding the
+    project run `cp certs/.env.example certs/.env` and fill in real values.
+    Idempotent: if the file already exists, leaves it alone (so manual
+    additions aren't clobbered). Lives next to the (gitignored) certs/.env so
+    the template + the populated file are in the same directory."""
     if var_name is None:
         var_name = secretVarName(app_path) or DEFAULT_SECRET_VAR
-    example_path = os.path.join(app_path, '.env.example')
+    example_path = os.path.join(app_path, EXAMPLE_ENV_RELPATH)
     if os.path.exists(example_path):
         return example_path
+    parent = os.path.dirname(example_path)
+    if parent and not os.path.isdir(parent):
+        os.makedirs(parent, exist_ok=True)
     content = (
         "# Environment variables for this Play application.\n"
         "#\n"
-        "# Copy this file to `.env` (which is gitignored) and fill in real values:\n"
-        "#     cp .env.example .env\n"
+        "# Copy this file to `certs/.env` (which is gitignored) and fill in real values:\n"
+        "#     cp certs/.env.example certs/.env\n"
         "#\n"
         "# This template lists every variable the app needs at startup. Keep it in\n"
         "# version control so onboarding teammates know what to set. Do NOT put real\n"
         "# secrets here — only placeholders or empty values.\n"
         "#\n"
-        "# At runtime, the Play CLI loads `.env` into the process environment before\n"
-        "# starting the JVM. Values already set in the host environment (or via\n"
-        "# `-D<NAME>=...` JVM flags) take precedence over `.env`.\n"
+        "# At runtime, the Play CLI loads `certs/.env` into the process environment\n"
+        "# before starting the JVM. Values already set in the host environment (or\n"
+        "# via `-D<NAME>=...` JVM flags) take precedence over `certs/.env`.\n"
         "\n"
         "# The application secret used for HMAC signing (sessions, CSRF) and\n"
         "# AES encryption. Generate with `play secret`.\n"
@@ -161,22 +168,10 @@ def writeEnvExample(app_path, var_name=None):
 
 def loadDotEnv(app_path):
     """Load <app_path>/certs/.env into os.environ. Existing environment values
-    win, so a host env var or `-D` flag can still override the .env entry.
-
-    PF-71 migration: prefer certs/.env (the new canonical path); fall back to
-    legacy .env at the project root if that's all the operator has, with a
-    one-line WARN so they know to migrate. The fallback keeps existing apps
-    booting; new apps only ever write to certs/.env."""
+    win, so a host env var or `-D` flag can still override the .env entry."""
     env_path = os.path.join(app_path, SECRET_ENV_RELPATH)
     if not os.path.exists(env_path):
-        legacy_path = os.path.join(app_path, '.env')
-        if os.path.exists(legacy_path):
-            print("~ WARN: loading secrets from legacy %s — move it to %s "
-                  "(PF-71). The framework still reads the legacy path for now."
-                  % (legacy_path, env_path))
-            env_path = legacy_path
-        else:
-            return
+        return
     with open(env_path, 'r') as f:
         for raw in f:
             line = raw.strip()
