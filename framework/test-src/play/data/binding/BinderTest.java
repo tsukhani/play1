@@ -10,6 +10,7 @@ import java.lang.annotation.Annotation;
 import java.lang.reflect.Type;
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.time.LocalDate;
 import java.util.*;
 
 import static java.math.BigDecimal.TEN;
@@ -210,6 +211,29 @@ public class BinderTest {
         Binder.bind(data1, null, params);
         assertThat(Validation.error("a")).isNull();
         assertThat(Validation.error("b")).isNotNull();
+    }
+
+    // PF-75: malformed java.time inputs surface as a validation error and the
+    // pipeline does not throw. Pre-PF-75 the DateTimeParseException landed in
+    // Binder.internalBind's broad `catch (Exception e)` (the maintainer's
+    // self-flagged "bad catch"); post-fix it lands in the normal-failure clause
+    // alongside NumberFormatException / ParseException.
+    @Test
+    public void invalidLocalDateBindsAsValidationError() {
+        new ValidationPlugin().beforeInvocation();
+
+        Map<String, String[]> params = new HashMap<>();
+        params.put("date", new String[]{"not-a-date"});
+
+        DataWithLocalDate data = new DataWithLocalDate();
+        Binder.bindBean(ParamNode.convert(params), null, data);
+
+        assertThat(Validation.error("date")).isNotNull();
+        assertThat(data.date).isNull();
+    }
+
+    static class DataWithLocalDate {
+        public LocalDate date;
     }
 
     @Test

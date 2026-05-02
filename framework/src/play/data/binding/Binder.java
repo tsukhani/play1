@@ -25,6 +25,7 @@ import java.time.OffsetTime;
 import java.time.Year;
 import java.time.YearMonth;
 import java.time.ZonedDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -266,7 +267,7 @@ public abstract class Binder {
             }
 
             return null; // give up
-        } catch (NumberFormatException | ParseException e) {
+        } catch (NumberFormatException | ParseException | DateTimeParseException e) {
             logBindingNormalFailure(paramNode, e);
             addValidationError(paramNode);
         } catch (Exception e) {
@@ -476,7 +477,7 @@ public abstract class Binder {
                     valueObject = null;
                 }
                 r.put(keyObject, valueObject);
-            } catch (ParseException | NumberFormatException e) {
+            } catch (ParseException | NumberFormatException | DateTimeParseException e) {
                 // Just ignore the exception and continue on the next item
                 logBindingNormalFailure(paramNode, e);
             } catch (Exception e) {
