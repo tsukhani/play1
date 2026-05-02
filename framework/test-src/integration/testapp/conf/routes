@@ -3,4 +3,5 @@ GET     /hello/{name}              TestController.hello
 POST    /echo                      TestController.echo
 GET     /redirect                  TestController.redirect
 GET     /json                      TestController.json
+GET     /events                    TestController.events
 GET     /public/                   staticDir:public

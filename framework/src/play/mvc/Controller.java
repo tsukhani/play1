@@ -423,6 +423,53 @@ public class Controller implements PlayController, ControllerSupport, LocalVaria
     }
 
     /**
+     * PF-16: Open a Server-Sent Events (SSE) stream on the current response.
+     *
+     * <p>Sets {@code Content-Type: text/event-stream}, disables caching, and
+     * marks the response chunked, then returns a {@link SseStream} the
+     * controller can push events through. Unlike the other {@code render*}
+     * methods this does NOT throw — it mutates the current response in place
+     * and returns; the controller stays alive (typically calling
+     * {@code await(stream.completion())}) for the duration of the stream.
+     *
+     * <p>Example — long-lived subscription:
+     * <pre>{@code
+     *   public static void stream() {
+     *       SseStream sse = openSSE()
+     *           .heartbeat(Duration.ofSeconds(30))
+     *           .timeout(Duration.ofHours(24));
+     *       Runnable unsubscribe = NotificationBus.subscribe(sse::sendRaw);
+     *       sse.onClose(unsubscribe::run);
+     *       await(sse.completion());
+     *   }
+     * }</pre>
+     *
+     * <p>Example — per-request streaming (token-by-token):
+     * <pre>{@code
+     *   public static void streamChat() {
+     *       SseStream sse = openSSE();
+     *       for (String token : llmTokens()) {
+     *           sse.sendEvent("token", Map.of("content", token));
+     *       }
+     *       sse.close();
+     *   }
+     * }</pre>
+     */
+    protected static SseStream openSSE() {
+        Http.Response response = Http.Response.current();
+        response.contentType = "text/event-stream";
+        response.setHeader("Cache-Control", "no-cache");
+        // X-Accel-Buffering: no — disables buffering in nginx (and several
+        // other reverse proxies that honor the header). Critical for SSE
+        // because a buffering proxy holds frames until its buffer fills,
+        // which manifests as the client receiving events in big bursts
+        // instead of as they're produced.
+        response.setHeader("X-Accel-Buffering", "no");
+        response.chunked = true;
+        return new SseStream(response);
+    }
+
+    /**
      * Send a 304 Not Modified response
      */
     protected static void notModified() {
