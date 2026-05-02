@@ -137,7 +137,13 @@ public class SslHttpServerPipelineFactory extends HttpServerPipelineFactory {
 
         builder.applicationProtocolConfig(new ApplicationProtocolConfig(
                 Protocol.ALPN,
-                // NO_ADVERTISE: if no overlap with client's ALPN list, fail handshake with no_application_protocol alert.
+                // NO_ADVERTISE: if no overlap with client's ALPN list, the server omits the
+                // ALPN extension from ServerHello and the handshake proceeds without ALPN
+                // selection (the application then defaults to HTTP/1.1). FATAL_ALERT would
+                // be RFC 7301's "send no_application_protocol alert" behavior, but
+                // FATAL_ALERT isn't supported on the JDK SSL provider, so NO_ADVERTISE is
+                // the only portable choice (also fine for our use case — h2 + h1.1 covers
+                // every modern HTTP client, no real-world overlap-failure to worry about).
                 SelectorFailureBehavior.NO_ADVERTISE,
                 // ACCEPT: even if the negotiated protocol isn't one we explicitly listed,
                 // accept it (defensive — this combination effectively never fires here).
