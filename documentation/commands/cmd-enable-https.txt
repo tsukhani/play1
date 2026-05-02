@@ -62,6 +62,15 @@
 ~      8080, or -1 to disable HTTP entirely) is preserved across
 ~      enable-https runs.
 ~
+~   4. If %test.https.port is not already an active line, set
+~      %test.https.port=-1. This stops the test framework-id from also
+~      trying to bind the dev https.port — important because tests
+~      often run alongside a live dev server, and a port collision
+~      surfaces as a confusing test failure. -1 is the framework's
+~      "do not bind" sentinel (Server.java). A user with a custom
+~      %test.https.port (e.g. the integration testapp's =19443) is
+~      preserved across enable-https runs.
+~
 ~ Run play run or play start afterwards to apply. The startup log will
 ~ show three listener lines:
 ~     Listening for HTTP on port 9000 (Waiting a first request ...)

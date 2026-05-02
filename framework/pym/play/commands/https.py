@@ -124,6 +124,13 @@ def _enable(app, force=False):
         config = _set_or_uncomment(config, 'https.port', HTTPS_PORT)
     if not http_active:
         config = _set_or_uncomment(config, 'http.port', HTTP_PORT)
+    # PF-72: when dev binds HTTPS on 9443, test mode must NOT also try to bind it
+    # (port collision when tests run alongside a live dev server, and tests don't
+    # need TLS anyway). -1 is the framework's "do not bind" sentinel per Server.java.
+    # An app that explicitly wants tests on HTTPS (e.g. the integration testapp at
+    # %test.https.port=19443) keeps its custom value across enable-https runs.
+    if not _has_active_line(config, '%test.https.port'):
+        config = _set_or_uncomment(config, '%test.https.port', '-1')
     _write(config_path, config)
 
     http_value = _active_value(config, 'http.port')
@@ -152,10 +159,12 @@ def _disable(app):
         print("~")
         return
 
-    # Comment out only https.port. Leave certificate.* lines and http.port intact so
-    # a future enable-https can pick up the same cert files without prompting and
-    # HTTP keeps working.
+    # Comment out https.port and %test.https.port (PF-72: symmetric with enable-https,
+    # which actively sets %test.https.port=-1 alongside dev https.port=9443). Leave
+    # certificate.* lines and http.port intact so a future enable-https can pick up
+    # the same cert files without prompting and HTTP keeps working.
     config = re.sub(r'^(https\.port\s*=.*)$', r'# \1', config, flags=re.MULTILINE)
+    config = re.sub(r'^(%test\.https\.port\s*=.*)$', r'# \1', config, flags=re.MULTILINE)
     _write(config_path, config)
 
     print("~ HTTPS disabled.")

@@ -8,9 +8,11 @@
 ~
 ~ Description:
 ~ ~~~~~~~~~~~~
-~ Comments out the https.port line in conf/application.conf so the app
-~ listens on plain HTTP only after the next play run / play start. The
-~ http.port line is left active.
+~ Comments out the https.port and %test.https.port lines in
+~ conf/application.conf so the app listens on plain HTTP only after the
+~ next play run / play start. The http.port line is left active.
+~ Commenting %test.https.port is symmetric with enable-https setting it
+~ to -1 — both ends of the toggle keep dev and test in lockstep.
 ~
 ~ The PEM cert+key at certs/host.cert and certs/host.key are preserved,
 ~ as are the certificate.file and certificate.key.file lines in
