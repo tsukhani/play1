@@ -758,38 +758,27 @@ jpda.address=* # Special value only for JDK >= 9, will bind to 0.0.0.0.
 
 Default: none, in that case the listening address will be 127.0.0.1 only for JDK >= 9
 
-h2(#keystore). keystore
+h2(#certificate). X509 certificates (PEM)
+
+Play 1.12 ships PEM-only HTTPS support (PF-68 dropped JKS). The "play enable-https":commands#enable-https command generates these files automatically via @mkcert@ (preferred — produces a system-trusted cert that works with Chrome's HTTP/3 stack) or @openssl@ (fallback — self-signed).
 
 
-h3(#keystore.algorithm). keystore.algorithm
+h3(#certificate.file). certificate.file
 
-A JDK Security API standard algorithm name, for use with the "keystore.file":#keystore.file configuration.
+Path to the PEM-encoded X.509 certificate (or chain).
 
-bc. keystore.algorithm=pkcs12
+bc. certificate.file=conf/host.cert
 
-Values - ‘standard names’ from the JDK Security API:
-
-* @jceks@ (‘SunJCE’ provider)
-* @jks@ (‘SUN" provider)
-* @pkcs12@
-
-Default: @JKS@
+Default: @conf/host.cert@
 
 
-h3(#keystore.file). keystore.file
+h3(#certificate.key.file). certificate.key.file
 
-Specifies a keystore certificate, for HTTPS support. The file should be named @certificate.jks@. For example:
+Path to the unencrypted PEM-encoded private key. The framework's Netty @SslContextBuilder@ does not accept encrypted keys; @mkcert@ and the @openssl req -nodes@ fallback both produce unencrypted keys.
 
-bc. keystore.file=conf/certificate.jks
+bc. certificate.key.file=conf/host.key
 
-
-h3(#keystore.password). keystore.password
-
-Keystore configuration, for use with the "keystore.file":#keystore.file configuration.
-
-bc. keystore.password=secret
-
-Default: @secret@
+Default: @conf/host.key@
 
 
 h2(#memcachedconfig). Memcached
@@ -1084,7 +1073,7 @@ See also: "https.port":#https.port.
 
 h3(#ssl.KeyManagerFactory.algorithm). ssl.KeyManagerFactory.algorithm
 
-The standard name of a Java Secure Socket Extension (JSSE) trust management algorithm, for use with the "keystore.file":#keystore.file configuration.
+The standard name of a Java Secure Socket Extension (JSSE) key management algorithm. Read by the framework when constructing the inbound HTTPS @SslContext@ (PF-68: PEM-only).
 
 bc. ssl.KeyManagerFactory.algorithm=SunX509
 
@@ -1106,23 +1095,6 @@ h3(#ssl.cavalidation). ssl.cavalidation
 
 If set to true, the CA chain is validated upon connection.
 
-
-h2(#trustmanager). trustmanager
-
-
-h3(#trustmanager.algorithm). trustmanager.algorithm
-
-A JDK Security API standard algorithm name, for use with "X509 certificates":#certificate and "keystore":#keystore configurations.
-
-bc. trustmanager.algorithm=pkcs12
-
-Values - ‘standard names’ from the JDK Security API:
-
-* @jceks@ (‘SunJCE’ provider)
-* @jks@ (‘SUN" provider)
-* @pkcs12@
-
-Default: @JKS@
 
 bc. play.netty.clientAuth
 

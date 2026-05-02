@@ -18,18 +18,18 @@ import play.Play;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * PF-58 / PF-66: verifies that the SSL pipeline factory advertises ALPN protocols in the
- * right priority order ({@code h2}, {@code http/1.1}) — ALPN is now always on when HTTPS
- * is configured (the {@code play.http2.enabled} opt-in flag was removed; ALPN gracefully
- * degrades to http/1.1 for non-h2 clients, so there's no scenario worth gating). The
- * unified Netty SslContext path (PF-66) builds correctly for both PEM and JKS cert sources.
+ * PF-58 / PF-66 / PF-68: verifies that the SSL pipeline factory advertises ALPN protocols
+ * in the right priority order ({@code h2}, {@code http/1.1}) — ALPN is always on when HTTPS
+ * is configured. PF-68 removed JKS support; the cert source is now PEM-only
+ * ({@code certificate.file} + {@code certificate.key.file}).
  *
  * <p>The actual handshake-level ALPN selection is exercised end-to-end by
  * {@code integration.Http2FunctionalTest}, which stands up a real Netty server with a
- * self-signed test cert and asserts both versions return identical bodies.
+ * self-signed PEM cert and asserts both versions return identical bodies.
  */
 public class SslHttpServerPipelineFactoryAlpnTest {
 
@@ -42,7 +42,7 @@ public class SslHttpServerPipelineFactoryAlpnTest {
         savedConfig = Play.configuration;
         savedApplicationPath = Play.applicationPath;
         Play.configuration = new Properties();
-        tmpDir = Files.createTempDirectory("pf66-test-");
+        tmpDir = Files.createTempDirectory("pf68-test-");
         Play.applicationPath = tmpDir.toFile();
         // PF-66: SslContext is statically cached. Tests in this class build their own
         // contexts, so reset the cache before each test to avoid leaking state across runs.
@@ -55,10 +55,17 @@ public class SslHttpServerPipelineFactoryAlpnTest {
         Play.applicationPath = savedApplicationPath;
         resetCachedSslContext();
         if (tmpDir != null) {
-            // Best-effort cleanup of any keystores written during the test
             File[] files = tmpDir.toFile().listFiles();
             if (files != null) {
-                for (File f : files) f.delete();
+                for (File f : files) {
+                    if (f.isDirectory()) {
+                        File[] inner = f.listFiles();
+                        if (inner != null) for (File i : inner) i.delete();
+                        f.delete();
+                    } else {
+                        f.delete();
+                    }
+                }
             }
             tmpDir.toFile().delete();
         }
@@ -80,58 +87,62 @@ public class SslHttpServerPipelineFactoryAlpnTest {
     }
 
     @Test
-    void buildSslContextFromJksAdvertisesH2ThenHttp1() throws Exception {
-        // PF-66 + flag-removal AC: a JKS keystore unconditionally produces an SslContext
-        // whose ALPN negotiator advertises h2 then http/1.1. Pre-PF-66 the JKS path went
-        // through the JDK SSLEngine without ALPN; pre-flag-removal the ALPN was gated on
-        // play.http2.enabled. Now ALPN is always configured.
-        File keystore = generateJksKeystore("conf/certificate.jks", "test-pass");
-        Play.configuration.setProperty("keystore.file", relativizeToApp(keystore));
-        Play.configuration.setProperty("keystore.password", "test-pass");
+    void buildSslContextFromPemAdvertisesH2ThenHttp1() throws Exception {
+        // PF-68: a PEM cert+key pair produces an SslContext whose ALPN negotiator
+        // advertises h2 then http/1.1. PEM is the only cert source post-PF-68.
+        generatePemCertAndKey("conf/host.cert", "conf/host.key");
+        Play.configuration.setProperty("certificate.file", "conf/host.cert");
+        Play.configuration.setProperty("certificate.key.file", "conf/host.key");
 
         SslContext ctx = SslHttpServerPipelineFactory.buildSslContext();
 
-        assertNotNull(ctx, "JKS SslContext must build");
+        assertNotNull(ctx, "PEM SslContext must build");
         assertTrue(ctx.isServer(), "Built SslContext must be a server context");
         ApplicationProtocolNegotiator negotiator = ctx.applicationProtocolNegotiator();
         assertNotNull(negotiator, "ALPN negotiator must always be configured");
         List<String> advertised = negotiator.protocols();
         assertEquals(List.of("h2", "http/1.1"), advertised,
-                "ALPN must advertise h2 then http/1.1 for JKS keystore");
+                "ALPN must advertise h2 then http/1.1 for PEM cert+key");
+    }
+
+    @Test
+    void buildSslContextThrowsWhenCertFilesMissing() {
+        // PF-68: no PEM files on disk + no other cert source = clean
+        // IllegalStateException naming the expected paths. Pre-PF-68 a missing PEM
+        // would silently fall through to the JKS branch and emit a confused error.
+        Play.configuration.setProperty("certificate.file", "conf/host.cert");
+        Play.configuration.setProperty("certificate.key.file", "conf/host.key");
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+                SslHttpServerPipelineFactory::buildSslContext);
+        String msg = ex.getMessage();
+        assertTrue(msg.contains("PEM-only"), "error must declare PEM-only contract: " + msg);
+        assertTrue(msg.contains("host.cert"), "error must name expected cert path: " + msg);
+        assertTrue(msg.contains("host.key"), "error must name expected key path: " + msg);
     }
 
     /**
-     * Generate a self-signed JKS keystore at the given path under {@link #tmpDir} by
-     * shelling out to {@code keytool}. Mirrors what {@code play enable-https} (PF-67)
-     * does in production, so we exercise a keystore the framework would actually
-     * generate. Avoids pulling in additional BouncyCastle transitive deps just for
-     * test cert construction.
+     * Generate a self-signed PEM cert+key pair at the given paths under {@link #tmpDir}
+     * via the {@code openssl} CLI — mirrors the openssl fallback in the production
+     * {@code play enable-https} command (PF-68). Avoids any extra Java-level test deps.
      */
-    private File generateJksKeystore(String relativePath, String password) throws Exception {
-        File out = new File(tmpDir.toFile(), relativePath);
-        out.getParentFile().mkdirs();
+    private void generatePemCertAndKey(String certRelative, String keyRelative) throws Exception {
+        File certOut = new File(tmpDir.toFile(), certRelative);
+        File keyOut = new File(tmpDir.toFile(), keyRelative);
+        certOut.getParentFile().mkdirs();
+        keyOut.getParentFile().mkdirs();
         ProcessBuilder pb = new ProcessBuilder(
-                "keytool", "-genkeypair",
-                "-alias", "play",
-                "-keyalg", "RSA",
-                "-keysize", "2048",
-                "-keystore", out.getAbsolutePath(),
-                "-storepass", password,
-                "-keypass", password,
-                "-storetype", "JKS",
-                "-dname", "CN=localhost",
-                "-validity", "365"
+                "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+                "-keyout", keyOut.getAbsolutePath(),
+                "-out", certOut.getAbsolutePath(),
+                "-days", "365",
+                "-subj", "/CN=localhost"
         ).redirectErrorStream(true);
         Process p = pb.start();
         int rc = p.waitFor();
         if (rc != 0) {
             String output = new String(p.getInputStream().readAllBytes());
-            throw new IllegalStateException("keytool failed (rc=" + rc + "): " + output);
+            throw new IllegalStateException("openssl failed (rc=" + rc + "): " + output);
         }
-        return out;
-    }
-
-    private String relativizeToApp(File f) {
-        return Play.applicationPath.toPath().relativize(f.toPath()).toString();
     }
 }

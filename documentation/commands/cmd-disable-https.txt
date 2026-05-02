@@ -1,6 +1,6 @@
 ~ Name:
 ~ ~~~~~
-~ disable-https -- Disable HTTPS; keep the keystore for re-enabling later
+~ disable-https -- Disable HTTPS; keep the cert files for re-enabling later
 ~
 ~ Synopsis:
 ~ ~~~~~~~~~
@@ -12,14 +12,13 @@
 ~ listens on plain HTTP only after the next play run / play start. The
 ~ http.port line is left active.
 ~
-~ The keystore at conf/certificate.jks is preserved, as are the
-~ keystore.algorithm / keystore.file / keystore.password lines in
+~ The PEM cert+key at conf/host.cert and conf/host.key are preserved,
+~ as are the certificate.file and certificate.key.file lines in
 ~ conf/application.conf. This means a subsequent play enable-https
-~ reuses the existing cert and password without regeneration or
-~ prompting.
+~ reuses the existing cert without regeneration or prompting.
 ~
-~ To permanently remove the keystore, delete conf/certificate.jks
-~ manually. The command never deletes it on its own.
+~ To permanently remove the cert+key, delete conf/host.cert and
+~ conf/host.key manually. The command never deletes them on its own.
 ~
 ~ Idempotent: re-running when HTTPS is already disabled is a no-op.
 ~

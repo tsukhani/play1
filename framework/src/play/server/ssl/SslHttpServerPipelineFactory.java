@@ -1,13 +1,9 @@
 package play.server.ssl;
 
 import java.io.File;
-import java.io.FileInputStream;
 import java.lang.reflect.Constructor;
-import java.security.KeyStore;
 import java.util.Arrays;
 import java.util.Properties;
-
-import javax.net.ssl.KeyManagerFactory;
 
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandler;
@@ -79,10 +75,12 @@ public class SslHttpServerPipelineFactory extends HttpServerPipelineFactory {
     private static volatile SslContext cachedSslContext;
 
     /**
-     * Build an {@link SslHandler} backed by a Netty {@link SslContext}. Supports both PEM
-     * cert+key files ({@code certificate.file} / {@code certificate.key.file}) and JKS
-     * keystores ({@code keystore.file} / {@code keystore.password}); the file-presence
-     * precedence is the same one the legacy {@code SslHttpServerContextFactory} used.
+     * Build an {@link SslHandler} backed by a Netty {@link SslContext}. PEM-only:
+     * reads {@code certificate.file} (default {@code conf/host.cert}) and
+     * {@code certificate.key.file} (default {@code conf/host.key}). PF-68 dropped
+     * the JKS keystore branch because every TLS configuration JKS expressed had
+     * an equivalent in PEM, and the local-dev workflow is one mkcert command on
+     * PEM versus three (openssl pkcs12 + keytool import) on JKS.
      * ALPN is always configured (h2 + http/1.1) — see {@link #initChannel} for the rationale.
      */
     private SslHandler buildSslHandler(Channel ch) throws Exception {
@@ -107,33 +105,15 @@ public class SslHttpServerPipelineFactory extends HttpServerPipelineFactory {
         File certFile = Play.getFile(p.getProperty("certificate.file", "conf/host.cert"));
         File keyFile = Play.getFile(p.getProperty("certificate.key.file", "conf/host.key"));
 
-        SslContextBuilder builder;
-        if (certFile.exists() && keyFile.exists()) {
-            // PEM path. Netty's SslContextBuilder reads PEM cert+key directly — no need
-            // for the BouncyCastle dance the legacy JDK-engine path used.
-            builder = SslContextBuilder.forServer(certFile, keyFile);
-        } else {
-            // JKS path. Load the configured keystore and wrap a KeyManagerFactory.
-            File keystoreFile = Play.getFile(p.getProperty("keystore.file", "conf/certificate.jks"));
-            if (!keystoreFile.exists()) {
-                throw new IllegalStateException(
-                        "No HTTPS cert source found. Configure either PEM (certificate.file + "
-                                + "certificate.key.file) or JKS (keystore.file). Looked for cert at "
-                                + certFile.getAbsolutePath()
-                                + ", key at " + keyFile.getAbsolutePath()
-                                + ", keystore at " + keystoreFile.getAbsolutePath() + ".");
-            }
-            char[] password = p.getProperty("keystore.password", "secret").toCharArray();
-            KeyStore ks = KeyStore.getInstance(p.getProperty("keystore.algorithm", "JKS"));
-            try (FileInputStream in = new FileInputStream(keystoreFile)) {
-                ks.load(in, password);
-            }
-            String kmfAlg = java.security.Security.getProperty("ssl.KeyManagerFactory.algorithm");
-            if (kmfAlg == null) kmfAlg = "SunX509";
-            KeyManagerFactory kmf = KeyManagerFactory.getInstance(kmfAlg);
-            kmf.init(ks, password);
-            builder = SslContextBuilder.forServer(kmf);
+        if (!certFile.exists() || !keyFile.exists()) {
+            throw new IllegalStateException(
+                    "No HTTPS cert source found. PF-68: PEM-only — set certificate.file and "
+                            + "certificate.key.file (the play enable-https command does this for you, "
+                            + "or run mkcert/openssl manually). Looked for cert at "
+                            + certFile.getAbsolutePath() + ", key at " + keyFile.getAbsolutePath() + ".");
         }
+
+        SslContextBuilder builder = SslContextBuilder.forServer(certFile, keyFile);
 
         builder.applicationProtocolConfig(new ApplicationProtocolConfig(
                 Protocol.ALPN,

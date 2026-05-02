@@ -61,10 +61,13 @@ def autotest(app, args):
     except Exception as e:
         pass
 
-    # Do not run the app if SSL is configured and no cert store is configured
-    keystore = app.readConf('keystore.file')
-    if protocol == 'https' and not keystore:
-      print("https without keystore configured. play auto-test will fail. Exiting now.")
+    # PF-68: PEM-only — refuse to autotest under HTTPS unless certificate.file is
+    # configured. (Used to check keystore.file when JKS was supported.) The auto-test
+    # runner needs to know an HTTPS-served app has its cert source set; otherwise
+    # the framework will throw at boot trying to build the SslContext.
+    cert_file = app.readConf('certificate.file')
+    if protocol == 'https' and not cert_file:
+      print("https without certificate.file configured. play auto-test will fail. Exiting now.")
       sys.exit(-1)
       
     # read parameters
@@ -144,8 +147,12 @@ def autotest(app, args):
     if os.name == 'nt':
         cp_args = ';'.join(fpcp)
     java_cmd = [java_path(), '--enable-native-access=ALL-UNNAMED'] + add_options + ['-Djava.util.logging.config.file=logging.properties', '-classpath', cp_args, '-Dapplication.url=%s://localhost:%s' % (protocol, http_port), '-DheadlessBrowser=%s' % (headless_browser), 'play.modules.testrunner.FirePhoque']
-    if protocol == 'https':
-        java_cmd.insert(-1, '-Djavax.net.ssl.trustStore=' + app.readConf('keystore.file'))
+    # PF-68: dropped the JKS-trustStore arg that used to be passed to FirePhoque.
+    # Java's -Djavax.net.ssl.trustStore expects a JKS keystore; since the framework
+    # is now PEM-only there's no equivalent file to point at. Operators running
+    # `play auto-test` against HTTPS should install mkcert (https://github.com/
+    # FiloSottile/mkcert) — its `mkcert -install` adds the local CA to the system
+    # trust store, which the JDK picks up automatically with no extra flag needed.
     try:
         subprocess.call(java_cmd, env=os.environ)
     except OSError:

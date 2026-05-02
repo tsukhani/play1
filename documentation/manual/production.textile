@@ -192,43 +192,21 @@ https.port=9443
 You need to put your certificates in the @conf@ directory. Play supports X509 certificates and keystore certificates. The X509 certificates must be named as follows:
 *host.cert* for the certificate and *host.key* for the key. If you are using keystore, then, by default it should be named *certificate.jks*.
 
-If you are using X509 certificates, then the following parameters can be configured in your @application.conf@ file:
+PF-68 made HTTPS PEM-only. Configure the cert+key paths in your @application.conf@ file:
 
-bc. # X509 certificates
-certificate.key.file=conf/host.key
+bc. # X509 certificates (PEM)
 certificate.file=conf/host.cert
-# In case your key file is password protected
-# certificate.key.file=conf/host.pass.key
-# certificate.password=secret
-trustmanager.algorithm=JKS
+certificate.key.file=conf/host.key
 
-If you are using keystore:
+The values above are the framework defaults. Keys must be unencrypted PEM — Netty's @SslContextBuilder@ does not accept encrypted keys.
 
-bc. keystore.algorithm=JKS
-keystore.password=secret
-keystore.file=conf/certificate.jks
+For local development, the easiest path is the "play enable-https":commands#enable-https command, which generates a cert+key pair via @mkcert@ (preferred — produces a system-trusted cert that works with Chrome's HTTP/3 stack) or @openssl@ (fallback — self-signed).
 
-Note that the values above are the default values.
+For production, replace @conf/host.cert@ and @conf/host.key@ with a real cert from Let's Encrypt, an internal CA, or your usual certificate provider. Generate self-signed certs manually with:
 
-You can generate self-signed certificates using *openssl*: 
-
-bc. openssl genrsa -des3 -passout pass:secret -out host.pass.key 2048
-openssl rsa -passin pass:secret -in host.pass.key -out host.key
-openssl req -new -key host.key -out host.csr -subj '/C=GB/ST=Test State or Province/L=Test Locality/O=Organization Name/OU=Organizational Unit Name/CN=Common Name/emailAddress=test@email.address'
-openssl x509 -req -days 3650 -in host.csr -signkey host.key -out host.cert
-
-note. the first command creates a password-protected-key ('host.pass.key').
-the second command converts/writes the same key ('host.key') without password protection.
-
-If you are using the Java keystore mechanism, then the following properties can be configured in your @application.conf@ file:
-
-bc. # Keystore 
-ssl.KeyManagerFactory.algorithm=SunX509
-trustmanager.algorithm=JKS
-keystore.password=secret
-keystore.file=certificate.jks
-
-The values above are the default values.
+bc. openssl req -x509 -newkey rsa:2048 -nodes \
+    -keyout host.key -out host.cert \
+    -days 3650 -subj '/CN=your-host'
 
 h2. <a name="nopython">Deploying Without Python</a>
 

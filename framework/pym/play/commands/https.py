@@ -1,7 +1,7 @@
 from __future__ import print_function
 import os
 import re
-import secrets
+import shutil
 import subprocess
 
 from play.utils import *
@@ -9,17 +9,17 @@ from play.utils import *
 COMMANDS = ['enable-https', 'disable-https']
 
 HELP = {
-    'enable-https': 'Enable HTTPS on port 9443 (HTTP/2 via ALPN); generate a self-signed local keystore if needed (PF-67)',
-    'disable-https': 'Disable HTTPS but keep the keystore for re-enabling later (PF-67)',
+    'enable-https': 'Enable HTTPS on port 9443 (HTTP/2 + HTTP/3 via ALPN); generate a local PEM cert+key if needed (PF-67/PF-68)',
+    'disable-https': 'Disable HTTPS but keep the cert files for re-enabling later (PF-67/PF-68)',
 }
 
-# Defaults match framework conventions (SslHttpServerContextFactory.java:69 etc.)
-KEYSTORE_PATH = 'conf/certificate.jks'
+# PF-68: PEM-only. mkcert produces certs trusted by the system store after
+# `mkcert -install`, which is what Chrome's QUIC stack needs to actually negotiate
+# HTTP/3 in a real browser. openssl is the fallback when mkcert isn't available.
+CERT_PATH = 'conf/host.cert'
+KEY_PATH = 'conf/host.key'
 HTTP_PORT = '9000'
 HTTPS_PORT = '9443'
-KEYSTORE_ALIAS = 'play'
-KEYSTORE_DNAME = 'CN=localhost, OU=Development, O=Play, L=Local, ST=Local, C=US'
-KEYSTORE_VALIDITY_DAYS = '3650'
 
 
 def execute(**kargs):
@@ -37,83 +37,59 @@ def _enable(app):
 
     config = _read(config_path)
 
-    # Resolve keystore path/algorithm from existing config so user customizations
-    # (e.g. keystore.file=conf/my-cert.jks, keystore.algorithm=PKCS12) are honored.
-    # Falls back to framework defaults when no active line exists. Same pattern is
-    # later used to decide whether to write each keystore.* line — only set the
-    # default when the user hasn't already declared a value.
-    keystore_file_value = _active_value(config, 'keystore.file') or KEYSTORE_PATH
-    keystore_algorithm_value = _active_value(config, 'keystore.algorithm') or 'JKS'
-    keystore_path = os.path.join(app.path, keystore_file_value)
+    # Resolve cert/key paths from existing config (or framework defaults), so a user
+    # who pointed certificate.file at conf/my-cert.pem before running enable-https
+    # has that path honored.
+    cert_file_value = _active_value(config, 'certificate.file') or CERT_PATH
+    key_file_value = _active_value(config, 'certificate.key.file') or KEY_PATH
+    cert_path = os.path.join(app.path, cert_file_value)
+    key_path = os.path.join(app.path, key_file_value)
 
-    # "Fully enabled" requires both https.port AND http.port active (any values —
-    # preserves a user's custom http.port=8080). enable-https treats HTTP + HTTPS
-    # as one feature toggle: a fresh app's commented-out `# http.port=9000` triggers
-    # the framework's special-case default-to-9000 fallback ONLY when https.port is
-    # also unset (Server.java:56); once we set https.port, that fallback no longer
-    # fires, so we must explicitly bind http.port too if we want both listeners.
-    # ALPN h2 negotiation is always on at the framework level when HTTPS is configured
-    # (it gracefully falls back to http/1.1 for non-h2 clients), so there's no flag
-    # to set here.
+    # "Fully enabled" requires https.port active AND http.port active. Both must be
+    # explicit because once https.port is set the framework's "default to 9000 when
+    # neither port is set" fallback (Server.java) no longer fires, so http.port must
+    # also be explicit to keep the plain HTTP listener bound.
     https_active = _has_active_line(config, 'https.port')
     http_active = _has_active_line(config, 'http.port')
-    if https_active and http_active:
+    if https_active and http_active and os.path.exists(cert_path) and os.path.exists(key_path):
         print("~ HTTPS is already enabled in conf/application.conf.")
-        if os.path.exists(keystore_path):
-            print("~ Keystore present at %s." % keystore_file_value)
+        print("~ Cert+key present at %s and %s." % (cert_file_value, key_file_value))
         print("~")
         return
 
-    if os.path.exists(keystore_path):
-        # Reuse existing keystore — pull the password out of application.conf so
-        # the framework can actually open it. Without this, an off→on cycle would
-        # generate a fresh password but leave the keystore on disk encrypted with
-        # the old one, breaking startup.
-        password = _existing_password(config)
-        if password is None:
-            print("~ ERROR: keystore exists at %s but keystore.password is not set in conf/application.conf." % keystore_file_value)
-            print("~        Either delete the keystore (it will be regenerated) or restore the password manually.")
-            print("~")
-            return
-        print("~ Reusing existing keystore at %s." % keystore_file_value)
+    if os.path.exists(cert_path) and os.path.exists(key_path):
+        print("~ Reusing existing PEM cert+key at %s and %s." % (cert_file_value, key_file_value))
     else:
-        # Only know how to generate JKS via keytool. If the user has explicitly
-        # declared a non-JKS keystore.algorithm, refuse rather than silently
-        # produce a JKS file at a path the user expected to hold (say) PKCS12.
-        if keystore_algorithm_value.upper() != 'JKS':
-            print("~ ERROR: keystore.algorithm=%s is configured but no keystore exists at %s." % (keystore_algorithm_value, keystore_file_value))
-            print("~        play enable-https only generates JKS keystores. Generate a %s keystore" % keystore_algorithm_value)
-            print("~        manually (e.g. via keytool -storetype %s) at %s, then re-run." % (keystore_algorithm_value, keystore_file_value))
-            print("~")
-            return
-        # Honor an existing keystore.password if already set (e.g. user wrote it
-        # out before generating the keystore); otherwise generate a random one.
-        password = _existing_password(config) or secrets.token_urlsafe(16)
+        # Prefer mkcert: produces a system-trusted cert after mkcert -install, which
+        # Chrome's QUIC stack actually accepts. Fall back to openssl for a self-signed
+        # cert that works for curl/h2 testing but won't satisfy browser h3.
         try:
-            _generate_keystore(keystore_path, password)
-        except FileNotFoundError:
-            print("~ ERROR: keytool not found on PATH. Install a JDK 25+ and ensure java/keytool are on PATH.")
+            if shutil.which('mkcert') is not None:
+                _generate_mkcert(cert_path, key_path)
+                print("~ Generated mkcert-signed PEM cert+key at %s and %s." % (cert_file_value, key_file_value))
+                print("~ (Trusted by the system store after `mkcert -install` — Chrome will accept HTTP/3.)")
+            else:
+                _generate_openssl(cert_path, key_path)
+                print("~ Generated self-signed PEM cert+key at %s and %s (openssl fallback)." % (cert_file_value, key_file_value))
+                print("~ Hint: install mkcert (https://github.com/FiloSottile/mkcert) for browser-trusted local-dev TLS.")
+        except FileNotFoundError as e:
+            print("~ ERROR: required tool not found on PATH: %s" % e)
+            print("~        Install either mkcert (preferred) or openssl, then re-run.")
             print("~")
             return
         except RuntimeError as e:
-            print("~ ERROR: keytool failed:")
+            print("~ ERROR: cert generation failed:")
             print("~ %s" % str(e))
             print("~")
             return
-        print("~ Generated self-signed keystore at %s" % keystore_file_value)
-        print("~ (RSA 2048, %s, valid %s days)" % (KEYSTORE_DNAME, KEYSTORE_VALIDITY_DAYS))
 
     # Set each line ONLY if it isn't already an active config entry. This is the
-    # symmetric "comment/uncomment-only" contract the user expects: their custom
-    # keystore.file=conf/my-cert.jks, keystore.algorithm=PKCS12, https.port=8443,
-    # http.port=8080 (etc.) are preserved across enable-https runs. Lines that
-    # are absent or only present commented get set to our defaults.
-    if not _has_active_line(config, 'keystore.algorithm'):
-        config = _set_or_uncomment(config, 'keystore.algorithm', 'JKS')
-    if not _has_active_line(config, 'keystore.file'):
-        config = _set_or_uncomment(config, 'keystore.file', KEYSTORE_PATH)
-    if not _has_active_line(config, 'keystore.password'):
-        config = _set_or_uncomment(config, 'keystore.password', password)
+    # "comment/uncomment-only" contract: a user's custom certificate.file=conf/my.pem,
+    # https.port=8443, or http.port=8080 (etc.) is preserved across enable-https runs.
+    if not _has_active_line(config, 'certificate.file'):
+        config = _set_or_uncomment(config, 'certificate.file', CERT_PATH)
+    if not _has_active_line(config, 'certificate.key.file'):
+        config = _set_or_uncomment(config, 'certificate.key.file', KEY_PATH)
     if not https_active:
         config = _set_or_uncomment(config, 'https.port', HTTPS_PORT)
     if not http_active:
@@ -126,7 +102,7 @@ def _enable(app):
         print("~ HTTP listener stays disabled per existing http.port=-1 setting.")
     else:
         print("~ HTTP enabled on port %s." % http_value)
-    print("~ HTTPS enabled on port %s (HTTP/2 via ALPN)." % https_value)
+    print("~ HTTPS enabled on port %s (HTTP/2 + HTTP/3 via ALPN)." % https_value)
     print("~ Run play run or play start to apply.")
     print("~")
 
@@ -137,45 +113,57 @@ def _disable(app):
 
     config = _read(config_path)
 
-    # Resolve the keystore path the same way _enable does, so the "preserved"
-    # message reflects the user's actual keystore.file rather than the default.
-    keystore_file_value = _active_value(config, 'keystore.file') or KEYSTORE_PATH
-    keystore_path = os.path.join(app.path, keystore_file_value)
+    cert_file_value = _active_value(config, 'certificate.file') or CERT_PATH
+    key_file_value = _active_value(config, 'certificate.key.file') or KEY_PATH
+    cert_path = os.path.join(app.path, cert_file_value)
 
     if not _has_active_line(config, 'https.port'):
         print("~ HTTPS is already disabled.")
         print("~")
         return
 
-    # Comment out only https.port. Leave keystore.* lines and http.port
-    # intact so a future enable-https can pick up the same password without
-    # prompting and HTTP keeps working.
+    # Comment out only https.port. Leave certificate.* lines and http.port intact so
+    # a future enable-https can pick up the same cert files without prompting and
+    # HTTP keeps working.
     config = re.sub(r'^(https\.port\s*=.*)$', r'# \1', config, flags=re.MULTILINE)
     _write(config_path, config)
 
     print("~ HTTPS disabled.")
-    if os.path.exists(keystore_path):
-        print("~ The keystore at %s is preserved — re-run play enable-https to reactivate." % keystore_file_value)
+    if os.path.exists(cert_path):
+        print("~ The cert+key at %s and %s are preserved — re-run play enable-https to reactivate." % (cert_file_value, key_file_value))
     print("~")
 
 
-def _generate_keystore(path, password):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+def _generate_mkcert(cert_path, key_path):
+    os.makedirs(os.path.dirname(cert_path), exist_ok=True)
     cmd = [
-        'keytool', '-genkeypair',
-        '-alias', KEYSTORE_ALIAS,
-        '-keyalg', 'RSA',
-        '-keysize', '2048',
-        '-keystore', path,
-        '-storepass', password,
-        '-keypass', password,
-        '-storetype', 'JKS',
-        '-dname', KEYSTORE_DNAME,
-        '-validity', KEYSTORE_VALIDITY_DAYS,
+        'mkcert',
+        '-cert-file', cert_path,
+        '-key-file', key_path,
+        'localhost', '127.0.0.1', '::1',
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        # keytool's stderr is usually the only useful diagnostic here
+        raise RuntimeError(result.stderr.strip() or result.stdout.strip())
+
+
+def _generate_openssl(cert_path, key_path):
+    os.makedirs(os.path.dirname(cert_path), exist_ok=True)
+    # PEM key is unencrypted (-nodes) — Netty's SslContextBuilder.forServer(certFile, keyFile)
+    # supports only unencrypted keys, and mkcert produces unencrypted PEM too, so the two
+    # paths are interchangeable from the framework's perspective.
+    cmd = [
+        'openssl', 'req', '-x509',
+        '-newkey', 'rsa:2048',
+        '-nodes',
+        '-keyout', key_path,
+        '-out', cert_path,
+        '-days', '3650',
+        '-subj', '/CN=localhost',
+        '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1',
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or result.stdout.strip())
 
 
@@ -184,23 +172,17 @@ def _has_active_line(config, key):
 
 
 def _active_value(config, key):
-    """Return the trimmed value of the active line `key=value`, or None if
-    no active line exists. Lets the success message reflect a user's custom
-    http.port=8080 etc. instead of always reporting our default."""
+    """Return the trimmed value of the active line `key=value`, or None if no active
+    line exists. Lets a user's custom certificate.file=conf/my-cert.pem be honored
+    instead of forcing the default."""
     m = re.search(r'^' + re.escape(key) + r'\s*=\s*(.+?)\s*$', config, re.MULTILINE)
     return m.group(1).strip() if m else None
 
 
-def _existing_password(config):
-    m = re.search(r'^keystore\.password\s*=\s*(.+)$', config, re.MULTILINE)
-    return m.group(1).strip() if m else None
-
-
 def _set_or_uncomment(config, key, value):
-    """Ensure `key=value` exists as an active line. If a commented form
-    `# key=...` exists in the skeleton, replace that line so the file's
-    structure is preserved; if an active line already exists, replace
-    its value; otherwise append at end."""
+    """Ensure `key=value` exists as an active line. If a commented form `# key=...`
+    exists in the skeleton, replace that line so the file's structure is preserved;
+    if an active line already exists, replace its value; otherwise append at end."""
     active = re.compile(r'^' + re.escape(key) + r'\s*=.*$', re.MULTILINE)
     if active.search(config):
         return active.sub('%s=%s' % (key, value), config, count=1)

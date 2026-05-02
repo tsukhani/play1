@@ -40,10 +40,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>JDK 25's {@link java.net.http.HttpClient} does not support HTTP/3, so unlike
  * PF-58's test we drive Netty's HTTP/3 client directly: UDP {@link Bootstrap} →
  * {@link Http3#newQuicClientCodecBuilder} → {@link QuicChannel#newBootstrap} →
- * {@link Http3#newRequestStream}. The {@code test-keystore.jks} from PF-58 is
- * reused server-side via {@link play.server.quic.Http3SslContextFactory}; the
- * client uses {@link InsecureTrustManagerFactory} so the self-signed test cert
- * passes hostname verification.
+ * {@link Http3#newRequestStream}. The PEM cert+key at conf/host.cert and
+ * conf/host.key (PF-68 — JKS support dropped) is loaded server-side via
+ * {@link play.server.quic.Http3SslContextFactory}; the client uses
+ * {@link InsecureTrustManagerFactory} so the self-signed test cert passes
+ * hostname verification.
  */
 public class Http3FunctionalTest {
 
