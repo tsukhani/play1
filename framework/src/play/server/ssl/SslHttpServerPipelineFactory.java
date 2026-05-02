@@ -81,6 +81,8 @@ public class SslHttpServerPipelineFactory extends HttpServerPipelineFactory {
      * the JKS keystore branch because every TLS configuration JKS expressed had
      * an equivalent in PEM, and the local-dev workflow is one mkcert command on
      * PEM versus three (openssl pkcs12 + keytool import) on JKS.
+     * Encrypted private keys are supported via {@code certificate.key.password}
+     * (omit for unencrypted keys, which is what mkcert/openssl produce by default).
      * ALPN is always configured (h2 + http/1.1) — see {@link #initChannel} for the rationale.
      */
     private SslHandler buildSslHandler(Channel ch) throws Exception {
@@ -104,6 +106,10 @@ public class SslHttpServerPipelineFactory extends HttpServerPipelineFactory {
         Properties p = Play.configuration;
         File certFile = Play.getFile(p.getProperty("certificate.file", "certs/host.cert"));
         File keyFile = Play.getFile(p.getProperty("certificate.key.file", "certs/host.key"));
+        // null = unencrypted key (mkcert/openssl default). The 3-arg forServer overload
+        // forwards null to the 2-arg overload internally, so this is identical to the
+        // pre-encrypted-key behavior when the property is absent.
+        String keyPassword = p.getProperty("certificate.key.password");
 
         if (!certFile.exists() || !keyFile.exists()) {
             throw new IllegalStateException(
@@ -113,7 +119,7 @@ public class SslHttpServerPipelineFactory extends HttpServerPipelineFactory {
                             + certFile.getAbsolutePath() + ", key at " + keyFile.getAbsolutePath() + ".");
         }
 
-        SslContextBuilder builder = SslContextBuilder.forServer(certFile, keyFile);
+        SslContextBuilder builder = SslContextBuilder.forServer(certFile, keyFile, keyPassword);
 
         builder.applicationProtocolConfig(new ApplicationProtocolConfig(
                 Protocol.ALPN,

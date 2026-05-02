@@ -123,6 +123,41 @@ public class SslHttpServerPipelineFactoryAlpnTest {
         assertTrue(msg.contains("host.key"), "error must name expected key path: " + msg);
     }
 
+    @Test
+    void buildSslContextFromEncryptedPemSucceedsWithCorrectPassword() throws Exception {
+        // Encrypted PEM keys are valid input — operators who need a passphrase-protected
+        // key on disk (typical production hardening) can set certificate.key.password and
+        // the framework decrypts via Netty's SslContextBuilder 3-arg overload. PEM is
+        // still the only supported format; the password is purely about whether the
+        // private key bytes are wrapped in EncryptedPrivateKeyInfo.
+        String password = "test-passphrase-123";
+        generateEncryptedPemCertAndKey("certs/host.cert", "certs/host.key", password);
+        Play.configuration.setProperty("certificate.file", "certs/host.cert");
+        Play.configuration.setProperty("certificate.key.file", "certs/host.key");
+        Play.configuration.setProperty("certificate.key.password", password);
+
+        SslContext ctx = SslHttpServerPipelineFactory.buildSslContext();
+
+        assertNotNull(ctx, "encrypted-PEM SslContext must build with the right password");
+        assertTrue(ctx.isServer(), "Built SslContext must be a server context");
+    }
+
+    @Test
+    void buildSslContextFromEncryptedPemFailsWithWrongPassword() throws Exception {
+        // Wrong password must surface as a build-time failure rather than a silent
+        // misconfiguration that only manifests on the first TLS handshake. Netty wraps
+        // the underlying javax.crypto BadPaddingException; the test asserts on the
+        // exception happening at all rather than its exact type, since Netty's wrapping
+        // varies across versions.
+        generateEncryptedPemCertAndKey("certs/host.cert", "certs/host.key", "right-password");
+        Play.configuration.setProperty("certificate.file", "certs/host.cert");
+        Play.configuration.setProperty("certificate.key.file", "certs/host.key");
+        Play.configuration.setProperty("certificate.key.password", "wrong-password");
+
+        assertThrows(Exception.class, SslHttpServerPipelineFactory::buildSslContext,
+                "wrong key password must fail SslContext construction");
+    }
+
     /**
      * Generate a self-signed PEM cert+key pair at the given paths under {@link #tmpDir}
      * via the {@code openssl} CLI — mirrors the openssl fallback in the production
@@ -139,6 +174,34 @@ public class SslHttpServerPipelineFactoryAlpnTest {
                 "-out", certOut.getAbsolutePath(),
                 "-days", "365",
                 "-subj", "/CN=localhost"
+        ).redirectErrorStream(true);
+        Process p = pb.start();
+        int rc = p.waitFor();
+        if (rc != 0) {
+            String output = new String(p.getInputStream().readAllBytes());
+            throw new IllegalStateException("openssl failed (rc=" + rc + "): " + output);
+        }
+    }
+
+    /**
+     * Generate a self-signed PEM cert + passphrase-encrypted private key. Drops the
+     * {@code -nodes} flag from the unencrypted helper and adds {@code -passout} —
+     * openssl picks the default key-encryption cipher (AES-256-CBC on modern openssl)
+     * automatically. Same openssl CLI dependency as {@link #generatePemCertAndKey}.
+     */
+    private void generateEncryptedPemCertAndKey(String certRelative, String keyRelative,
+                                                 String password) throws Exception {
+        File certOut = new File(tmpDir.toFile(), certRelative);
+        File keyOut = new File(tmpDir.toFile(), keyRelative);
+        certOut.getParentFile().mkdirs();
+        keyOut.getParentFile().mkdirs();
+        ProcessBuilder pb = new ProcessBuilder(
+                "openssl", "req", "-x509", "-newkey", "rsa:2048",
+                "-keyout", keyOut.getAbsolutePath(),
+                "-out", certOut.getAbsolutePath(),
+                "-days", "365",
+                "-subj", "/CN=localhost",
+                "-passout", "pass:" + password
         ).redirectErrorStream(true);
         Process p = pb.start();
         int rc = p.waitFor();
