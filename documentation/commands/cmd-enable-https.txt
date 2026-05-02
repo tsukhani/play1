@@ -4,7 +4,7 @@
 ~
 ~ Synopsis:
 ~ ~~~~~~~~~
-~ play enable-https [app_path]
+~ play enable-https [app_path] [--regenerate]
 ~
 ~ Description:
 ~ ~~~~~~~~~~~~
@@ -69,8 +69,23 @@
 ~     Listening for HTTP/3 on UDP port 9443 ...
 ~
 ~ Idempotent: re-running when HTTPS is already enabled is a no-op. The
-~ command does NOT regenerate the cert if one already exists, so
-~ disable-https followed by enable-https reuses the same cert.
+~ command reuses an existing cert+key when both files are present and
+~ the cert is still valid, so disable-https followed by enable-https
+~ reuses the same cert.
+~
+~ Auto-regeneration: when openssl is on PATH, enable-https checks the
+~ existing cert for expiry / corruption and regenerates it
+~ transparently if it has expired or fails to parse. This is fine for
+~ a localhost dev cert; manual recovery would just be busywork.
+~
+~ Forced regeneration: pass --regenerate to regenerate the cert+key
+~ unconditionally, even if they're valid. Useful when you want a fresh
+~ cert for any reason (e.g., changed your local hostname, want to
+~ rotate keys, switched between mkcert and openssl).
+~
+~ Note: the bare --force flag is reserved by the play CLI itself
+~ (consumed for the ignoreMissing path before commands see it), so
+~ this command uses --regenerate instead.
 ~
 ~ The generated cert is for local development only — for production,
 ~ replace conf/host.cert and conf/host.key with a real cert (Let's

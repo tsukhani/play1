@@ -25,13 +25,18 @@ HTTPS_PORT = '9443'
 def execute(**kargs):
     command = kargs.get("command")
     app = kargs.get("app")
+    args = kargs.get("args") or []
     if command == 'enable-https':
-        _enable(app)
+        # NOTE: can't use --force here. The top-level play CLI intercepts that flag
+        # for its own ignoreMissing path (see /opt/play1/play around line 102),
+        # consuming it before commands see args. --regenerate is clearer anyway.
+        force = '--regenerate' in args
+        _enable(app, force=force)
     elif command == 'disable-https':
         _disable(app)
 
 
-def _enable(app):
+def _enable(app, force=False):
     app.check()
     config_path = os.path.join(app.path, 'conf', 'application.conf')
 
@@ -51,18 +56,43 @@ def _enable(app):
     # also be explicit to keep the plain HTTP listener bound.
     https_active = _has_active_line(config, 'https.port')
     http_active = _has_active_line(config, 'http.port')
-    if https_active and http_active and os.path.exists(cert_path) and os.path.exists(key_path):
+    files_present = os.path.exists(cert_path) and os.path.exists(key_path)
+
+    # Decide whether to (re)generate the cert+key. Three drivers:
+    #   - --force: always regenerate, even if files are valid
+    #   - Files missing: generate fresh
+    #   - Files present but expired/corrupted: regenerate transparently. The cert is
+    #     a localhost dev cert; users don't want to read a confusing TLS handshake
+    #     error and then manually delete files just to recover.
+    regenerate_reason = None
+    if force and files_present:
+        regenerate_reason = 'force'
+    elif not files_present:
+        regenerate_reason = 'missing'
+    else:
+        validity = _check_cert_validity(cert_path)
+        if validity == 'expired':
+            regenerate_reason = 'expired'
+        elif validity == 'corrupted':
+            regenerate_reason = 'corrupted'
+        # 'valid' or 'unknown' (openssl unavailable) → reuse
+
+    if regenerate_reason is None and https_active and http_active:
         print("~ HTTPS is already enabled in conf/application.conf.")
         print("~ Cert+key present at %s and %s." % (cert_file_value, key_file_value))
         print("~")
         return
 
-    if os.path.exists(cert_path) and os.path.exists(key_path):
+    if regenerate_reason is None:
         print("~ Reusing existing PEM cert+key at %s and %s." % (cert_file_value, key_file_value))
     else:
-        # Prefer mkcert: produces a system-trusted cert after mkcert -install, which
-        # Chrome's QUIC stack actually accepts. Fall back to openssl for a self-signed
-        # cert that works for curl/h2 testing but won't satisfy browser h3.
+        if regenerate_reason == 'expired':
+            print("~ Existing cert at %s has expired — regenerating." % cert_file_value)
+        elif regenerate_reason == 'corrupted':
+            print("~ Existing cert at %s is unreadable — regenerating." % cert_file_value)
+        elif regenerate_reason == 'force':
+            print("~ --regenerate: regenerating PEM cert+key (existing files will be replaced).")
+        # 'missing' falls through silently — first-time generation needs no announcement
         try:
             if shutil.which('mkcert') is not None:
                 _generate_mkcert(cert_path, key_path)
@@ -165,6 +195,33 @@ def _generate_openssl(cert_path, key_path):
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or result.stdout.strip())
+
+
+def _check_cert_validity(cert_path):
+    """Returns one of:
+      - 'valid': cert parses and notAfter is in the future
+      - 'expired': cert parses but notAfter has passed (or is today)
+      - 'corrupted': cert file does not parse as a valid X.509 PEM
+      - 'unknown': openssl isn't on PATH so we can't check (caller treats as 'valid'
+        and falls back to blind reuse — same as pre-PF-68 behavior)
+    Used by enable-https to transparently regenerate dev certs that have expired or
+    been corrupted, since manual recovery is busywork for a localhost cert.
+    """
+    if shutil.which('openssl') is None:
+        return 'unknown'
+    # First parse: distinguishes corrupted from anything-cert-like.
+    parse = subprocess.run(
+        ['openssl', 'x509', '-noout', '-in', cert_path],
+        capture_output=True, text=True
+    )
+    if parse.returncode != 0:
+        return 'corrupted'
+    # Second check: -checkend 0 returns 0 if cert is still valid, 1 if expired.
+    expiry = subprocess.run(
+        ['openssl', 'x509', '-checkend', '0', '-noout', '-in', cert_path],
+        capture_output=True, text=True
+    )
+    return 'valid' if expiry.returncode == 0 else 'expired'
 
 
 def _has_active_line(config, key):
