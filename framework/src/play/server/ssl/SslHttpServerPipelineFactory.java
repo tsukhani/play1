@@ -76,8 +76,8 @@ public class SslHttpServerPipelineFactory extends HttpServerPipelineFactory {
 
     /**
      * Build an {@link SslHandler} backed by a Netty {@link SslContext}. PEM-only:
-     * reads {@code certificate.file} (default {@code conf/host.cert}) and
-     * {@code certificate.key.file} (default {@code conf/host.key}). PF-68 dropped
+     * reads {@code certificate.file} (default {@code certs/host.cert}) and
+     * {@code certificate.key.file} (default {@code certs/host.key}). PF-68 dropped
      * the JKS keystore branch because every TLS configuration JKS expressed had
      * an equivalent in PEM, and the local-dev workflow is one mkcert command on
      * PEM versus three (openssl pkcs12 + keytool import) on JKS.
@@ -102,8 +102,8 @@ public class SslHttpServerPipelineFactory extends HttpServerPipelineFactory {
      */
     static SslContext buildSslContext() throws Exception {
         Properties p = Play.configuration;
-        File certFile = Play.getFile(p.getProperty("certificate.file", "conf/host.cert"));
-        File keyFile = Play.getFile(p.getProperty("certificate.key.file", "conf/host.key"));
+        File certFile = Play.getFile(p.getProperty("certificate.file", "certs/host.cert"));
+        File keyFile = Play.getFile(p.getProperty("certificate.key.file", "certs/host.key"));
 
         if (!certFile.exists() || !keyFile.exists()) {
             throw new IllegalStateException(

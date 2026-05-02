@@ -42,8 +42,8 @@ public final class Http3SslContextFactory {
 
     private static QuicSslContext build() throws Exception {
         Properties p = Play.configuration;
-        File certFile = Play.getFile(p.getProperty("certificate.file", "conf/host.cert"));
-        File keyFile = Play.getFile(p.getProperty("certificate.key.file", "conf/host.key"));
+        File certFile = Play.getFile(p.getProperty("certificate.file", "certs/host.cert"));
+        File keyFile = Play.getFile(p.getProperty("certificate.key.file", "certs/host.key"));
 
         if (!certFile.exists() || !keyFile.exists()) {
             throw new IllegalStateException(

@@ -16,8 +16,8 @@ HELP = {
 # PF-68: PEM-only. mkcert produces certs trusted by the system store after
 # `mkcert -install`, which is what Chrome's QUIC stack needs to actually negotiate
 # HTTP/3 in a real browser. openssl is the fallback when mkcert isn't available.
-CERT_PATH = 'conf/host.cert'
-KEY_PATH = 'conf/host.key'
+CERT_PATH = 'certs/host.cert'
+KEY_PATH = 'certs/host.key'
 HTTP_PORT = '9000'
 HTTPS_PORT = '9443'
 

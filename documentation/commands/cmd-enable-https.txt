@@ -25,11 +25,11 @@
 ~
 ~ Performs three steps idempotently:
 ~
-~   1. If conf/host.cert and conf/host.key do not both exist, generate a
+~   1. If certs/host.cert and certs/host.key do not both exist, generate a
 ~      PEM cert+key pair. Two strategies:
 ~
 ~        • mkcert (preferred) — if `mkcert` is on PATH, runs
-~          `mkcert -cert-file conf/host.cert -key-file conf/host.key
+~          `mkcert -cert-file certs/host.cert -key-file certs/host.key
 ~                  localhost 127.0.0.1 ::1`
 ~          to produce a cert signed by mkcert's local CA. After running
 ~          `mkcert -install` once, the local CA is trusted by the
@@ -47,8 +47,8 @@
 ~      accept encrypted keys). If the cert+key already exist, they are
 ~      reused.
 ~
-~   2. Set certificate.file=conf/host.cert and
-~      certificate.key.file=conf/host.key in conf/application.conf.
+~   2. Set certificate.file=certs/host.cert and
+~      certificate.key.file=certs/host.key in conf/application.conf.
 ~      Skeleton-style commented lines are uncommented in place. ONLY
 ~      default values are written — existing active lines (e.g. a
 ~      custom certificate.file=conf/my-cert.pem or https.port=8443)
@@ -88,7 +88,7 @@
 ~ this command uses --regenerate instead.
 ~
 ~ The generated cert is for local development only — for production,
-~ replace conf/host.cert and conf/host.key with a real cert (Let's
+~ replace certs/host.cert and certs/host.key with a real cert (Let's
 ~ Encrypt, internal CA, etc.).
 ~
 ~ See also: play disable-https

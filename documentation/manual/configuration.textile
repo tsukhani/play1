@@ -210,7 +210,7 @@ Specifies an X509 certificate key, for HTTPS support. The file must be named @ho
 
 bc. certificate.key.file=/certificates/host.key
 
-Default: @conf/host.key@
+Default: @certs/host.key@
 
 
 h3(#certificate.file). certificate.file
@@ -219,7 +219,7 @@ Specifies an X509 certificate file, for HTTPS support. The file must be named @h
 
 bc. certificate.file=/certificates/host.cert
 
-Default: @conf/host.cert@
+Default: @certs/host.cert@
 
 
 h3(#certificate.password). certificate.password
@@ -767,18 +767,18 @@ h3(#certificate.file). certificate.file
 
 Path to the PEM-encoded X.509 certificate (or chain).
 
-bc. certificate.file=conf/host.cert
+bc. certificate.file=certs/host.cert
 
-Default: @conf/host.cert@
+Default: @certs/host.cert@
 
 
 h3(#certificate.key.file). certificate.key.file
 
 Path to the unencrypted PEM-encoded private key. The framework's Netty @SslContextBuilder@ does not accept encrypted keys; @mkcert@ and the @openssl req -nodes@ fallback both produce unencrypted keys.
 
-bc. certificate.key.file=conf/host.key
+bc. certificate.key.file=certs/host.key
 
-Default: @conf/host.key@
+Default: @certs/host.key@
 
 
 h2(#memcachedconfig). Memcached

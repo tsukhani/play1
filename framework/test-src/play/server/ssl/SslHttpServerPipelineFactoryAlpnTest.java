@@ -90,9 +90,10 @@ public class SslHttpServerPipelineFactoryAlpnTest {
     void buildSslContextFromPemAdvertisesH2ThenHttp1() throws Exception {
         // PF-68: a PEM cert+key pair produces an SslContext whose ALPN negotiator
         // advertises h2 then http/1.1. PEM is the only cert source post-PF-68.
-        generatePemCertAndKey("conf/host.cert", "conf/host.key");
-        Play.configuration.setProperty("certificate.file", "conf/host.cert");
-        Play.configuration.setProperty("certificate.key.file", "conf/host.key");
+        // PF-69: the canonical PEM location is certs/, not conf/.
+        generatePemCertAndKey("certs/host.cert", "certs/host.key");
+        Play.configuration.setProperty("certificate.file", "certs/host.cert");
+        Play.configuration.setProperty("certificate.key.file", "certs/host.key");
 
         SslContext ctx = SslHttpServerPipelineFactory.buildSslContext();
 
@@ -110,8 +111,9 @@ public class SslHttpServerPipelineFactoryAlpnTest {
         // PF-68: no PEM files on disk + no other cert source = clean
         // IllegalStateException naming the expected paths. Pre-PF-68 a missing PEM
         // would silently fall through to the JKS branch and emit a confused error.
-        Play.configuration.setProperty("certificate.file", "conf/host.cert");
-        Play.configuration.setProperty("certificate.key.file", "conf/host.key");
+        // PF-69: paths reflect the new certs/ canonical location.
+        Play.configuration.setProperty("certificate.file", "certs/host.cert");
+        Play.configuration.setProperty("certificate.key.file", "certs/host.key");
 
         IllegalStateException ex = assertThrows(IllegalStateException.class,
                 SslHttpServerPipelineFactory::buildSslContext);

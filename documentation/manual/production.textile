@@ -195,14 +195,14 @@ You need to put your certificates in the @conf@ directory. Play supports X509 ce
 PF-68 made HTTPS PEM-only. Configure the cert+key paths in your @application.conf@ file:
 
 bc. # X509 certificates (PEM)
-certificate.file=conf/host.cert
-certificate.key.file=conf/host.key
+certificate.file=certs/host.cert
+certificate.key.file=certs/host.key
 
 The values above are the framework defaults. Keys must be unencrypted PEM — Netty's @SslContextBuilder@ does not accept encrypted keys.
 
 For local development, the easiest path is the "play enable-https":commands#enable-https command, which generates a cert+key pair via @mkcert@ (preferred — produces a system-trusted cert that works with Chrome's HTTP/3 stack) or @openssl@ (fallback — self-signed).
 
-For production, replace @conf/host.cert@ and @conf/host.key@ with a real cert from Let's Encrypt, an internal CA, or your usual certificate provider. Generate self-signed certs manually with:
+For production, replace @certs/host.cert@ and @certs/host.key@ with a real cert from Let's Encrypt, an internal CA, or your usual certificate provider. Generate self-signed certs manually with:
 
 bc. openssl req -x509 -newkey rsa:2048 -nodes \
     -keyout host.key -out host.cert \
