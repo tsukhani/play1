@@ -86,9 +86,10 @@ require:    &allDependencies
     # HttpServerPipelineFactory wire brotli when it constructs the compressor.
     - io.netty -> netty-codec-compression 4.2.12.Final
     - io.netty -> netty-codec-http 4.2.12.Final
-    # PF-58: HTTP/2 codec + multiplex handler. Activated only when play.http2.enabled=true;
+    # PF-58: HTTP/2 codec + multiplex handler. Always active when HTTPS is configured;
     # SslHttpServerPipelineFactory installs Http2FrameCodec + Http2MultiplexHandler in the
-    # ALPN h2 branch. Same Netty version as the other codec-* artifacts.
+    # ALPN h2 branch (h1.1 fallback handled by Http2OrHttp1Negotiator). Same Netty version
+    # as the other codec-* artifacts.
     - io.netty -> netty-codec-http2 4.2.12.Final
     - io.netty -> netty-common 4.2.12.Final
     - io.netty -> netty-handler 4.2.12.Final

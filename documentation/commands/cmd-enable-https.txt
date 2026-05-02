@@ -8,9 +8,11 @@
 ~
 ~ Description:
 ~ ~~~~~~~~~~~~
-~ Configures the application to listen for HTTPS on port 9443 with HTTP/2
-~ (ALPN h2) negotiation enabled, alongside the plain HTTP listener on
-~ port 9000. Performs four steps idempotently:
+~ Configures the application to listen for HTTPS on port 9443 alongside
+~ the plain HTTP listener on port 9000. ALPN h2 negotiation is always
+~ enabled at the framework level — modern clients get HTTP/2; older
+~ clients automatically fall back to HTTP/1.1 over the same socket.
+~ Performs three steps idempotently:
 ~
 ~   1. If conf/certificate.jks does not exist, generate a self-signed JKS
 ~      keystore via keytool: alias=play, RSA 2048, CN=localhost, validity
@@ -20,13 +22,11 @@
 ~
 ~   2. Set keystore.algorithm, keystore.file, keystore.password, and
 ~      https.port=9443 in conf/application.conf. Skeleton-style commented
-~      lines are uncommented in place; existing active lines are updated;
-~      otherwise lines are appended at end of file.
+~      lines are uncommented in place. ONLY default values are written —
+~      existing active lines (e.g. a custom https.port=8443 or
+~      keystore.file=conf/my-cert.jks) are preserved verbatim.
 ~
-~   3. Set play.http2.enabled=true so HTTPS connections negotiate HTTP/2
-~      via ALPN and fall back to HTTP/1.1 for older clients.
-~
-~   4. If http.port is not already an active line, set http.port=9000.
+~   3. If http.port is not already an active line, set http.port=9000.
 ~      The framework's special-case "default to 9000 when neither port is
 ~      set" fallback (Server.java) does NOT fire once https.port is
 ~      configured, so the explicit http.port line is needed to keep the

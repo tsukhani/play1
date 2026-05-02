@@ -48,26 +48,25 @@ public class SslHttpServerPipelineFactory extends HttpServerPipelineFactory {
     @Override
     protected void initChannel(Channel ch) throws Exception {
         ChannelPipeline pipeline = ch.pipeline();
-        boolean http2Enabled = isHttp2Enabled();
 
-        // PF-66: single unified Netty SslContext path for both h2-enabled and h2-disabled
-        // cases, both PEM and JKS. Replaces the legacy JDK-SSLEngine branch that previously
-        // handled the h2-disabled case via SslHttpServerContextFactory. Benefits: one cert-
-        // loading code path, deterministic server-preferred ALPN selection on the h2 path
-        // (JDK SSLEngine's ALPN selection on JDK 25 was implementation-defined and
-        // empirically preferred the client's ordering, silently downgrading h2 to http/1.1).
-        pipeline.addLast("ssl", buildSslHandler(ch, http2Enabled));
+        // PF-66 + flag-removal: single unified Netty SslContext path for both PEM and JKS,
+        // with ALPN always advertising h2 + http/1.1. Replaces the legacy JDK-SSLEngine
+        // branch that previously handled the non-h2 case. Benefits: one cert-loading
+        // code path, deterministic server-preferred ALPN selection (JDK SSLEngine's
+        // ALPN on JDK 25 was implementation-defined and empirically preferred the
+        // client's ordering, silently downgrading h2 to http/1.1).
+        //
+        // ALPN gracefully degrades: clients that don't offer h2 negotiate http/1.1
+        // (NO_ADVERTISE failure behavior + h2/http/1.1 protocol list), so there's no
+        // "ALPN off" mode worth preserving — it would be strictly worse for h2 clients
+        // without making anything compatible for h1.1 clients.
+        pipeline.addLast("ssl", buildSslHandler(ch));
 
-        // With HTTP/2 enabled, defer protocol-specific pipeline construction to the ALPN
-        // negotiation handler. The h2 branch installs the frame codec and multiplex handler;
-        // the http/1.1 branch calls back into installHttp1Chain so the configurable
+        // Defer protocol-specific pipeline construction to the ALPN negotiation handler.
+        // The h2 branch installs the frame codec and multiplex handler; the http/1.1
+        // branch calls back into installHttp1Chain so the configurable
         // play.ssl.netty.pipeline chain stays the single source of truth for HTTP/1.1.
-        if (http2Enabled) {
-            pipeline.addLast("alpn", new Http2OrHttp1Negotiator(this::installHttp1Chain));
-            return;
-        }
-
-        installHttp1Chain(pipeline);
+        pipeline.addLast("alpn", new Http2OrHttp1Negotiator(this::installHttp1Chain));
     }
 
     /**
@@ -84,19 +83,15 @@ public class SslHttpServerPipelineFactory extends HttpServerPipelineFactory {
      * cert+key files ({@code certificate.file} / {@code certificate.key.file}) and JKS
      * keystores ({@code keystore.file} / {@code keystore.password}); the file-presence
      * precedence is the same one the legacy {@code SslHttpServerContextFactory} used.
-     *
-     * <p>{@code withAlpn} controls whether ALPN is configured on the SslContext. When
-     * {@code play.http2.enabled=true}, ALPN advertises h2 + http/1.1 in server-preferred order;
-     * when false, no ALPN is negotiated and clients see whatever the underlying TLS stack picks
-     * (typically http/1.1).
+     * ALPN is always configured (h2 + http/1.1) — see {@link #initChannel} for the rationale.
      */
-    private SslHandler buildSslHandler(Channel ch, boolean withAlpn) throws Exception {
+    private SslHandler buildSslHandler(Channel ch) throws Exception {
         SslContext ctx = cachedSslContext;
         if (ctx == null) {
             synchronized (SslHttpServerPipelineFactory.class) {
                 ctx = cachedSslContext;
                 if (ctx == null) {
-                    cachedSslContext = ctx = buildSslContext(withAlpn);
+                    cachedSslContext = ctx = buildSslContext();
                 }
             }
         }
@@ -107,7 +102,7 @@ public class SslHttpServerPipelineFactory extends HttpServerPipelineFactory {
      * Construct the {@link SslContext}. Visible to {@code SslHttpServerPipelineFactoryAlpnTest}
      * so tests can build an SslContext directly without standing up a Netty server.
      */
-    static SslContext buildSslContext(boolean withAlpn) throws Exception {
+    static SslContext buildSslContext() throws Exception {
         Properties p = Play.configuration;
         File certFile = Play.getFile(p.getProperty("certificate.file", "conf/host.cert"));
         File keyFile = Play.getFile(p.getProperty("certificate.key.file", "conf/host.key"));
@@ -140,16 +135,14 @@ public class SslHttpServerPipelineFactory extends HttpServerPipelineFactory {
             builder = SslContextBuilder.forServer(kmf);
         }
 
-        if (withAlpn) {
-            builder.applicationProtocolConfig(new ApplicationProtocolConfig(
-                    Protocol.ALPN,
-                    // NO_ADVERTISE: if no overlap with client's ALPN list, fail handshake with no_application_protocol alert.
-                    SelectorFailureBehavior.NO_ADVERTISE,
-                    // ACCEPT: even if the negotiated protocol isn't one we explicitly listed,
-                    // accept it (defensive — this combination effectively never fires here).
-                    SelectedListenerFailureBehavior.ACCEPT,
-                    ALPN_PROTOCOLS));
-        }
+        builder.applicationProtocolConfig(new ApplicationProtocolConfig(
+                Protocol.ALPN,
+                // NO_ADVERTISE: if no overlap with client's ALPN list, fail handshake with no_application_protocol alert.
+                SelectorFailureBehavior.NO_ADVERTISE,
+                // ACCEPT: even if the negotiated protocol isn't one we explicitly listed,
+                // accept it (defensive — this combination effectively never fires here).
+                SelectedListenerFailureBehavior.ACCEPT,
+                ALPN_PROTOCOLS));
 
         // Per-connection knobs that the legacy JDK-engine path applied via SSLEngine setters,
         // now lifted to SslContext-build time so a single cached SslContext serves every accept.
@@ -218,14 +211,6 @@ public class SslHttpServerPipelineFactory extends HttpServerPipelineFactory {
 
         pipeline.addLast("handler", sslPlayHandler);
         sslPlayHandler.pipelines.put("SslHandler", sslPlayHandler);
-    }
-
-    /**
-     * Read the {@code play.http2.enabled} flag. Package-private so {@code SslHttpServerPipelineFactoryAlpnTest}
-     * can verify the gate without spinning up the full SSL context factory (which requires cert files).
-     */
-    static boolean isHttp2Enabled() {
-        return Boolean.parseBoolean(Play.configuration.getProperty("play.http2.enabled", "false"));
     }
 
     /** Server's ALPN preference order: h2 first, http/1.1 fallback. */

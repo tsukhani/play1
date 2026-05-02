@@ -9,8 +9,8 @@ from play.utils import *
 COMMANDS = ['enable-https', 'disable-https']
 
 HELP = {
-    'enable-https': 'Enable HTTPS on port 9443 with HTTP/2 (h2) negotiation; generate a self-signed local keystore if needed (PF-67)',
-    'disable-https': 'Disable HTTPS and HTTP/2 but keep the keystore for re-enabling later (PF-67)',
+    'enable-https': 'Enable HTTPS on port 9443 (HTTP/2 via ALPN); generate a self-signed local keystore if needed (PF-67)',
+    'disable-https': 'Disable HTTPS but keep the keystore for re-enabling later (PF-67)',
 }
 
 # Defaults match framework conventions (SslHttpServerContextFactory.java:69 etc.)
@@ -46,18 +46,19 @@ def _enable(app):
     keystore_algorithm_value = _active_value(config, 'keystore.algorithm') or 'JKS'
     keystore_path = os.path.join(app.path, keystore_file_value)
 
-    # "Fully enabled" requires https.port active, play.http2.enabled=true, AND
-    # http.port active (any value — preserves a user's custom http.port=8080).
-    # enable-https treats HTTP + HTTPS + HTTP/2 as one feature toggle: a fresh
-    # app's commented-out `# http.port=9000` triggers the framework's special-case
-    # default-to-9000 fallback ONLY when https.port is also unset (Server.java:56);
-    # once we set https.port, that fallback no longer fires, so we must explicitly
-    # bind http.port too if we want both listeners.
+    # "Fully enabled" requires both https.port AND http.port active (any values —
+    # preserves a user's custom http.port=8080). enable-https treats HTTP + HTTPS
+    # as one feature toggle: a fresh app's commented-out `# http.port=9000` triggers
+    # the framework's special-case default-to-9000 fallback ONLY when https.port is
+    # also unset (Server.java:56); once we set https.port, that fallback no longer
+    # fires, so we must explicitly bind http.port too if we want both listeners.
+    # ALPN h2 negotiation is always on at the framework level when HTTPS is configured
+    # (it gracefully falls back to http/1.1 for non-h2 clients), so there's no flag
+    # to set here.
     https_active = _has_active_line(config, 'https.port')
-    http2_true = _is_active_value(config, 'play.http2.enabled', 'true')
     http_active = _has_active_line(config, 'http.port')
-    if https_active and http2_true and http_active:
-        print("~ HTTPS (with HTTP/2) is already enabled in conf/application.conf.")
+    if https_active and http_active:
+        print("~ HTTPS is already enabled in conf/application.conf.")
         if os.path.exists(keystore_path):
             print("~ Keystore present at %s." % keystore_file_value)
         print("~")
@@ -117,9 +118,6 @@ def _enable(app):
         config = _set_or_uncomment(config, 'https.port', HTTPS_PORT)
     if not http_active:
         config = _set_or_uncomment(config, 'http.port', HTTP_PORT)
-    # play.http2.enabled is the feature toggle this command exists to flip, so
-    # always set it to true regardless of any existing value (e.g. =false).
-    config = _set_or_uncomment(config, 'play.http2.enabled', 'true')
     _write(config_path, config)
 
     http_value = _active_value(config, 'http.port')
@@ -128,7 +126,7 @@ def _enable(app):
         print("~ HTTP listener stays disabled per existing http.port=-1 setting.")
     else:
         print("~ HTTP enabled on port %s." % http_value)
-    print("~ HTTPS enabled on port %s with HTTP/2 (ALPN h2) negotiation." % https_value)
+    print("~ HTTPS enabled on port %s (HTTP/2 via ALPN)." % https_value)
     print("~ Run play run or play start to apply.")
     print("~")
 
@@ -136,29 +134,28 @@ def _enable(app):
 def _disable(app):
     app.check()
     config_path = os.path.join(app.path, 'conf', 'application.conf')
-    keystore_path = os.path.join(app.path, KEYSTORE_PATH)
 
     config = _read(config_path)
 
-    https_active = _has_active_line(config, 'https.port')
-    http2_active = _has_active_line(config, 'play.http2.enabled')
-    if not https_active and not http2_active:
+    # Resolve the keystore path the same way _enable does, so the "preserved"
+    # message reflects the user's actual keystore.file rather than the default.
+    keystore_file_value = _active_value(config, 'keystore.file') or KEYSTORE_PATH
+    keystore_path = os.path.join(app.path, keystore_file_value)
+
+    if not _has_active_line(config, 'https.port'):
         print("~ HTTPS is already disabled.")
         print("~")
         return
 
-    # Comment out https.port and play.http2.enabled. Leave keystore.* lines
+    # Comment out only https.port. Leave keystore.* lines and http.port
     # intact so a future enable-https can pick up the same password without
-    # prompting.
-    if https_active:
-        config = re.sub(r'^(https\.port\s*=.*)$', r'# \1', config, flags=re.MULTILINE)
-    if http2_active:
-        config = re.sub(r'^(play\.http2\.enabled\s*=.*)$', r'# \1', config, flags=re.MULTILINE)
+    # prompting and HTTP keeps working.
+    config = re.sub(r'^(https\.port\s*=.*)$', r'# \1', config, flags=re.MULTILINE)
     _write(config_path, config)
 
-    print("~ HTTPS disabled (HTTP/2 negotiation also disabled).")
+    print("~ HTTPS disabled.")
     if os.path.exists(keystore_path):
-        print("~ The keystore at %s is preserved — re-run play enable-https to reactivate." % KEYSTORE_PATH)
+        print("~ The keystore at %s is preserved — re-run play enable-https to reactivate." % keystore_file_value)
     print("~")
 
 
@@ -184,14 +181,6 @@ def _generate_keystore(path, password):
 
 def _has_active_line(config, key):
     return re.search(r'^' + re.escape(key) + r'\s*=', config, re.MULTILINE) is not None
-
-
-def _is_active_value(config, key, value):
-    """Check whether `key` has an active line whose value (case-insensitive,
-    stripped) equals `value`. Used by the "already enabled" check to require
-    play.http2.enabled to literally be `true`, not just any value."""
-    m = re.search(r'^' + re.escape(key) + r'\s*=\s*(.+?)\s*$', config, re.MULTILINE)
-    return m is not None and m.group(1).strip().lower() == value.lower()
 
 
 def _active_value(config, key):
