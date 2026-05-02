@@ -14,15 +14,14 @@ import play.Play;
 
 /**
  * PF-57: lazily-built, statically-cached {@link QuicSslContext} for the HTTP/3 path.
- * Mirrors {@link play.server.ssl.SslHttpServerPipelineFactory#buildHttp2SslContext} —
+ * Mirrors {@link play.server.ssl.SslHttpServerPipelineFactory#buildSslContext} —
  * supports both PEM cert+key files ({@code certificate.file} / {@code certificate.key.file})
  * and JKS keystores ({@code keystore.file} / {@code keystore.password}). Uses
  * {@link Http3#supportedApplicationProtocols()} so the ALPN advertisement always tracks
  * whatever h3 draft Netty currently negotiates.
  *
  * <p>Cache lifetime is the JVM. Cert rotation requires a server restart — same constraint
- * that applies to the JDK {@link play.server.ssl.SslHttpServerContextFactory#SERVER_CONTEXT}
- * static context and the cached {@code Http2SslContext} on the h2 path.
+ * that applies to the cached SslContext on the h2/h1 path.
  */
 public final class Http3SslContextFactory {
 
@@ -58,7 +57,7 @@ public final class Http3SslContextFactory {
         }
 
         // JKS path: load the configured keystore and wrap a KeyManagerFactory. Same defaults
-        // as SslHttpServerContextFactory so an existing keystore deployment can flip
+        // as the h2/h1 path so an existing keystore deployment can flip
         // play.http3.enabled=true without re-configuring cert paths.
         File keystoreFile = Play.getFile(p.getProperty("keystore.file", "conf/certificate.jks"));
         if (!keystoreFile.exists()) {
