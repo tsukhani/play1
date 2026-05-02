@@ -278,5 +278,65 @@ class TestPlayDistGitIgnore(unittest.TestCase):
         self.assertTrue(any('conf/routes' in n for n in names))
 
 
+class TestPlaySecret(unittest.TestCase):
+    """PF-71: secrets live at certs/.env, not project root .env."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix='play-cli-test-secret-')
+        self.app_path = os.path.join(self.tmpdir, 'secretapp')
+        run_play(['new', self.app_path, '--name=SecretApp'])
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_play_new_writes_secret_to_certs_dotenv(self):
+        # After `play new`, the secret file lives at certs/.env, NOT at the
+        # project-root .env (which was the legacy location pre-PF-71).
+        certs_env = os.path.join(self.app_path, 'certs', '.env')
+        legacy_env = os.path.join(self.app_path, '.env')
+        self.assertTrue(os.path.isfile(certs_env), '%s should exist' % certs_env)
+        self.assertFalse(os.path.exists(legacy_env), '%s should NOT exist (PF-71)' % legacy_env)
+        with open(certs_env) as f:
+            content = f.read()
+        self.assertIn('PLAY_SECRET=', content)
+
+    def test_dotenv_example_stays_at_project_root(self):
+        # .env.example is a committed template, not a secret — it stays at the
+        # project root so onboarding `cp .env.example certs/.env` is discoverable.
+        example = os.path.join(self.app_path, '.env.example')
+        self.assertTrue(os.path.isfile(example), '%s should exist' % example)
+
+    def test_secret_file_mode_is_600(self):
+        # Production-grade hardening: the secret file must not be world-/group-
+        # readable even with a permissive umask.
+        certs_env = os.path.join(self.app_path, 'certs', '.env')
+        mode = os.stat(certs_env).st_mode & 0o777
+        self.assertEqual(mode, 0o600,
+                         'expected mode 0o600, got 0o%o' % mode)
+
+    def test_play_secret_rerun_updates_in_place(self):
+        # Re-running `play secret` rewrites the same certs/.env file with a
+        # fresh value, preserving any unrelated lines the operator added.
+        certs_env = os.path.join(self.app_path, 'certs', '.env')
+        with open(certs_env) as f:
+            original = f.read()
+
+        # Simulate an operator-added unrelated env var.
+        with open(certs_env, 'a') as f:
+            f.write('CUSTOM_VAR=abc123\n')
+
+        result = run_play(['secret', self.app_path])
+        self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
+
+        with open(certs_env) as f:
+            after = f.read()
+        # PLAY_SECRET line should have changed (new value).
+        self.assertNotEqual(original, after)
+        self.assertIn('PLAY_SECRET=', after)
+        # The unrelated CUSTOM_VAR must still be there — writeEnvVar preserves
+        # other lines.
+        self.assertIn('CUSTOM_VAR=abc123', after)
+
+
 if __name__ == '__main__':
     unittest.main()

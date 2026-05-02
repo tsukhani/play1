@@ -24,10 +24,12 @@ class PlayApplication(object):
 
     def __init__(self, application_path, env, ignoreMissingModules = False):
         self.path = application_path
-        # Load <app>/.env so PLAY_SECRET (and any other declared variables) are
-        # visible to the Java subprocess via inherited os.environ. Existing
+        # Load <app>/certs/.env so PLAY_SECRET (and any other declared variables)
+        # are visible to the Java subprocess via inherited os.environ. Existing
         # environment values win, so a host env var or `-DPLAY_SECRET=...` flag
-        # still overrides a value in the file.
+        # still overrides a value in the file. PF-71 migrated this from the
+        # legacy <app>/.env path; loadDotEnv falls back to the legacy path with
+        # a WARN if certs/.env is missing.
         if application_path is not None:
             loadDotEnv(application_path)
         # only parse conf it is exists - if it should be there, it will be caught later

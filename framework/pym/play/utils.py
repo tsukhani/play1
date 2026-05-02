@@ -63,20 +63,27 @@ def secretVarName(app_path):
         pass
     return DEFAULT_SECRET_VAR
 
+SECRET_ENV_RELPATH = os.path.join('certs', '.env')
+
 def writeAppSecret(app_path, key):
-    """Write <VARNAME>=<key> into <app_path>/.env, preserving any other lines.
-    The variable name is read from `application.conf` (so a user who renamed
-    the conf line to ${MY_SECRET} gets MY_SECRET=... in .env automatically).
+    """Write <VARNAME>=<key> into <app_path>/certs/.env, preserving any other
+    lines. The variable name is read from `application.conf` (so a user who
+    renamed the conf line to ${MY_SECRET} gets MY_SECRET=... automatically).
     Creates the file if missing; replaces any existing line for that variable
     in place. Returns the .env path."""
     var_name = secretVarName(app_path)
     return writeEnvVar(app_path, var_name, key)
 
-def writeEnvVar(app_path, var_name, value, env_filename='.env'):
+def writeEnvVar(app_path, var_name, value, env_filename=SECRET_ENV_RELPATH):
     """Write <var_name>=<value> into <app_path>/<env_filename>, preserving any
     other lines. Replaces any existing line for that variable in place. Creates
-    the file if missing. Returns the file path."""
+    the file (and any missing parent dirs) if needed. Returns the file path.
+    The file is chmod'd to 0600 — it carries production secrets, so umask-default
+    644 would leak it to anything running under the same UID."""
     env_path = os.path.join(app_path, env_filename)
+    parent = os.path.dirname(env_path)
+    if parent and not os.path.isdir(parent):
+        os.makedirs(parent, exist_ok=True)
     new_line = '%s=%s\n' % (var_name, value)
     prefix_eq = var_name + '='
     prefix_sp = var_name + ' '
@@ -99,6 +106,12 @@ def writeEnvVar(app_path, var_name, value, env_filename='.env'):
     else:
         with open(env_path, 'w') as f:
             f.write(new_line)
+    try:
+        os.chmod(env_path, 0o600)
+    except OSError:
+        # Filesystems without POSIX modes (e.g. SMB shares on Windows hosts)
+        # silently no-op chmod — not worth blocking on.
+        pass
     return env_path
 
 def ensureTestSecret(app_path):
@@ -147,11 +160,23 @@ def writeEnvExample(app_path, var_name=None):
     return example_path
 
 def loadDotEnv(app_path):
-    """Load <app_path>/.env into os.environ. Existing environment values win,
-    so a host env var or `-D` flag can still override the .env entry."""
-    env_path = os.path.join(app_path, '.env')
+    """Load <app_path>/certs/.env into os.environ. Existing environment values
+    win, so a host env var or `-D` flag can still override the .env entry.
+
+    PF-71 migration: prefer certs/.env (the new canonical path); fall back to
+    legacy .env at the project root if that's all the operator has, with a
+    one-line WARN so they know to migrate. The fallback keeps existing apps
+    booting; new apps only ever write to certs/.env."""
+    env_path = os.path.join(app_path, SECRET_ENV_RELPATH)
     if not os.path.exists(env_path):
-        return
+        legacy_path = os.path.join(app_path, '.env')
+        if os.path.exists(legacy_path):
+            print("~ WARN: loading secrets from legacy %s — move it to %s "
+                  "(PF-71). The framework still reads the legacy path for now."
+                  % (legacy_path, env_path))
+            env_path = legacy_path
+        else:
+            return
     with open(env_path, 'r') as f:
         for raw in f:
             line = raw.strip()

@@ -3,6 +3,9 @@
 .env
 .env.local
 
+# TLS certs + keys + PF-71 secret env file all live here. Never commit.
+/certs/
+
 # Play artifacts
 /tmp/
 /logs/
