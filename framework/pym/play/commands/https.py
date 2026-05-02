@@ -34,12 +34,20 @@ def execute(**kargs):
 def _enable(app):
     app.check()
     config_path = os.path.join(app.path, 'conf', 'application.conf')
-    keystore_path = os.path.join(app.path, KEYSTORE_PATH)
 
     config = _read(config_path)
 
+    # Resolve keystore path/algorithm from existing config so user customizations
+    # (e.g. keystore.file=conf/my-cert.jks, keystore.algorithm=PKCS12) are honored.
+    # Falls back to framework defaults when no active line exists. Same pattern is
+    # later used to decide whether to write each keystore.* line — only set the
+    # default when the user hasn't already declared a value.
+    keystore_file_value = _active_value(config, 'keystore.file') or KEYSTORE_PATH
+    keystore_algorithm_value = _active_value(config, 'keystore.algorithm') or 'JKS'
+    keystore_path = os.path.join(app.path, keystore_file_value)
+
     # "Fully enabled" requires https.port active, play.http2.enabled=true, AND
-    # http.port active (any value — preserves a user's custom http.port=8080 etc).
+    # http.port active (any value — preserves a user's custom http.port=8080).
     # enable-https treats HTTP + HTTPS + HTTP/2 as one feature toggle: a fresh
     # app's commented-out `# http.port=9000` triggers the framework's special-case
     # default-to-9000 fallback ONLY when https.port is also unset (Server.java:56);
@@ -51,7 +59,7 @@ def _enable(app):
     if https_active and http2_true and http_active:
         print("~ HTTPS (with HTTP/2) is already enabled in conf/application.conf.")
         if os.path.exists(keystore_path):
-            print("~ Keystore present at %s." % KEYSTORE_PATH)
+            print("~ Keystore present at %s." % keystore_file_value)
         print("~")
         return
 
@@ -62,13 +70,24 @@ def _enable(app):
         # the old one, breaking startup.
         password = _existing_password(config)
         if password is None:
-            print("~ ERROR: keystore exists at %s but keystore.password is not set in conf/application.conf." % KEYSTORE_PATH)
+            print("~ ERROR: keystore exists at %s but keystore.password is not set in conf/application.conf." % keystore_file_value)
             print("~        Either delete the keystore (it will be regenerated) or restore the password manually.")
             print("~")
             return
-        print("~ Reusing existing keystore at %s." % KEYSTORE_PATH)
+        print("~ Reusing existing keystore at %s." % keystore_file_value)
     else:
-        password = secrets.token_urlsafe(16)
+        # Only know how to generate JKS via keytool. If the user has explicitly
+        # declared a non-JKS keystore.algorithm, refuse rather than silently
+        # produce a JKS file at a path the user expected to hold (say) PKCS12.
+        if keystore_algorithm_value.upper() != 'JKS':
+            print("~ ERROR: keystore.algorithm=%s is configured but no keystore exists at %s." % (keystore_algorithm_value, keystore_file_value))
+            print("~        play enable-https only generates JKS keystores. Generate a %s keystore" % keystore_algorithm_value)
+            print("~        manually (e.g. via keytool -storetype %s) at %s, then re-run." % (keystore_algorithm_value, keystore_file_value))
+            print("~")
+            return
+        # Honor an existing keystore.password if already set (e.g. user wrote it
+        # out before generating the keystore); otherwise generate a random one.
+        password = _existing_password(config) or secrets.token_urlsafe(16)
         try:
             _generate_keystore(keystore_path, password)
         except FileNotFoundError:
@@ -80,30 +99,36 @@ def _enable(app):
             print("~ %s" % str(e))
             print("~")
             return
-        print("~ Generated self-signed keystore at %s" % KEYSTORE_PATH)
+        print("~ Generated self-signed keystore at %s" % keystore_file_value)
         print("~ (RSA 2048, %s, valid %s days)" % (KEYSTORE_DNAME, KEYSTORE_VALIDITY_DAYS))
 
-    config = _set_or_uncomment(config, 'keystore.algorithm', 'JKS')
-    config = _set_or_uncomment(config, 'keystore.file', KEYSTORE_PATH)
-    config = _set_or_uncomment(config, 'keystore.password', password)
-    # Uncomment-or-append for https.port and play.http2.enabled: a previous
-    # disable-https leaves both lines commented, and toggling without using
-    # _set_or_uncomment would accumulate stale duplicate lines on every cycle.
-    config = _set_or_uncomment(config, 'https.port', HTTPS_PORT)
-    config = _set_or_uncomment(config, 'play.http2.enabled', 'true')
-    # Bind plain HTTP too — only set http.port=9000 if it isn't already active,
-    # so a user's custom http.port=8080 (or http.port=-1 for HTTPS-only) is
-    # preserved across enable-https runs.
+    # Set each line ONLY if it isn't already an active config entry. This is the
+    # symmetric "comment/uncomment-only" contract the user expects: their custom
+    # keystore.file=conf/my-cert.jks, keystore.algorithm=PKCS12, https.port=8443,
+    # http.port=8080 (etc.) are preserved across enable-https runs. Lines that
+    # are absent or only present commented get set to our defaults.
+    if not _has_active_line(config, 'keystore.algorithm'):
+        config = _set_or_uncomment(config, 'keystore.algorithm', 'JKS')
+    if not _has_active_line(config, 'keystore.file'):
+        config = _set_or_uncomment(config, 'keystore.file', KEYSTORE_PATH)
+    if not _has_active_line(config, 'keystore.password'):
+        config = _set_or_uncomment(config, 'keystore.password', password)
+    if not https_active:
+        config = _set_or_uncomment(config, 'https.port', HTTPS_PORT)
     if not http_active:
         config = _set_or_uncomment(config, 'http.port', HTTP_PORT)
+    # play.http2.enabled is the feature toggle this command exists to flip, so
+    # always set it to true regardless of any existing value (e.g. =false).
+    config = _set_or_uncomment(config, 'play.http2.enabled', 'true')
     _write(config_path, config)
 
     http_value = _active_value(config, 'http.port')
+    https_value = _active_value(config, 'https.port')
     if http_value == '-1':
         print("~ HTTP listener stays disabled per existing http.port=-1 setting.")
     else:
         print("~ HTTP enabled on port %s." % http_value)
-    print("~ HTTPS enabled on port %s with HTTP/2 (ALPN h2) negotiation." % HTTPS_PORT)
+    print("~ HTTPS enabled on port %s with HTTP/2 (ALPN h2) negotiation." % https_value)
     print("~ Run play run or play start to apply.")
     print("~")
 
