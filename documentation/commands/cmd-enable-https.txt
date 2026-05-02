@@ -9,7 +9,8 @@
 ~ Description:
 ~ ~~~~~~~~~~~~
 ~ Configures the application to listen for HTTPS on port 9443 with HTTP/2
-~ (ALPN h2) negotiation enabled. Performs three steps idempotently:
+~ (ALPN h2) negotiation enabled, alongside the plain HTTP listener on
+~ port 9000. Performs four steps idempotently:
 ~
 ~   1. If conf/certificate.jks does not exist, generate a self-signed JKS
 ~      keystore via keytool: alias=play, RSA 2048, CN=localhost, validity
@@ -25,7 +26,18 @@
 ~   3. Set play.http2.enabled=true so HTTPS connections negotiate HTTP/2
 ~      via ALPN and fall back to HTTP/1.1 for older clients.
 ~
-~ Run play run or play start afterwards to apply.
+~   4. If http.port is not already an active line, set http.port=9000.
+~      The framework's special-case "default to 9000 when neither port is
+~      set" fallback (Server.java) does NOT fire once https.port is
+~      configured, so the explicit http.port line is needed to keep the
+~      plain HTTP listener bound. A user-customized http.port (e.g. 8080,
+~      or -1 to disable HTTP entirely) is preserved across enable-https
+~      runs.
+~
+~ Run play run or play start afterwards to apply. The startup log will
+~ show two listener lines:
+~     Listening for HTTP on port 9000 (Waiting a first request ...)
+~     Listening for HTTPS on port 9443 (Waiting a first request ...)
 ~
 ~ Idempotent: re-running when HTTPS is already enabled is a no-op. The
 ~ command does NOT regenerate the keystore if one already exists, so

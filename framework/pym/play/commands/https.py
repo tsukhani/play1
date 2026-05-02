@@ -15,6 +15,7 @@ HELP = {
 
 # Defaults match framework conventions (SslHttpServerContextFactory.java:69 etc.)
 KEYSTORE_PATH = 'conf/certificate.jks'
+HTTP_PORT = '9000'
 HTTPS_PORT = '9443'
 KEYSTORE_ALIAS = 'play'
 KEYSTORE_DNAME = 'CN=localhost, OU=Development, O=Play, L=Local, ST=Local, C=US'
@@ -37,11 +38,17 @@ def _enable(app):
 
     config = _read(config_path)
 
-    # "Fully enabled" requires both https.port active AND play.http2.enabled=true,
-    # since enable-https treats HTTPS + HTTP/2 (ALPN h2) as one feature toggle. If
-    # only one is set (e.g. user manually edited the config), fall through and let
-    # the _set_or_uncomment calls below complete the missing half.
-    if _has_active_line(config, 'https.port') and _is_active_value(config, 'play.http2.enabled', 'true'):
+    # "Fully enabled" requires https.port active, play.http2.enabled=true, AND
+    # http.port active (any value — preserves a user's custom http.port=8080 etc).
+    # enable-https treats HTTP + HTTPS + HTTP/2 as one feature toggle: a fresh
+    # app's commented-out `# http.port=9000` triggers the framework's special-case
+    # default-to-9000 fallback ONLY when https.port is also unset (Server.java:56);
+    # once we set https.port, that fallback no longer fires, so we must explicitly
+    # bind http.port too if we want both listeners.
+    https_active = _has_active_line(config, 'https.port')
+    http2_true = _is_active_value(config, 'play.http2.enabled', 'true')
+    http_active = _has_active_line(config, 'http.port')
+    if https_active and http2_true and http_active:
         print("~ HTTPS (with HTTP/2) is already enabled in conf/application.conf.")
         if os.path.exists(keystore_path):
             print("~ Keystore present at %s." % KEYSTORE_PATH)
@@ -84,8 +91,18 @@ def _enable(app):
     # _set_or_uncomment would accumulate stale duplicate lines on every cycle.
     config = _set_or_uncomment(config, 'https.port', HTTPS_PORT)
     config = _set_or_uncomment(config, 'play.http2.enabled', 'true')
+    # Bind plain HTTP too — only set http.port=9000 if it isn't already active,
+    # so a user's custom http.port=8080 (or http.port=-1 for HTTPS-only) is
+    # preserved across enable-https runs.
+    if not http_active:
+        config = _set_or_uncomment(config, 'http.port', HTTP_PORT)
     _write(config_path, config)
 
+    http_value = _active_value(config, 'http.port')
+    if http_value == '-1':
+        print("~ HTTP listener stays disabled per existing http.port=-1 setting.")
+    else:
+        print("~ HTTP enabled on port %s." % http_value)
     print("~ HTTPS enabled on port %s with HTTP/2 (ALPN h2) negotiation." % HTTPS_PORT)
     print("~ Run play run or play start to apply.")
     print("~")
@@ -150,6 +167,14 @@ def _is_active_value(config, key, value):
     play.http2.enabled to literally be `true`, not just any value."""
     m = re.search(r'^' + re.escape(key) + r'\s*=\s*(.+?)\s*$', config, re.MULTILINE)
     return m is not None and m.group(1).strip().lower() == value.lower()
+
+
+def _active_value(config, key):
+    """Return the trimmed value of the active line `key=value`, or None if
+    no active line exists. Lets the success message reflect a user's custom
+    http.port=8080 etc. instead of always reporting our default."""
+    m = re.search(r'^' + re.escape(key) + r'\s*=\s*(.+?)\s*$', config, re.MULTILINE)
+    return m.group(1).strip() if m else None
 
 
 def _existing_password(config):
