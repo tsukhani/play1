@@ -8,9 +8,6 @@ on:
   schedule:
     - cron: '15 1 * * 6'
 
-env:
-  DEFAULT_JAVA_VERSION: '25'
-
 jobs:
   analyze:
     name: Analyze
@@ -32,42 +29,27 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - language: java-kotlin
-            build-mode: manual
-          - language: javascript-typescript
-            build-mode: none
-          - language: python
-            build-mode: none
+        language: [ 'java-kotlin', 'javascript-typescript', 'python' ]
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v6
 
-    - name: Set up JDK ${{ env.DEFAULT_JAVA_VERSION }}
-      if: matrix.language == 'java-kotlin'
-      uses: actions/setup-java@v5
-      with:
-        java-version: ${{ env.DEFAULT_JAVA_VERSION }}
-        distribution: 'adopt'
-
     # Initializes the CodeQL tools for scanning.
+    # build-mode: none works for Java here because framework/lib/*.jar is committed —
+    # CodeQL resolves types directly from those, no Ant build needed. This also
+    # enables overlay-base database caching, which is faster than manual build mode.
     - name: Initialize CodeQL
       uses: github/codeql-action/init@v4
       with:
         languages: ${{ matrix.language }}
-        build-mode: ${{ matrix.build-mode }}
+        build-mode: none
         # If you wish to specify custom queries, you can do so here or in a config file.
         # By default, queries listed here will override any specified in a config file.
         # Prefix the list here with "+" to use these queries and those in the config file.
 
         # For more details on CodeQL's query packs, refer to: https://docs.github.com/en/code-security/code-scanning/automatically-scanning-your-code-for-vulnerabilities-and-errors/configuring-code-scanning#using-queries-in-ql-packs
         # queries: security-extended,security-and-quality
-
-    - name: Build with Ant
-      if: matrix.language == 'java-kotlin'
-      working-directory: ./framework
-      run: ant jar
 
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v4

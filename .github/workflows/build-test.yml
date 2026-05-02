@@ -63,12 +63,6 @@ jobs:
           # we don't know what commit the last tag was it's safer to get entire repo so previousStableVersion resolves
           fetch-depth: 0
 
-      - name: Set up python 3
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.x'
-          architecture: 'x64'
-
       - name: Set up JDK ${{ env.DEFAULT_JAVA_VERSION }}
         uses: actions/setup-java@v5
         with:
@@ -105,12 +99,6 @@ jobs:
          with:
            # we don't know what commit the last tag was it's safer to get entire repo so previousStableVersion resolves
            fetch-depth: 0
-
-       - name: Set up python 3
-         uses: actions/setup-python@v6
-         with:
-           python-version: '3.x'
-           architecture: 'x64'
 
        - name: Set up JDK ${{ matrix.jdk }}
          uses: actions/setup-java@v5
