@@ -365,5 +365,57 @@ class TestPlaySecret(unittest.TestCase):
         self.assertIn('CUSTOM_VAR=abc123', after)
 
 
+class TestAutotestUrl(unittest.TestCase):
+    """PF-73: FirePhoque always connects over plain HTTP, regardless of any
+    https.port / %test.https.port setting. The pre-PF-73 code's truthy check
+    on https.port made the literal string "-1" sentinel (written by PF-72)
+    select itself as the port, producing the unreachable URL
+    https://localhost:-1/@tests."""
+
+    @classmethod
+    def setUpClass(cls):
+        # Make framework/pym importable so we can call _firephoqueHttpPort
+        # directly. Mirrors the sys.path setup in the top-level `play` script.
+        pym = os.path.abspath(os.path.join(
+            os.path.dirname(__file__), '..', '..', 'pym'))
+        if pym not in sys.path:
+            sys.path.insert(0, pym)
+        from play.commands.autotest import _firephoqueHttpPort
+        cls.firephoqueHttpPort = staticmethod(_firephoqueHttpPort)
+
+    def _fakeApp(self, conf):
+        class FakeApp:
+            def __init__(self, c): self._c = c
+            def readConf(self, key): return self._c.get(key, '')
+        return FakeApp(conf)
+
+    def test_https_9443_set_uses_http_port_only(self):
+        # Even if dev https.port is 9443, FirePhoque must use http.port.
+        app = self._fakeApp({'http.port': '9000', 'https.port': '9443'})
+        self.assertEqual(self.firephoqueHttpPort(app), '9000')
+
+    def test_test_https_minus_one_does_not_become_the_port(self):
+        # The PF-72 default. Pre-PF-73 this would have been picked up because
+        # the truthy check on the string "-1" passes, producing :-1 in the URL.
+        app = self._fakeApp({'http.port': '9000', 'https.port': '-1'})
+        self.assertEqual(self.firephoqueHttpPort(app), '9000')
+
+    def test_custom_test_https_19443_ignored(self):
+        # Integration-testapp pattern (%test.https.port=19443). Irrelevant to
+        # autotest's URL — autotest still uses http.port.
+        app = self._fakeApp({'http.port': '9000', 'https.port': '19443'})
+        self.assertEqual(self.firephoqueHttpPort(app), '9000')
+
+    def test_custom_http_port_honored(self):
+        app = self._fakeApp({'http.port': '8080', 'https.port': '9443'})
+        self.assertEqual(self.firephoqueHttpPort(app), '8080')
+
+    def test_no_http_port_falls_back_to_9000(self):
+        # Framework default per Server.java when neither http.port nor https.port
+        # is set is 9000; autotest mirrors that fallback.
+        app = self._fakeApp({})
+        self.assertEqual(self.firephoqueHttpPort(app), '9000')
+
+
 if __name__ == '__main__':
     unittest.main()

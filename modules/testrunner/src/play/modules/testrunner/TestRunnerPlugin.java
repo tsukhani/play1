@@ -33,16 +33,19 @@ public class TestRunnerPlugin extends PlayPlugin {
 
     @Override
     public void onApplicationReady() {
-        String protocol = "http";
-        String port = "9000";
-        if(Play.configuration.getProperty("https.port") != null) {
-            port = Play.configuration.getProperty("https.port");
-            protocol = "https";
-        } else if(Play.configuration.getProperty("http.port") != null) {
-          port = Play.configuration.getProperty("http.port");
+        // PF-73: hardcode http for the /@tests banner. The pre-PF-73 code branched
+        // on `https.port != null`, which is true for the literal "-1" sentinel
+        // PF-72 writes to %test.https.port — producing the unreachable banner
+        // "Go to https://localhost:-1/@tests". The /@tests endpoint serves
+        // identically over plain HTTP and tests don't need TLS, so we just print
+        // an http URL using http.port (resolved through the %test prefix). 9000
+        // matches the framework's default-when-unset port.
+        String httpPort = Play.configuration.getProperty("http.port");
+        if (httpPort == null || httpPort.isEmpty()) {
+            httpPort = "9000";
         }
         System.out.println("~");
-        System.out.println("~ Go to "+protocol+"://localhost:" + port + "/@tests to run the tests");
+        System.out.println("~ Go to http://localhost:" + httpPort + "/@tests to run the tests");
         System.out.println("~");
     }
     

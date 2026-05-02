@@ -18,13 +18,21 @@ HELP = {
     'autotest': "Automatically run all application tests"
 }
 
+def _firephoqueHttpPort(app):
+    """Resolve the port FirePhoque should connect to. PF-73: always plain HTTP,
+    so we only consult http.port (resolved through the %test prefix as usual).
+    Falls back to the framework's default 9000 if neither %test.http.port nor
+    http.port is set. Returns a string because http_port flows into URL string
+    formatting downstream."""
+    return app.readConf('http.port') or '9000'
+
 def execute(**kargs):
     command = kargs.get("command")
     app = kargs.get("app")
     args = kargs.get("args")
     env = kargs.get("env")
     cmdloader = kargs.get("cmdloader")
-    
+
     autotest(app, args)
         
 def autotest(app, args):
@@ -46,14 +54,16 @@ def autotest(app, args):
         shutil.rmtree(os.path.join(app.path, 'tmp'))
     print("~")
 
-    # Kill if exists
-    http_port = 9000
-    protocol = 'http'
-    if app.readConf('https.port'):
-        http_port = app.readConf('https.port')
-        protocol = 'https'
-    else:
-        http_port = app.readConf('http.port')
+    # PF-73: FirePhoque always connects over plain HTTP. Tests don't need TLS —
+    # the /@tests endpoint serves identically over either, and forcing HTTPS just
+    # surfaces JDK-truststore complexity (mkcert-signed certs aren't trusted by
+    # the JDK by default) and triggers port-collision risk. The pre-PF-73 code
+    # used `if app.readConf('https.port'):` — but that's truthy for the literal
+    # "-1" sentinel that PF-72 writes to %test.https.port, so autotest started
+    # building https://localhost:-1/@tests, which is unreachable. Hardcoding
+    # http here makes the code immune to that sentinel and to any future
+    # https.port shenanigans.
+    http_port = _firephoqueHttpPort(app)
     try:
         proxy_handler = urllib.request.ProxyHandler({})
         opener = urllib.request.build_opener(proxy_handler)
@@ -61,15 +71,7 @@ def autotest(app, args):
     except Exception as e:
         pass
 
-    # PF-68: PEM-only — refuse to autotest under HTTPS unless certificate.file is
-    # configured. (Used to check keystore.file when JKS was supported.) The auto-test
-    # runner needs to know an HTTPS-served app has its cert source set; otherwise
-    # the framework will throw at boot trying to build the SslContext.
-    cert_file = app.readConf('certificate.file')
-    if protocol == 'https' and not cert_file:
-      print("https without certificate.file configured. play auto-test will fail. Exiting now.")
-      sys.exit(-1)
-      
+
     # read parameters
     add_options = []        
     if args.count('--unit'):
@@ -146,13 +148,11 @@ def autotest(app, args):
     cp_args = ':'.join(fpcp)
     if os.name == 'nt':
         cp_args = ';'.join(fpcp)
-    java_cmd = [java_path(), '--enable-native-access=ALL-UNNAMED'] + add_options + ['-Djava.util.logging.config.file=logging.properties', '-classpath', cp_args, '-Dapplication.url=%s://localhost:%s' % (protocol, http_port), '-DheadlessBrowser=%s' % (headless_browser), 'play.modules.testrunner.FirePhoque']
-    # PF-68: dropped the JKS-trustStore arg that used to be passed to FirePhoque.
-    # Java's -Djavax.net.ssl.trustStore expects a JKS keystore; since the framework
-    # is now PEM-only there's no equivalent file to point at. Operators running
-    # `play auto-test` against HTTPS should install mkcert (https://github.com/
-    # FiloSottile/mkcert) — its `mkcert -install` adds the local CA to the system
-    # trust store, which the JDK picks up automatically with no extra flag needed.
+    java_cmd = [java_path(), '--enable-native-access=ALL-UNNAMED'] + add_options + ['-Djava.util.logging.config.file=logging.properties', '-classpath', cp_args, '-Dapplication.url=http://localhost:%s' % http_port, '-DheadlessBrowser=%s' % (headless_browser), 'play.modules.testrunner.FirePhoque']
+    # PF-73: no -Djavax.net.ssl.trustStore flag because FirePhoque is hardcoded to
+    # plain HTTP. Tests that legitimately need TLS should run through a different
+    # path (FunctionalTest fork, dedicated integration testapp, etc.), not through
+    # play autotest.
     try:
         subprocess.call(java_cmd, env=os.environ)
     except OSError:
@@ -192,7 +192,7 @@ def autotest(app, args):
     try:
         proxy_handler = urllib.request.ProxyHandler({})
         opener = urllib.request.build_opener(proxy_handler)
-        opener.open('%s://localhost:%s/@kill' % (protocol, http_port), timeout=0.5)
+        opener.open('http://localhost:%s/@kill' % http_port, timeout=0.5)
     except Exception as e:
         pass
 
