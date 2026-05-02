@@ -16,6 +16,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.apache.ivy.core.module.descriptor.Configuration;
+import org.apache.ivy.core.module.descriptor.DefaultDependencyArtifactDescriptor;
 import org.apache.ivy.core.module.descriptor.DefaultDependencyDescriptor;
 import org.apache.ivy.core.module.descriptor.DefaultExcludeRule;
 import org.apache.ivy.core.module.descriptor.DefaultModuleDescriptor;
@@ -139,6 +140,12 @@ public class YamlParser extends AbstractModuleDescriptorParser {
 
             if (data.containsKey("require")) {
                 if (data.get("require") instanceof List dependencies) {
+                    // PF-74: coalesce same-org#module;rev rows so multiple classifier
+                    // entries (e.g. netty-codec-native-quic across 5 platforms) attach
+                    // to one DefaultDependencyDescriptor as multiple artifact descriptors,
+                    // instead of becoming N descriptors that Ivy then evicts as duplicates.
+                    Map<ModuleRevisionId, DefaultDependencyDescriptor> coalesced = new HashMap<>();
+
                     for (Object dep : dependencies) {
 
                         String depName;
@@ -180,49 +187,21 @@ public class YamlParser extends AbstractModuleDescriptorParser {
                                 throw new Oops("Missing revision in dependency format (use \"latest.integration\" to  matches all versions) -> " + depName);
                             }
                         }
-                        HashMap extraAttributesMap = null;
+                        // PF-74: classifier is now an artifact-level attribute, not a
+                        // module-revision identity. Build the ModuleRevisionId without
+                        // the classifier so multiple classifier rows for the same
+                        // org#module;rev coalesce into one descriptor.
+                        String depOrg = m.group(1);
+                        String depArtifact = m.group(2);
+                        String depRev = m.group(3);
+                        String classifier = null;
                         if (m.groupCount() == 4 && m.group(4) != null && !m.group(4).trim().isEmpty()) {
-                            // dependency has a classifier
-                            extraAttributesMap = new HashMap();
-                            extraAttributesMap.put("classifier", m.group(4).trim());
+                            classifier = m.group(4).trim();
                         }
 
-                        ModuleRevisionId depId = ModuleRevisionId.newInstance(m.group(1), m.group(2), m.group(3), extraAttributesMap);
+                        ModuleRevisionId depId = ModuleRevisionId.newInstance(depOrg, depArtifact, depRev);
 
-                        boolean transitive = options.containsKey("transitive") && options.get("transitive") instanceof Boolean ? (Boolean) options.get("transitive") : transitiveDependencies;
-                        boolean force = options.containsKey("force") && options.get("force") instanceof Boolean ? (Boolean) options.get("force") : false;
-                        boolean changing = options.containsKey("changing") && options.get("changing") instanceof Boolean ? (Boolean) options.get("changing") : false;
-
-                        DefaultDependencyDescriptor depDescriptor = new DefaultDependencyDescriptor(descriptor, depId, force, changing, transitive);
-                        for (String conf : confs) {
-                            depDescriptor.addDependencyConfiguration("default", conf);
-                        }
-
-                        // Exclude transitive dependencies
-                        if (options.containsKey("exclude") && options.get("exclude") instanceof List exclude) {
-                            for (Object ex : exclude) {
-                                String exName = ex.toString().trim();
-                                m = Pattern.compile("([^\\s]+)\\s*[-][>]\\s*([^\\s]+).*").matcher(exName);
-                                if (!m.matches()) {
-                                    m = Pattern.compile("([^\\s]+)").matcher(exName);
-                                    if (!m.matches()) {
-                                        throw new Oops("Unknown exclude format -> " + exName);
-                                    }
-                                }
-                                String org = m.group(1);
-                                String module = "*";
-                                if (m.groupCount() > 1) {
-                                    module = m.group(2);
-                                }
-
-                                ArtifactId aid = new ArtifactId(new ModuleId(org, module), "*", "*", "*");
-                                PatternMatcher matcher = new ExactOrRegexpPatternMatcher();
-                                ExcludeRule excludeRule = new DefaultExcludeRule(aid, matcher, new HashMap());
-                                depDescriptor.addExcludeRule("default", excludeRule);
-                            }
-                        }
-
-                        // Ids
+                        // Ids — evaluate per-row; if filtered out, skip the row entirely.
                         boolean useIt = true;
                         String currentId = System.getProperty("play.id");
                         if (currentId == null || currentId.trim().equals("")) {
@@ -235,10 +214,61 @@ public class YamlParser extends AbstractModuleDescriptorParser {
                                 useIt = ((List) options.get("id")).contains(currentId);
                             }
                         }
+                        if (!useIt) {
+                            continue;
+                        }
 
-                        if (useIt) {
-                            // Add it!
+                        DefaultDependencyDescriptor depDescriptor = coalesced.get(depId);
+                        if (depDescriptor == null) {
+                            // First row for this module-rev: create the descriptor and
+                            // apply dep-level options (force/transitive/changing/confs/exclude).
+                            boolean transitive = options.containsKey("transitive") && options.get("transitive") instanceof Boolean ? (Boolean) options.get("transitive") : transitiveDependencies;
+                            boolean force = options.containsKey("force") && options.get("force") instanceof Boolean ? (Boolean) options.get("force") : false;
+                            boolean changing = options.containsKey("changing") && options.get("changing") instanceof Boolean ? (Boolean) options.get("changing") : false;
+
+                            depDescriptor = new DefaultDependencyDescriptor(descriptor, depId, force, changing, transitive);
+                            for (String conf : confs) {
+                                depDescriptor.addDependencyConfiguration("default", conf);
+                            }
+
+                            if (options.containsKey("exclude") && options.get("exclude") instanceof List exclude) {
+                                for (Object ex : exclude) {
+                                    String exName = ex.toString().trim();
+                                    m = Pattern.compile("([^\\s]+)\\s*[-][>]\\s*([^\\s]+).*").matcher(exName);
+                                    if (!m.matches()) {
+                                        m = Pattern.compile("([^\\s]+)").matcher(exName);
+                                        if (!m.matches()) {
+                                            throw new Oops("Unknown exclude format -> " + exName);
+                                        }
+                                    }
+                                    String org = m.group(1);
+                                    String module = "*";
+                                    if (m.groupCount() > 1) {
+                                        module = m.group(2);
+                                    }
+
+                                    ArtifactId aid = new ArtifactId(new ModuleId(org, module), "*", "*", "*");
+                                    PatternMatcher matcher = new ExactOrRegexpPatternMatcher();
+                                    ExcludeRule excludeRule = new DefaultExcludeRule(aid, matcher, new HashMap());
+                                    depDescriptor.addExcludeRule("default", excludeRule);
+                                }
+                            }
+
+                            coalesced.put(depId, depDescriptor);
                             descriptor.addDependency(depDescriptor);
+                        } else if (!options.isEmpty()) {
+                            // PF-74: subsequent classifier row carrying dep-level options.
+                            // First row's options control; warn so the user notices.
+                            Logger.warn("Ignoring per-row options on subsequent classifier row for %s; first row's options control: %s",
+                                    depId, options.keySet());
+                        }
+
+                        if (classifier != null) {
+                            HashMap<String, String> artifactExtras = new HashMap<>();
+                            artifactExtras.put("m:classifier", classifier);
+                            DefaultDependencyArtifactDescriptor artDesc = new DefaultDependencyArtifactDescriptor(
+                                    depDescriptor, depArtifact, "jar", "jar", null, artifactExtras);
+                            depDescriptor.addDependencyArtifact("default", artDesc);
                         }
 
                     }
