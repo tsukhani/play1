@@ -30,7 +30,6 @@ http://www.apache.org/licenses/LICENSE-2.0
     - Ezmorph
     - Groovy
     - GSon
-    - Joda Time
     - JSR 107 Cache
     - Log4J
     - Snake YAML

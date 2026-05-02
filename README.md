@@ -127,6 +127,34 @@ If h3 didn't bind (no native QUIC, or UDP blocked at the LB), the `Alt-Svc` head
 - **QUIC retry-token validation is currently insecure.** The shipped configuration uses `InsecureQuicTokenHandler` — accepts any retry token without cryptographic verification. Fine for dev, staging, and deployments behind a DDoS-mitigating edge. Production deployments directly exposed to the internet should swap to a server-secret-keyed token handler (planned PF-57 phase 3 follow-up). The framework does not currently expose a configuration toggle for this.
 - **0-RTT and HTTP/3 server push are out of scope.** 0-RTT brings replay-attack tradeoffs that should be opted into deliberately; server push is deprecated in modern browsers.
 
+## Migrating from Joda Time
+
+Joda Time was removed from this fork (PF-27). Form-binding is now `java.time` (JSR-310) only. Replace any controller-arg or model-field types as follows:
+
+| Before (Joda) | After (`java.time`) | ISO-8601 example input |
+|---|---|---|
+| `org.joda.time.DateTime` (UTC / no zone)              | `java.time.Instant`         | `2026-05-02T10:15:30Z` |
+| `org.joda.time.DateTime` (with zone)                  | `java.time.ZonedDateTime`   | `2026-05-02T10:15:30+01:00[Europe/Paris]` |
+| `org.joda.time.DateTime` (offset, no named zone)      | `java.time.OffsetDateTime`  | `2026-05-02T10:15:30+01:00` |
+| `org.joda.time.LocalDateTime`                         | `java.time.LocalDateTime`   | `2026-05-02T10:15:30` |
+| `org.joda.time.LocalDate`                             | `java.time.LocalDate`       | `2026-05-02` |
+| `org.joda.time.LocalTime`                             | `java.time.LocalTime`       | `10:15:30` |
+
+Also bindable (no direct Joda equivalent):
+
+| Type | ISO-8601 example input |
+|---|---|
+| `java.time.OffsetTime`  | `10:15:30+01:00` |
+| `java.time.Year`        | `2026` |
+| `java.time.YearMonth`   | `2026-05` |
+| `java.time.Duration`    | `PT15M` (ISO-8601 duration) |
+
+`ZonedDateTime` also accepts offset-only input (e.g. `2026-05-02T10:15:30+01:00` without a bracketed zone ID); that yields a fixed-offset zone, not a DST-aware named zone. Use `OffsetDateTime` when you don't need a named zone.
+
+Each binder uses the type's default `parse(...)` formatter — ISO-8601 only, no localised parsing. `null` and blank inputs bind to `null`. Malformed inputs are caught by the binder pipeline and surfaced as a `validation.invalid` error on the bound parameter — they do not propagate as exceptions to your controller. If you need custom parsing, register your own binder via `play.data.binding.Binder.register(MyType.class, new MyBinder())`.
+
+The `joda-time` jar is no longer on the framework classpath. Apps that still need Joda for non-binding code paths must add it to their own `dependencies.yml`.
+
 ## Get the source
 
 Fork the project source code on [Github](https://github.com/tsukhani/play1)

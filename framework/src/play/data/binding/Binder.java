@@ -1,7 +1,6 @@
 package play.data.binding;
 
 import org.apache.commons.lang3.StringUtils;
-import org.joda.time.DateTime;
 import play.Logger;
 import play.Play;
 import play.data.Upload;
@@ -16,9 +15,16 @@ import java.lang.reflect.*;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.text.ParseException;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.OffsetDateTime;
+import java.time.OffsetTime;
+import java.time.Year;
+import java.time.YearMonth;
+import java.time.ZonedDateTime;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -63,12 +69,18 @@ public abstract class Binder {
     // TODO: something a bit more dynamic? The As annotation allows you to inject your own binder
     static {
         supportedTypes.put(Date.class, new DateBinder());
-        supportedTypes.put(DateTime.class, new DateTimeBinder());
         supportedTypes.put(File.class, new FileBinder());
         supportedTypes.put(File[].class, new FileArrayBinder());
         supportedTypes.put(LocalDateTime.class, new LocalDateTimeBinder());
         supportedTypes.put(LocalDate.class, new LocalDateBinder());
         supportedTypes.put(LocalTime.class, new LocalTimeBinder());
+        supportedTypes.put(Instant.class, new InstantBinder());
+        supportedTypes.put(ZonedDateTime.class, new ZonedDateTimeBinder());
+        supportedTypes.put(OffsetDateTime.class, new OffsetDateTimeBinder());
+        supportedTypes.put(OffsetTime.class, new OffsetTimeBinder());
+        supportedTypes.put(Year.class, new YearBinder());
+        supportedTypes.put(YearMonth.class, new YearMonthBinder());
+        supportedTypes.put(Duration.class, new DurationBinder());
         supportedTypes.put(Model.BinaryField.class, new BinaryBinder());
         supportedTypes.put(Upload.class, new UploadBinder());
         supportedTypes.put(Upload[].class, new UploadArrayBinder());

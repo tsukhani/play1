@@ -40,7 +40,6 @@ require:    &allDependencies
     # Without it, Hibernate's JCacheRegionFactory fails at boot with
     # NoClassDefFoundError: javax/cache/*.
     - javax.cache -> cache-api 1.0.0
-    - joda-time 2.14.0
     - org.hamcrest -> hamcrest-all 1.3
     - org.junit.jupiter -> junit-jupiter-api 5.13.4
     - org.junit.jupiter -> junit-jupiter-engine 5.13.4
