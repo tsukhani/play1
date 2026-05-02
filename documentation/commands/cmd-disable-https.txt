@@ -1,0 +1,27 @@
+~ Name:
+~ ~~~~~
+~ disable-https -- Disable HTTPS and HTTP/2; keep the keystore for re-enabling later
+~
+~ Synopsis:
+~ ~~~~~~~~~
+~ play disable-https [app_path]
+~
+~ Description:
+~ ~~~~~~~~~~~~
+~ Comments out the https.port and play.http2.enabled lines in
+~ conf/application.conf so the app listens on plain HTTP only after
+~ the next play run / play start.
+~
+~ The keystore at conf/certificate.jks is preserved, as are the
+~ keystore.algorithm / keystore.file / keystore.password lines in
+~ conf/application.conf. This means a subsequent play enable-https
+~ reuses the existing cert and password without regeneration or
+~ prompting.
+~
+~ To permanently remove the keystore, delete conf/certificate.jks
+~ manually. The command never deletes it on its own.
+~
+~ Idempotent: re-running when HTTPS is already disabled is a no-op.
+~
+~ See also: play enable-https
+~

@@ -1,0 +1,39 @@
+~ Name:
+~ ~~~~~
+~ enable-https -- Enable HTTPS on port 9443 with HTTP/2 (ALPN h2) negotiation
+~
+~ Synopsis:
+~ ~~~~~~~~~
+~ play enable-https [app_path]
+~
+~ Description:
+~ ~~~~~~~~~~~~
+~ Configures the application to listen for HTTPS on port 9443 with HTTP/2
+~ (ALPN h2) negotiation enabled. Performs three steps idempotently:
+~
+~   1. If conf/certificate.jks does not exist, generate a self-signed JKS
+~      keystore via keytool: alias=play, RSA 2048, CN=localhost, validity
+~      3650 days, password from a 16-byte random base64 string. If the
+~      keystore already exists, it is reused (the password is read back
+~      out of conf/application.conf).
+~
+~   2. Set keystore.algorithm, keystore.file, keystore.password, and
+~      https.port=9443 in conf/application.conf. Skeleton-style commented
+~      lines are uncommented in place; existing active lines are updated;
+~      otherwise lines are appended at end of file.
+~
+~   3. Set play.http2.enabled=true so HTTPS connections negotiate HTTP/2
+~      via ALPN and fall back to HTTP/1.1 for older clients.
+~
+~ Run play run or play start afterwards to apply.
+~
+~ Idempotent: re-running when HTTPS is already enabled is a no-op. The
+~ command does NOT regenerate the keystore if one already exists, so
+~ disable-https followed by enable-https reuses the same cert.
+~
+~ The generated keystore is for local development only — for production,
+~ replace conf/certificate.jks with a real cert (Let's Encrypt, internal
+~ CA, etc.) and update keystore.password in conf/application.conf.
+~
+~ See also: play disable-https
+~
