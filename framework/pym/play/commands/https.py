@@ -9,8 +9,8 @@ from play.utils import *
 COMMANDS = ['enable-https', 'disable-https']
 
 HELP = {
-    'enable-https': 'Enable HTTPS on port 9443; generate a self-signed local keystore if needed (PF-67)',
-    'disable-https': 'Disable HTTPS but keep the keystore for re-enabling later (PF-67)',
+    'enable-https': 'Enable HTTPS on port 9443 with HTTP/2 (h2) negotiation; generate a self-signed local keystore if needed (PF-67)',
+    'disable-https': 'Disable HTTPS and HTTP/2 but keep the keystore for re-enabling later (PF-67)',
 }
 
 # Defaults match framework conventions (SslHttpServerContextFactory.java:69 etc.)
@@ -37,8 +37,12 @@ def _enable(app):
 
     config = _read(config_path)
 
-    if _has_active_line(config, 'https.port'):
-        print("~ HTTPS is already enabled in conf/application.conf.")
+    # "Fully enabled" requires both https.port active AND play.http2.enabled=true,
+    # since enable-https treats HTTPS + HTTP/2 (ALPN h2) as one feature toggle. If
+    # only one is set (e.g. user manually edited the config), fall through and let
+    # the _set_or_uncomment calls below complete the missing half.
+    if _has_active_line(config, 'https.port') and _is_active_value(config, 'play.http2.enabled', 'true'):
+        print("~ HTTPS (with HTTP/2) is already enabled in conf/application.conf.")
         if os.path.exists(keystore_path):
             print("~ Keystore present at %s." % KEYSTORE_PATH)
         print("~")
@@ -75,13 +79,14 @@ def _enable(app):
     config = _set_or_uncomment(config, 'keystore.algorithm', 'JKS')
     config = _set_or_uncomment(config, 'keystore.file', KEYSTORE_PATH)
     config = _set_or_uncomment(config, 'keystore.password', password)
-    # Uncomment-or-append for https.port too: a previous disable-https leaves
-    # a commented "# https.port=9443" behind, and toggling without this would
-    # accumulate stale duplicate lines on every cycle.
+    # Uncomment-or-append for https.port and play.http2.enabled: a previous
+    # disable-https leaves both lines commented, and toggling without using
+    # _set_or_uncomment would accumulate stale duplicate lines on every cycle.
     config = _set_or_uncomment(config, 'https.port', HTTPS_PORT)
+    config = _set_or_uncomment(config, 'play.http2.enabled', 'true')
     _write(config_path, config)
 
-    print("~ HTTPS enabled on port %s." % HTTPS_PORT)
+    print("~ HTTPS enabled on port %s with HTTP/2 (ALPN h2) negotiation." % HTTPS_PORT)
     print("~ Run play run or play start to apply.")
     print("~")
 
@@ -93,17 +98,23 @@ def _disable(app):
 
     config = _read(config_path)
 
-    if not _has_active_line(config, 'https.port'):
+    https_active = _has_active_line(config, 'https.port')
+    http2_active = _has_active_line(config, 'play.http2.enabled')
+    if not https_active and not http2_active:
         print("~ HTTPS is already disabled.")
         print("~")
         return
 
-    # Comment out https.port; leave keystore.* lines intact so a future
-    # enable-https can pick up the same password without prompting.
-    config = re.sub(r'^(https\.port\s*=.*)$', r'# \1', config, flags=re.MULTILINE)
+    # Comment out https.port and play.http2.enabled. Leave keystore.* lines
+    # intact so a future enable-https can pick up the same password without
+    # prompting.
+    if https_active:
+        config = re.sub(r'^(https\.port\s*=.*)$', r'# \1', config, flags=re.MULTILINE)
+    if http2_active:
+        config = re.sub(r'^(play\.http2\.enabled\s*=.*)$', r'# \1', config, flags=re.MULTILINE)
     _write(config_path, config)
 
-    print("~ HTTPS disabled.")
+    print("~ HTTPS disabled (HTTP/2 negotiation also disabled).")
     if os.path.exists(keystore_path):
         print("~ The keystore at %s is preserved — re-run play enable-https to reactivate." % KEYSTORE_PATH)
     print("~")
@@ -131,6 +142,14 @@ def _generate_keystore(path, password):
 
 def _has_active_line(config, key):
     return re.search(r'^' + re.escape(key) + r'\s*=', config, re.MULTILINE) is not None
+
+
+def _is_active_value(config, key, value):
+    """Check whether `key` has an active line whose value (case-insensitive,
+    stripped) equals `value`. Used by the "already enabled" check to require
+    play.http2.enabled to literally be `true`, not just any value."""
+    m = re.search(r'^' + re.escape(key) + r'\s*=\s*(.+?)\s*$', config, re.MULTILINE)
+    return m is not None and m.group(1).strip().lower() == value.lower()
 
 
 def _existing_password(config):
