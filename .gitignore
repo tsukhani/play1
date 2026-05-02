@@ -7,6 +7,11 @@ framework/.idea
 framework/play.jar
 .DS_Store
 .claude/worktrees/
+
+# bmad: installer-managed personal configs and generated outputs
+_bmad/config.user.toml
+_bmad/custom/config.user.toml
+_bmad-output/
 nbproject/genfiles.properties
 nbproject/jdk.xml
 nbproject/nbjdk.properties

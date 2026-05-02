@@ -310,6 +310,8 @@ class TestPlaySecret(unittest.TestCase):
         self.assertFalse(os.path.exists(example_legacy),
                          '%s should NOT exist (PF-71)' % example_legacy)
 
+    @unittest.skipIf(os.name == 'nt',
+                     'POSIX file modes do not apply on Windows; chmod silently no-ops')
     def test_secret_file_mode_is_600(self):
         # Production-grade hardening: the secret file must not be world-/group-
         # readable even with a permissive umask.
