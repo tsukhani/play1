@@ -123,6 +123,10 @@ ant resolve                      # Resolve framework/dependencies.yml via Ivy an
 
 This fork runs on virtual threads exclusively. Request invocation (`Invoker`), background jobs (`JobsPlugin`), and mail dispatch (`Mail`) all dispatch through `play.utils.VirtualThreadScheduledExecutor`, which uses two platform threads only for timer dispatch and unbounded VTs for actual work. Java 25's elimination of `synchronized`-pinning (JEP 491) makes the VT path strictly cheaper than platform threads under blocking I/O; the legacy `play.threads.virtual*` toggles are gone. `Play.java` emits a WARN at boot if any of those keys are still in `application.conf` so operators notice.
 
+### Structured logging
+
+`application.log.format=json` swaps the bundled `log4j.properties` (PatternLayout) for `log4j-json.properties`, which routes the console appender through `JsonTemplateLayout` with the bundled ECS template (`classpath:EcsLayout.json`). Default is `text` (no behavior change). `ActionInvoker.invoke` pushes per-request fields (`request_id`, `http_method`, `http_path`, `client_ip`, `action_name`) into Log4j 2's `ThreadContext` and clears them in the finally block; ECS mode emits them as flat JSON keys, text mode ignores them unless the operator extends the pattern.
+
 ### Module System
 
 Built-in modules in `modules/`: `testrunner`, `docviewer`, `crud`, `secure`. Each has its own `build.xml`, `app/`, and `conf/` directories. `testrunner` is consumed at runtime by the `play test` / `play auto-test` CLI commands when end-user apps invoke them.

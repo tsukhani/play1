@@ -52,6 +52,7 @@ require:    &allDependencies
     - jregex 1.2_01
     - org.apache.logging.log4j -> log4j-api 2.25.3
     - org.apache.logging.log4j -> log4j-core 2.25.3
+    - org.apache.logging.log4j -> log4j-layout-template-json 2.25.3
     - net.sf.oval -> oval 4.0.0
     - com.mysql -> mysql-connector-j 9.3.0
     - org.apache.ivy -> ivy 2.5.3

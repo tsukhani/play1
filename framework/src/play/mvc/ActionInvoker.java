@@ -2,6 +2,7 @@ package play.mvc;
 
 import com.jamonapi.Monitor;
 import com.jamonapi.MonitorFactory;
+import org.apache.logging.log4j.ThreadContext;
 import play.Invoker.Suspend;
 import play.Logger;
 import play.Play;
@@ -38,6 +39,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Stack;
+import java.util.UUID;
 import java.util.concurrent.Future;
 
 /**
@@ -107,9 +109,24 @@ public class ActionInvoker {
     public static void invoke(Http.Request request, Http.Response response) {
         Monitor monitor = null;
 
+        // PF-9: surface request-scoped context to log lines via Log4j 2's
+        // ThreadContext (MDC). When application.log.format=json the ECS
+        // template flattens these as top-level JSON keys; in text mode they
+        // sit unused unless the operator extends the PatternLayout.
+        ThreadContext.put("request_id", request.args.containsKey("__REQUEST_ID")
+                ? request.args.get("__REQUEST_ID").toString()
+                : UUID.randomUUID().toString());
+        ThreadContext.put("http_method", request.method);
+        ThreadContext.put("http_path", request.path);
+        ThreadContext.put("client_ip", request.remoteAddress);
+
         try {
             initActionContext(request, response);
             Method actionMethod = request.invokedMethod;
+            if (actionMethod != null) {
+                ThreadContext.put("action_name",
+                        actionMethod.getDeclaringClass().getSimpleName() + "." + actionMethod.getName());
+            }
 
             // 1. Prepare request params
             Scope.Params.current().__mergeWith(request.routeArgs);
@@ -218,6 +235,9 @@ public class ActionInvoker {
             if (monitor != null) {
                 monitor.stop();
             }
+            // PF-9: drop MDC entries so subsequent virtual-thread reuses don't
+            // inherit prior request context.
+            ThreadContext.clearMap();
         }
     }
 
