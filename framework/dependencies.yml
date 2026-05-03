@@ -176,6 +176,12 @@ require:    &allDependencies
     - io.micrometer -> micrometer-commons 1.13.6
     - io.micrometer -> micrometer-observation 1.13.6
     - io.micrometer -> micrometer-registry-prometheus 1.13.6
+    - io.micrometer -> micrometer-registry-otlp 1.13.6
+    # micrometer-registry-otlp transitives: opentelemetry-proto serializes the
+    # push payload, protobuf-java is its peer. The Prometheus side ships its
+    # own shaded protobuf so the unshaded one declared here is OTLP-only.
+    - io.opentelemetry.proto -> opentelemetry-proto 1.2.0-alpha
+    - com.google.protobuf -> protobuf-java 3.23.4
     - io.prometheus -> prometheus-metrics-core 1.2.1
     - io.prometheus -> prometheus-metrics-model 1.2.1
     - io.prometheus -> prometheus-metrics-config 1.2.1
