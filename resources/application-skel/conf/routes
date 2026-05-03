@@ -5,8 +5,10 @@
 # Home page
 GET     /                                       Application.index
 
-# Ignore favicon requests
-GET     /favicon.ico                            404
+# Serve the framework Play favicon at the conventional /favicon.ico path
+# that browsers auto-request. The /public/images/favicon.png variant is
+# referenced from main.html via <link rel="icon"> for high-DPI rendering.
+GET     /favicon.ico                            staticFile:/public/favicon.ico
 
 # Map static resources from the /app/public folder to the /public path
 GET     /public/                                staticDir:public
