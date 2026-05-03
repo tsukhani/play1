@@ -1,7 +1,26 @@
 #!/bin/bash
 # Build Tailwind CSS for Play Framework modules and templates.
+#
 # Requires the tailwindcss standalone CLI binary in the framework/ directory.
-# Download from: https://github.com/tailwindlabs/tailwindcss/releases
+# Download (Tailwind v4) from:
+#   https://github.com/tailwindlabs/tailwindcss/releases
+# Pick the binary for your platform (e.g. tailwindcss-macos-arm64) and
+# rename it to "tailwindcss" inside framework/. The binary is .gitignored —
+# every dev installs their own.
+#
+# When to regenerate
+#   Run this script whenever you add, remove, or change Tailwind classes in
+#   any of the @source paths in input.css:
+#     - framework/templates/**/*.html
+#     - modules/*/app/views/**/*.html (and *.tag)
+#     - resources/application-skel/app/views/**/*.html
+#   Then commit the regenerated play-tailwind.css alongside the template change.
+#
+# Outputs (both committed to git, shipped with the framework distribution):
+#   - resources/application-skel/public/stylesheets/play-tailwind.css
+#       — the CSS shipped with apps generated via `play new`
+#   - modules/docviewer/public/stylesheets/play-tailwind.css
+#       — the CSS used by the docviewer module's framework pages
 #
 # Usage: cd framework && ./tailwind/build-css.sh
 

@@ -125,14 +125,33 @@ This fork runs on virtual threads exclusively. Request invocation (`Invoker`), b
 
 ### Module System
 
-Built-in modules in `modules/`: `testrunner`, `docviewer`, `crud`, `secure`. Each has its own `build.xml`, `app/`, and `conf/` directories.
+Built-in modules in `modules/`: `testrunner`, `docviewer`, `crud`, `secure`. Each has its own `build.xml`, `app/`, and `conf/` directories. `testrunner` is consumed at runtime by the `play test` / `play auto-test` CLI commands when end-user apps invoke them.
 
 ### Testing Patterns
 
+**Framework-internal tests** (run against the framework itself):
 - Framework unit tests: `framework/test-src/play/**/*Test.java` (JUnit 5) — invoked by `ant unittest`
 - Integration tests: `framework/test-src/integration/**/*Test.java` (JUnit 5) — bind a real Netty server, exercise HTTP/1.1, h2 ALPN, h3, the SSE pipeline, and PlayHandler error paths. Invoked by `ant integration-test`. Test-app fixture lives at `framework/test-src/integration/testapp/`.
 - CLI tests: `framework/test-src/cli/test_*.py` (Python `unittest`) — invoked by `ant cli-test`
 - Test data via YAML fixtures loaded with `Fixtures.load("data.yml")`
+
+**End-user app testing** (run by app developers against THEIR apps, not the framework):
+- `play test myapp` — starts the app in test mode, foreground server with `play.id=test`. Apps put their tests under `app/` annotated with `@RunWith(PlayJUnitRunner.class)`; visit `http://host:port/@tests` to invoke them via the testrunner module's web UI.
+- `play auto-test myapp` — same setup but headless: spins the test runner via Selenium/Firephoque and exits with the test result. Used for CI of end-user apps.
+
+These commands depend on `modules/testrunner/lib/play-testrunner.jar` (built by the testrunner module) — they are NOT exercised by `ant test`.
+
+### Tailwind CSS pipeline
+
+The framework ships pre-built Tailwind CSS at `resources/application-skel/public/stylesheets/play-tailwind.css` and `modules/docviewer/public/stylesheets/play-tailwind.css`. Sources live at `framework/tailwind/input.css` (with `@source` directives covering framework templates, module views, and app-skel views).
+
+When you add, change, or remove Tailwind classes in any of those source paths, regenerate the CSS:
+
+```bash
+cd framework && ./tailwind/build-css.sh
+```
+
+The script requires the standalone Tailwind v4 CLI binary at `framework/tailwindcss` (gitignored — each dev installs their own; download links in the script's header). Commit the regenerated CSS alongside the template change. There is no CI auto-regen — staleness shows up as missing classes at render time on whichever app uses the asset.
 
 ### CLI (`play` command)
 
