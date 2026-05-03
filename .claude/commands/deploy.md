@@ -24,7 +24,19 @@ Run the full Play Framework release deployment:
 
    Store the resulting version as `VERSION` for use below.
 
-2. **Build the distribution**
+2. **Run the full test suite**
+
+   Run from `framework/`:
+   ```bash
+   ant test
+   ```
+   This is the ordered verification entrypoint defined in PF-80: `clean → jar → unittest → integration-test → cli-test`. It must report `BUILD SUCCESSFUL` before continuing.
+
+   **Fail-fast.** If any test fails, stop immediately and report the failure to the user. Do NOT proceed to commit, push, tag, or release. A broken main must never become a release. The version bump from step 1 is local-only at this point and can be reverted (`/usr/bin/git checkout -- framework/build.xml`) or left for the user to decide.
+
+   The integration test binds port 19443 (HTTPS). If a previous Play instance or another deploy is running, the integration suite will fail to bind. Surface that as a clear "port in use" message rather than a generic test failure.
+
+3. **Build the distribution**
 
    Run from `framework/`:
    ```bash
@@ -32,9 +44,11 @@ Run the full Play Framework release deployment:
    ```
    This runs clean → compile → jar → javadoc → artifact → zip. Confirm `BUILD SUCCESSFUL` before continuing. If it fails, stop and report the error.
 
+   `ant test` in step 2 already ran `clean → jar`, so this redoes that work — adds ~5s but keeps the targets independently invocable, which is worth more than the saved time.
+
    After the build, sanity-check that `framework/src/play/version` now matches `VERSION` and that `framework/dist/play-{VERSION}.zip` exists.
 
-3. **Commit any uncommitted changes**
+4. **Commit any uncommitted changes**
 
    - Run `git status` and `git diff --stat` to see what changed.
    - If there are no changes, skip the commit step.
@@ -53,7 +67,7 @@ Run the full Play Framework release deployment:
      ```
    - Always use `/usr/bin/git` for all git commands.
 
-4. **Push to both remotes**
+5. **Push to both remotes**
 
    Run these sequentially (not in parallel — the second push depends on the first succeeding cleanly):
    ```bash
@@ -62,7 +76,7 @@ Run the full Play Framework release deployment:
    ```
    Report any push errors before continuing.
 
-5. **Tag the release in all three places (local, origin, github)**
+6. **Tag the release in all three places (local, origin, github)**
 
    The release tag is `v{VERSION}` (e.g. `v1.11.13`). It must exist on **all three** of: local repo, `origin` (Bitbucket), `github`. Do not rely on `gh release create` to create the tag — it only creates the tag on GitHub, leaving the local repo and origin untagged and out of sync.
 
@@ -100,7 +114,7 @@ Run the full Play Framework release deployment:
 
    All three lookups must report the same SHA. If any disagrees, stop and report.
 
-6. **Publish zip to GitHub release**
+7. **Publish zip to GitHub release**
 
    The tag now exists on GitHub (pushed in step 5), so `gh release create` will attach to that existing tag rather than creating a new one. First check whether a release already exists:
    ```bash
@@ -126,7 +140,7 @@ Run the full Play Framework release deployment:
    gh release view v{VERSION} --repo tsukhani/play1
    ```
 
-7. **Trim old releases — keep only the 5 most recent per major.minor series**
+8. **Trim old releases — keep only the 5 most recent per major.minor series**
 
    The repo retains at most 5 releases per `major.minor` series (e.g. 5 of `1.12.x`, 5 of `1.11.x`). Older releases are deleted to keep the Releases tab focused on actively-supported versions. **Git tags are preserved** so source archaeology (`git checkout v1.12.20`) still works — only the GitHub Release wrapper and its attached zip go away.
 
@@ -154,7 +168,7 @@ Run the full Play Framework release deployment:
 
    Note: this step assumes strict semver tags like `v1.12.25`. Pre-release tags (`v1.12.25-rc1`) will break the patch regex — that is intentional, the script fails loudly so we re-think the policy when we add pre-releases.
 
-8. **Report**
+9. **Report**
 
    Summarise:
    - Version deployed
