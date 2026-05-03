@@ -2,11 +2,13 @@
   // Renovate configuration for the Play 1.12 fork.
   // Schema: https://docs.renovatebot.com/renovate-schema.json
   //
-  // Coordination with dependabot:
-  // - .github/dependabot.yml owns GitHub Actions updates. Renovate does NOT
-  //   touch Actions to avoid duplicate PRs against the same workflows.
-  // - Renovate owns the rest: npm (nuxt-skel) and the custom Play 1 Ivy
-  //   manifest at framework/dependencies.yml (via a regex manager).
+  // Renovate is the sole dependency-update bot for this repo. It covers:
+  //   - GitHub Actions in .github/workflows/*.yml (auto-detected)
+  //   - npm in resources/nuxt-skel/package.json (auto-detected)
+  //   - Java/Ivy in framework/dependencies.yml (custom regex manager below)
+  //
+  // .github/dependabot.yml was retired when this config was introduced —
+  // running both bots produced overlapping Actions PRs.
   //
   // Java dependency workflow (important):
   // Renovate edits framework/dependencies.yml in place but cannot run
@@ -46,13 +48,6 @@
   // review than scrolling the PR list.
   dependencyDashboard: true,
   dependencyDashboardTitle: "Renovate dependency dashboard",
-
-  // GitHub Actions: skip — dependabot.yml already handles those. If we
-  // ever drop dependabot, remove this stanza and Renovate will pick them
-  // up automatically.
-  "github-actions": {
-    enabled: false
-  },
 
   // Custom regex manager for the Play 1 Ivy manifest.
   // dependencies.yml lines look like:
@@ -161,6 +156,16 @@
       automerge: true,
       automergeType: "branch",
       labels: ["dependencies", "frontend"]
+    },
+    {
+      // GitHub Actions: pin third-party actions to a commit digest so a
+      // hostile owner can't retag a release tag and silently swap in
+      // malicious code (recurring supply-chain incident pattern). The
+      // pin is on the digest; Renovate updates the digest plus a
+      // human-readable comment with the version number.
+      matchManagers: ["github-actions"],
+      pinDigests: true,
+      labels: ["dependencies", "ci"]
     }
   ],
 
