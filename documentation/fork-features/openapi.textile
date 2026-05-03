@@ -1,0 +1,211 @@
+h1. OpenAPI 3 spec generation
+
+The framework generates an "OpenAPI 3":https://spec.openapis.org/oas/v3.1.0 spec for your application automatically, derived from the @conf/routes@ file plus reflection on your controller method signatures. The spec is exposed at runtime as JSON and YAML, and a "Swagger UI":https://swagger.io/tools/swagger-ui/ page renders it interactively in development mode. Controller-level annotations let you enrich the generated spec with descriptions, response shapes, request body schemas, and tag groupings.
+
+This is a fork-specific feature (see PF-12 and PF-81). It is not part of the upstream Play 1.5 manual.
+
+h2. <a name="endpoints">Endpoints</a>
+
+When your application is running, three endpoints are available:
+
+* @GET /@api/openapi.json@ — the spec serialized as JSON
+* @GET /@api/openapi.yaml@ — the same spec serialized as YAML
+* @GET /@api/docs@ — a Swagger UI page rendering the spec interactively (returns 404 in @PROD@ mode; available in @DEV@ only)
+
+The @docs@ page loads the Swagger UI distribution from the @unpkg.com@ CDN and points at @/@api/openapi.json@. It works without bundling Swagger UI assets in your application.
+
+h2. <a name="configuration">Configuration</a>
+
+Configure via @application.conf@:
+
+bc.. # OpenAPI spec generation
+# /@api/openapi.json and /@api/openapi.yaml expose an OpenAPI 3 spec
+# generated from your routes file and controller method signatures.
+# /@api/docs serves Swagger UI loaded from unpkg.com — dev mode only.
+openapi.enabled=true
+openapi.basePath=/@api
+
+p. The defaults are sensible for development; the feature is enabled by default. To disable entirely, set @openapi.enabled=false@. To expose under a different path prefix (for example to integrate with your reverse proxy's path policy), change @openapi.basePath@.
+
+To turn the feature off in @PROD@ but leave it on in @DEV@, use the standard Play prefix syntax:
+
+bc. openapi.enabled=true
+%prod.openapi.enabled=false
+
+h2. <a name="default">What you get without any annotations</a>
+
+The generator walks your @conf/routes@ table after Play boots and emits one OpenAPI operation per route. Without any annotations, it infers the following from the route + controller method:
+
+* HTTP method (from the route entry)
+* URL path, with @{name}@ path parameters mapped 1:1 to OpenAPI path parameters
+* Query parameters, derived from method arguments not present in the URL pattern
+* A single @200 OK@ response with @application/json@ content type for typed return values, or a generic content type for @void@ (the common Play case where actions throw a @Result@)
+
+For most apps this is already useful — every route appears in @/@api/openapi.json@, the path parameters are typed, and tools like "openapi-generator-cli":https://openapi-generator.tech can produce client SDKs against it without any further work.
+
+h2. <a name="annotations">Enriching the spec with annotations</a>
+
+For richer metadata — operation summaries, multiple response codes, request body schemas, controller groupings — decorate your action methods and controller classes with the standard @io.swagger.v3.oas.annotations.*@ annotations. These ship with the framework via the @swagger-annotations@ artifact and require no additional dependency on your part.
+
+The framework reads annotations and *merges them on top of* the inferred spec. Annotation-supplied values win over inferred values for the same field; values not declared in annotations remain as inferred. Routes with no annotations behave exactly as described in the previous section.
+
+h3. <a name="operation">Operation: @Operation</a>
+
+Decorate an action with @@Operation@ to set its summary, description, tags, and operationId:
+
+bc.. import io.swagger.v3.oas.annotations.Operation;
+
+public class Users extends Controller {
+
+    @Operation(
+        summary = "Fetch a user by id",
+        description = "Returns the canonical user record. 404 if the id does not exist.",
+        operationId = "getUserById"
+    )
+    public static void show(Long id) {
+        User user = User.findById(id);
+        notFoundIfNull(user);
+        renderJSON(user);
+    }
+}
+
+p. The fields @summary@ and @operationId@ default to empty (clients will fall back to the path + method); @description@ defaults to empty; @tags@ defaults to empty list (see below for the class-level @@Tag@ alternative).
+
+h3. <a name="response">Response codes: @ApiResponse and @ApiResponses</a>
+
+By default the spec emits a single @200 OK@ response per operation. Declare additional responses with @@ApiResponse@:
+
+bc.. import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+
+@ApiResponses({
+    @ApiResponse(responseCode = "200", description = "User found"),
+    @ApiResponse(responseCode = "404", description = "User not found"),
+    @ApiResponse(responseCode = "401", description = "Authentication required")
+})
+public static void show(Long id) { ... }
+
+p. Declared responses *merge* with the inferred 200 — declaring only a 404 still leaves a 200 in the spec. To fully replace the 200 (for example, for a void/202 endpoint), declare a 200 explicitly with the shape you want.
+
+h3. <a name="request-body">Request body: @RequestBody</a>
+
+For @POST@/@PUT@ actions that accept a JSON body, declare its shape with @@RequestBody@:
+
+bc.. import io.swagger.v3.oas.annotations.parameters.RequestBody;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+
+@RequestBody(
+    description = "User to create",
+    required = true,
+    content = @Content(schema = @Schema(implementation = User.class))
+)
+public static void create(User user) {
+    user.save();
+    renderJSON(user);
+}
+
+p. The annotation fully replaces the body shape that would otherwise be inferred from the @user@ argument's @formData@ parsing. Use @@Schema(implementation = SomeBean.class)@ to type the body against an application class; the generator emits a reference to that schema.
+
+h3. <a name="parameter">Parameters: @Parameter</a>
+
+Path and query parameters are inferred from the route + method signature. Use @@Parameter@ on a method argument to override or supplement the inferred parameter:
+
+bc.. import io.swagger.v3.oas.annotations.Parameter;
+
+public static void show(
+    @Parameter(name = "id", description = "User id", required = true) Long id
+) { ... }
+
+p. Currently only @name@, @description@, @required@, and @schema@ are read. Other @@Parameter@ fields (@array@, @examples@, @style@, @explode@, @allowReserved@) are ignored — the inferred values stand for those.
+
+h3. <a name="tag">Class-level grouping: @Tag</a>
+
+To group all operations from a controller under a single OpenAPI tag (so Swagger UI organizes them visibly), annotate the controller class:
+
+bc.. import io.swagger.v3.oas.annotations.tags.Tag;
+
+@Tag(name = "users", description = "User management")
+public class Users extends Controller {
+
+    public static void list() { ... }
+    public static void show(Long id) { ... }
+    public static void create() { ... }
+}
+
+p. Every operation generated from @Users@ then carries @users@ in its @tags@ list. If a method also has its own @@Operation(tags = {...})@, the class-level and method-level tags *union* (deduplicated) — the class tag never replaces method tags or vice versa.
+
+h2. <a name="example">Putting it together</a>
+
+A full annotated controller demonstrating all five annotations:
+
+bc.. package controllers;
+
+import play.mvc.Controller;
+import models.User;
+
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.parameters.RequestBody;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
+
+@Tag(name = "users", description = "User account management")
+public class Users extends Controller {
+
+    @Operation(summary = "List users", description = "All users, paginated.")
+    @ApiResponse(responseCode = "200", description = "Page of users")
+    public static void list(
+        @Parameter(name = "page", description = "1-based page number") Integer page
+    ) {
+        renderJSON(User.findAll());
+    }
+
+    @Operation(summary = "Fetch a user by id")
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "User found"),
+        @ApiResponse(responseCode = "404", description = "User not found")
+    })
+    public static void show(
+        @Parameter(name = "id", description = "User id", required = true) Long id
+    ) {
+        User user = User.findById(id);
+        notFoundIfNull(user);
+        renderJSON(user);
+    }
+
+    @Operation(summary = "Create a user")
+    @RequestBody(
+        description = "User to create",
+        required = true,
+        content = @Content(schema = @Schema(implementation = User.class))
+    )
+    @ApiResponse(responseCode = "201", description = "User created")
+    public static void create(User user) {
+        user.save();
+        response.status = 201;
+        renderJSON(user);
+    }
+}
+
+h2. <a name="limitations">What's not yet supported</a>
+
+The annotation reader covers the fields most apps need. The following are deliberate scope cuts; the generator falls back to inferred or default values for them. Open a fork ticket if you need any of these:
+
+* @@Schema@ field coverage beyond @implementation@ and @description@. JSON-Schema 2020 keywords (@pattern@, @minimum@, @maximum@, @format@, @example@, @enumAsRef@, @oneOf@/@anyOf@/@allOf@) are not read off annotations; primitive types still get sensible inferred schemas.
+* @@Parameter@'s @array@, @examples@, @style@, @explode@, @allowReserved@.
+* @@ApiResponse@'s @headers@, @links@, @useReturnTypeSchema@.
+* @@RequestBody@'s @useParameterTypeSchema@ and @ref@.
+* Bean property recursion. When you reference a bean class via @implementation = SomeBean.class@, the schema is registered as an opaque @ObjectSchema@ — the bean's fields are not walked recursively. Codegen tools will produce a typed wrapper but with loose body shapes. The fix is to produce a full JSON-schema for each referenced bean; tracked separately.
+
+h2. <a name="static-export">Exporting the spec</a>
+
+For CI integration (committing the generated spec for diff review, feeding it into client-codegen pipelines, etc.), curl the running app:
+
+bc. curl http://localhost:9000/@api/openapi.json > openapi.json
+curl http://localhost:9000/@api/openapi.yaml > openapi.yaml
+
+p. There is no offline @play openapi@ command yet — the spec is generated only at runtime, because it relies on the loaded routes and reflected controller methods. If your CI flow needs an offline export, start the app in @test@ mode, pull the spec, and stop.

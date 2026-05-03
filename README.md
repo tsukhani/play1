@@ -176,6 +176,12 @@ This fork no longer supports deploying as a WAR into a servlet container (PF-78)
 
 The `Request.current().args.get(ServletWrapper.SERVLET_REQ)` escape-hatch for accessing the underlying `HttpServletRequest` is also gone. Apps relying on it have no replacement; that integration was only ever populated in the WAR path.
 
+## OpenAPI 3 spec generation
+
+The framework auto-generates an OpenAPI 3 spec from your `routes` file and controller method signatures, exposed at `/@api/openapi.json`, `/@api/openapi.yaml`, and Swagger UI at `/@api/docs` (dev mode only). Decorate controllers with `io.swagger.v3.oas.annotations.*` to enrich the generated spec with operation summaries, response codes, request body schemas, and tag groupings.
+
+Full reference and examples: [`documentation/fork-features/openapi.textile`](documentation/fork-features/openapi.textile).
+
 ## Migrating from Joda Time
 
 Joda Time was removed from this fork (PF-27). Form-binding is now `java.time` (JSR-310) only. Replace any controller-arg or model-field types as follows:
