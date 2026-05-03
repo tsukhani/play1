@@ -383,20 +383,6 @@ public class Http {
             return newRequest;
         }
 
-        /**
-         * Legacy 14-parameter constructor kept for backward compatibility with third-party
-         * adapter modules (e.g. PlayGrizzlyAdapter). New code should use {@link #createRequest(RequestData)}.
-         *
-         * @deprecated Use {@link #createRequest(RequestData)} for clearer call sites.
-         */
-        @Deprecated
-        public static Request createRequest(String _remoteAddress, String _method, String _path, String _querystring, String _contentType,
-                InputStream _body, String _url, String _host, boolean _isLoopback, int _port, String _domain, boolean _secure,
-                Map<String, Http.Header> _headers, Map<String, Http.Cookie> _cookies) {
-            return createRequest(new RequestData(_remoteAddress, _method, _path, _querystring, _contentType,
-                    _body, _url, _host, _isLoopback, _port, _domain, _secure, _headers, _cookies));
-        }
-
         protected void parseXForwarded() {
             String _host = this.host;
             if (Play.configuration.containsKey("XForwardedSupport") && headers.get("x-forwarded-for") != null) {

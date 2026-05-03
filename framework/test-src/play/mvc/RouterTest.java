@@ -27,7 +27,7 @@ public class RouterTest {
         Play.configuration = new Properties();
 
         // test with currentRequest
-        Http.Request request = Http.Request.createRequest(
+        Http.Request request = Http.Request.createRequest(new Http.Request.RequestData(
                 null,
                 "GET",
                 "/",
@@ -42,7 +42,7 @@ public class RouterTest {
                 false,
                 null,
                 null
-        );
+        ));
 
         Http.Request.current.set( request );
         assertThat(Router.getBaseUrl()).isEqualTo("http://localhost");
@@ -69,7 +69,7 @@ public class RouterTest {
         Router.addRoute("GET", "/music/", "staticDir:/public/mp3");
 
         // we request a static image file (which lives only on a specific domain)
-        Http.Request imageRequest = Http.Request.createRequest(
+        Http.Request imageRequest = Http.Request.createRequest(new Http.Request.RequestData(
                 null,
                 "GET",
                 "/pics/chuck-norris.jpg",
@@ -84,9 +84,9 @@ public class RouterTest {
                 false,
                 null,
                 null
-        );
+        ));
         // we also request a static music file (which lives on NO specific domain)
-        Http.Request musicRequest = Http.Request.createRequest(
+        Http.Request musicRequest = Http.Request.createRequest(new Http.Request.RequestData(
                 null,
                 "GET",
                 "/music/michael-jackson_black-or-white.mp3",
@@ -101,7 +101,7 @@ public class RouterTest {
                 false,
                 null,
                 null
-        );
+        ));
         
         // Test on localhost
         assertFalse(canRenderFile(imageRequest), "Image file [" + imageRequest.domain + "] from the wrong/different domain must not be found");

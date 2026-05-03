@@ -445,7 +445,7 @@ public abstract class FunctionalTest extends BaseTest {
     }
 
     public static Request newRequest() {
-        return Request.createRequest(null, "GET", "/", "", null, null, null, null, false, 80, "localhost", false, null, null);
+        return Request.createRequest(new Request.RequestData(null, "GET", "/", "", null, null, null, null, false, 80, "localhost", false, null, null));
     }
 
     // Assertions

@@ -23,7 +23,7 @@ public class HttpRequestTest {
 
         //This used to throw an exception if there was a colon in the password
         // test with currentRequest
-        Http.Request request = Http.Request.createRequest(
+        Http.Request request = Http.Request.createRequest(new Http.Request.RequestData(
                 null,
                 "GET",
                 "/",
@@ -38,6 +38,6 @@ public class HttpRequestTest {
                 false,
                 headers,
                 null
-        );
+        ));
     }
 }

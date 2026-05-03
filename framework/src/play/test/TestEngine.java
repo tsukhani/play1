@@ -153,8 +153,8 @@ public class TestEngine {
                 } else {
                     domain = host;
                 }
-                Request request = Request.createRequest(null, "GET", "/", "", null,
-                        null, null, host, false, port, domain, isSecure, null, null);
+                Request request = Request.createRequest(new Request.RequestData(null, "GET", "/", "", null,
+                        null, null, host, false, port, domain, isSecure, null, null));
                 request.body = new ByteArrayInputStream(new byte[0]);
                 Request.current.set(request);
             }
