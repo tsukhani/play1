@@ -1,0 +1,171 @@
+{
+  // Renovate configuration for the Play 1.12 fork.
+  // Schema: https://docs.renovatebot.com/renovate-schema.json
+  //
+  // Coordination with dependabot:
+  // - .github/dependabot.yml owns GitHub Actions updates. Renovate does NOT
+  //   touch Actions to avoid duplicate PRs against the same workflows.
+  // - Renovate owns the rest: npm (nuxt-skel) and the custom Play 1 Ivy
+  //   manifest at framework/dependencies.yml (via a regex manager).
+  //
+  // Java dependency workflow (important):
+  // Renovate edits framework/dependencies.yml in place but cannot run
+  // `ant resolve` — that step downloads the new jar and prunes the old
+  // one in framework/lib/. Renovate PRs for Java deps therefore arrive
+  // INCOMPLETE: the YAML is bumped but the lib/ jars are stale.
+  //
+  // To finish a Java-dep PR locally:
+  //   gh pr checkout <number>
+  //   cd framework
+  //   ant resolve -Dprune=true   # downloads new jar + removes the old
+  //   git add framework/lib framework/dependencies.yml
+  //   git commit -m "ant resolve"
+  //   git push
+  //
+  // Then merge as usual. Some PRs (Netty, Micrometer, Hibernate) carry
+  // multiple jars and may need transitive deps to be added by hand —
+  // see the dependencies.yml header comments for examples.
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+
+  extends: [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommits",
+    ":semanticCommitTypeAll(chore)",
+    "group:allNonMajor",
+    ":timezone(Asia/Singapore)"
+  ],
+
+  // Off-hours scheduling. Bound PR noise without delaying urgent CVE bumps.
+  schedule: [
+    "after 10pm and before 5am every weekday",
+    "every weekend"
+  ],
+
+  // Single dashboard issue summarises every pending update — easier to
+  // review than scrolling the PR list.
+  dependencyDashboard: true,
+  dependencyDashboardTitle: "Renovate dependency dashboard",
+
+  // GitHub Actions: skip — dependabot.yml already handles those. If we
+  // ever drop dependabot, remove this stanza and Renovate will pick them
+  // up automatically.
+  "github-actions": {
+    enabled: false
+  },
+
+  // Custom regex manager for the Play 1 Ivy manifest.
+  // dependencies.yml lines look like:
+  //   - io.swagger.core.v3 -> swagger-models 2.2.39
+  //   - org.apache.logging.log4j -> log4j-core 2.25.3
+  // The few legacy short-form deps without a "->" (e.g. "antlr4-runtime
+  // 4.13.0", "commons-beanutils 1.11.0") aren't matched — those use Ivy
+  // shorthand where group=artifact and don't map cleanly to Maven Central
+  // group IDs. Track those manually if they need bumping.
+  customManagers: [
+    {
+      customType: "regex",
+      fileMatch: ["^framework/dependencies\\.yml$"],
+      matchStrings: [
+        "-\\s+(?<groupId>[a-zA-Z0-9_.\\-]+)\\s+->\\s+(?<artifactId>[a-zA-Z0-9_.\\-]+)\\s+(?<currentValue>[0-9][\\w.\\-]+)"
+      ],
+      datasourceTemplate: "maven",
+      depNameTemplate: "{{{groupId}}}:{{{artifactId}}}"
+    }
+  ],
+
+  packageRules: [
+    // Group multi-artifact families so one PR bumps the whole set in
+    // lockstep. Saves merge churn AND avoids version-skew CVEs that
+    // happen when (e.g.) netty-codec-http and netty-handler diverge.
+    {
+      matchPackagePrefixes: ["io.netty:"],
+      groupName: "Netty"
+    },
+    {
+      matchPackagePrefixes: ["io.micrometer:"],
+      groupName: "Micrometer"
+    },
+    {
+      matchPackagePrefixes: ["io.swagger.core.v3:"],
+      groupName: "Swagger / OpenAPI"
+    },
+    {
+      matchPackagePrefixes: ["com.fasterxml.jackson"],
+      groupName: "Jackson"
+    },
+    {
+      matchPackagePrefixes: [
+        "org.hibernate.orm:",
+        "org.hibernate.models:",
+        "org.hibernate.validator:"
+      ],
+      groupName: "Hibernate"
+    },
+    {
+      matchPackagePrefixes: ["org.apache.logging.log4j:"],
+      groupName: "Log4j"
+    },
+    {
+      matchPackagePrefixes: ["io.prometheus:"],
+      groupName: "Prometheus client_java"
+    },
+    {
+      matchPackagePrefixes: ["org.junit."],
+      groupName: "JUnit"
+    },
+    {
+      matchPackagePrefixes: ["org.bouncycastle:"],
+      groupName: "Bouncy Castle"
+    },
+    {
+      matchPackagePrefixes: ["jakarta."],
+      groupName: "Jakarta APIs"
+    },
+    {
+      matchPackagePrefixes: ["org.eclipse.jdt:"],
+      groupName: "Eclipse JDT"
+    },
+    {
+      matchPackagePrefixes: [
+        "com.aayushatharva.brotli4j:"
+      ],
+      groupName: "brotli4j (multi-platform native)"
+    },
+    {
+      matchPackagePrefixes: ["org.codehaus.groovy:"],
+      groupName: "Groovy"
+    },
+    {
+      // Major bumps go through manual review — never auto-merge.
+      matchUpdateTypes: ["major"],
+      automerge: false,
+      labels: ["dependencies", "major-bump"],
+      addLabels: ["needs-review"]
+    },
+    {
+      // Patch + minor: label them for the dashboard but don't auto-merge.
+      // The user runs `ant resolve` locally to complete each PR; that step
+      // also serves as a human review checkpoint, so blanket auto-merge
+      // wouldn't save effort here.
+      matchUpdateTypes: ["minor", "patch"],
+      automerge: false,
+      labels: ["dependencies"]
+    },
+    {
+      // npm deps in nuxt-skel: Renovate handles end-to-end (no manual
+      // step needed). Auto-merge non-major bumps here is safe — the
+      // tests gating /deploy will catch regressions.
+      matchManagers: ["npm"],
+      matchUpdateTypes: ["minor", "patch"],
+      automerge: true,
+      automergeType: "branch",
+      labels: ["dependencies", "frontend"]
+    }
+  ],
+
+  // Be polite: cap concurrent PRs so the queue doesn't get swamped on
+  // a busy week.
+  prConcurrentLimit: 5,
+  prHourlyLimit: 2
+}
