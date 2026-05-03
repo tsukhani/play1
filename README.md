@@ -168,6 +168,14 @@ The plugin itself can also be disabled by removing `play.plugins.SecurityHeaders
 
 Headers are applied additively — if a controller has already set `X-Frame-Options` (e.g., `response.setHeader("X-Frame-Options", "SAMEORIGIN")`) the framework default does not overwrite it. Same for any other header in the table above.
 
+## Removed: WAR / servlet-container deployment
+
+This fork no longer supports deploying as a WAR into a servlet container (PF-78). The `ServletWrapper` adapter, the `play war` CLI command, the `WEB-INF/web.xml` template, and the `jakarta.servlet-api` dependency are all gone. The marquee features of this fork — HTTP/2 ALPN (PF-58), HTTP/3 over QUIC (PF-57), virtual-thread dispatch — are Netty-exclusive by design and don't work inside a servlet container anyway.
+
+**If you were deploying via `play war`:** switch to the embedded Netty path (`play run` for development, `play start` for production) and front it with a reverse proxy (nginx, HAProxy, AWS ALB, etc.) if you need TLS termination or path-prefix rewriting at the edge. The application code does not need to change — only the deployment topology.
+
+The `Request.current().args.get(ServletWrapper.SERVLET_REQ)` escape-hatch for accessing the underlying `HttpServletRequest` is also gone. Apps relying on it have no replacement; that integration was only ever populated in the WAR path.
+
 ## Migrating from Joda Time
 
 Joda Time was removed from this fork (PF-27). Form-binding is now `java.time` (JSR-310) only. Replace any controller-arg or model-field types as follows:

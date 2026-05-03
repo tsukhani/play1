@@ -2,25 +2,16 @@ package play.server;
 
 import io.netty.handler.codec.http.DefaultHttpHeaders;
 import io.netty.handler.codec.http.HttpHeaders;
-import jakarta.servlet.http.HttpServletResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
-import java.util.HashSet;
 import java.util.Properties;
-import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
 /**
- * Unit tests for {@link SecurityHeadersPolicy}. These tests exercise the policy directly
- * against fake Netty / servlet header sinks — no {@code Http.Request} or {@code Http.Response}
+ * Unit tests for {@link SecurityHeadersPolicy}. Exercises the policy directly against
+ * a fake Netty {@link HttpHeaders} — no {@code Http.Request} or {@code Http.Response}
  * plumbing required.
  */
 public class SecurityHeadersPolicyTest {
@@ -29,8 +20,6 @@ public class SecurityHeadersPolicyTest {
     public void resetPolicy() {
         SecurityHeadersPolicy.install(SecurityHeadersPolicy.DISABLED);
     }
-
-    // ----- Netty headers -----
 
     @Test
     public void allDefaultHeadersPresentWhenEnabled() {
@@ -197,45 +186,9 @@ public class SecurityHeadersPolicyTest {
 
     @Test
     public void nullHeadersIsTolerated() {
-        SecurityHeadersPolicy.fromConfig(new Properties()).applyTo((HttpHeaders) null, true);
+        SecurityHeadersPolicy.fromConfig(new Properties()).applyTo(null, true);
         // no exception
     }
-
-    // ----- Servlet response -----
-
-    @Test
-    public void servletApplyAddsHeaders() {
-        SecurityHeadersPolicy policy = SecurityHeadersPolicy.fromConfig(new Properties());
-        HttpServletResponse response = mock(HttpServletResponse.class);
-        when(response.containsHeader(anyString())).thenReturn(false);
-
-        policy.applyTo(response, true);
-
-        verify(response).setHeader("X-Content-Type-Options", "nosniff");
-        verify(response).setHeader("X-Frame-Options", "DENY");
-        verify(response).setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
-        verify(response).setHeader("X-XSS-Protection", "0");
-        verify(response).setHeader("Content-Security-Policy", "default-src 'self'");
-        verify(response).setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
-    }
-
-    @Test
-    public void servletExistingHeaderNotOverwritten() {
-        SecurityHeadersPolicy policy = SecurityHeadersPolicy.fromConfig(new Properties());
-        HttpServletResponse response = mock(HttpServletResponse.class);
-        Set<String> alreadySet = new HashSet<>(Set.of("X-Frame-Options"));
-        when(response.containsHeader(anyString()))
-                .thenAnswer(inv -> alreadySet.contains(inv.getArgument(0)));
-        doAnswer(inv -> { alreadySet.add(inv.getArgument(0)); return null; })
-                .when(response).setHeader(anyString(), anyString());
-
-        policy.applyTo(response, false);
-
-        verify(response, never()).setHeader("X-Frame-Options", "DENY");
-        verify(response).setHeader("X-Content-Type-Options", "nosniff");
-    }
-
-    // ----- install / current -----
 
     @Test
     public void installAndCurrentRoundtrip() {

@@ -1,7 +1,6 @@
 package play.server;
 
 import io.netty.handler.codec.http.HttpHeaders;
-import jakarta.servlet.http.HttpServletResponse;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -9,14 +8,11 @@ import java.util.Properties;
 
 /**
  * Immutable, thread-safe holder of the configured default security headers, applied at every
- * HTTP response emission site (Netty + servlet). Owned by {@link play.plugins.SecurityHeadersPlugin}:
- * the plugin reads {@code http.headers.*} from {@link play.Play#configuration} on
- * {@code onConfigurationRead} and {@link #install installs} a fresh policy. Server emission paths
- * call {@link #current()} and apply additively — never overwriting an existing header.
- *
- * <p>Two transports, two {@code applyTo} overloads — Netty's {@link HttpHeaders} for
- * {@code PlayHandler}, servlet's {@link HttpServletResponse} for {@code ServletWrapper}. PF-62
- * established the precedent of keeping behavior aligned across both.
+ * HTTP response emission site in {@code PlayHandler}. Owned by
+ * {@link play.plugins.SecurityHeadersPlugin}: the plugin reads {@code http.headers.*} from
+ * {@link play.Play#configuration} on {@code onConfigurationRead} and {@link #install installs}
+ * a fresh policy. Server emission paths call {@link #current()} and apply additively — never
+ * overwriting an existing header.
  *
  * <p>Hot reload is free: in dev mode {@code ConfigurationChangeWatcherPlugin} re-fires
  * {@code onConfigurationRead} when {@code application.conf} changes, the plugin rebuilds the
@@ -97,19 +93,6 @@ public final class SecurityHeadersPolicy {
         }
         if (hstsEnabled && secure && !nettyHeaders.contains("Strict-Transport-Security")) {
             nettyHeaders.set("Strict-Transport-Security", hstsValue);
-        }
-    }
-
-    /** Apply policy to a servlet response. */
-    public void applyTo(HttpServletResponse servletResponse, boolean secure) {
-        if (!enabled || servletResponse == null) return;
-        for (Map.Entry<String, String> e : staticHeaders.entrySet()) {
-            if (!servletResponse.containsHeader(e.getKey())) {
-                servletResponse.setHeader(e.getKey(), e.getValue());
-            }
-        }
-        if (hstsEnabled && secure && !servletResponse.containsHeader("Strict-Transport-Security")) {
-            servletResponse.setHeader("Strict-Transport-Security", hstsValue);
         }
     }
 

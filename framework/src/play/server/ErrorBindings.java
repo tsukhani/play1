@@ -11,12 +11,7 @@ import play.mvc.Scope;
 
 /**
  * Shared helper for building the template-binding map used by the error-page
- * renderers in {@link PlayHandler#serve500} / {@link PlayHandler#serve404} and
- * the equivalent {@link ServletWrapper#serve500} / {@link ServletWrapper#serve404}.
- *
- * <p>The two transport adapters used to construct identical 6-key maps inline; this
- * class centralizes that construction so a missing key (or a new key, e.g. a CSRF
- * token) needs to be added in exactly one place.
+ * renderers in {@link PlayHandler#serve500} and {@link PlayHandler#serve404}.
  */
 final class ErrorBindings {
 

@@ -1017,11 +1017,9 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
             // Flush some cookies
             try {
                 // PF-62: only emit cookies the application has explicitly opted in to via
-                // {@code sendOnError = true}. ServletWrapper.serve500 has always followed this
-                // rule (see play.server.ServletWrapper:382); the Netty path was permissive and
-                // sent every cookie, which can persist partial Session/Flash/Lang state from a
-                // failed action — exactly the scenario the sendOnError flag was designed to
-                // gate. Aligning the two transports closes that divergence.
+                // {@code sendOnError = true}. The pre-PF-62 path was permissive and sent every
+                // cookie, which can persist partial Session/Flash/Lang state from a failed
+                // action — exactly the scenario the sendOnError flag was designed to gate.
                 Map<String, Http.Cookie> cookies = response.cookies;
                 for (Http.Cookie cookie : cookies.values()) {
                     if (!cookie.sendOnError) {

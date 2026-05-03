@@ -6,10 +6,10 @@ import play.server.SecurityHeadersPolicy;
 
 /**
  * Loads the {@link SecurityHeadersPolicy} from {@code http.headers.*} keys in
- * {@link Play#configuration} and installs it for all HTTP response emission paths
- * (Netty + servlet). The plugin owns lifecycle only; the policy itself is applied
- * inside {@code PlayHandler} / {@code ServletWrapper} so headers reach error pages,
- * 404s, and static files — not just controller-rendered responses.
+ * {@link Play#configuration} and installs it for all HTTP response emission paths in
+ * {@code PlayHandler}. The plugin owns lifecycle only; the policy itself is applied
+ * at the netty layer so headers reach error pages, 404s, and static files — not just
+ * controller-rendered responses.
  *
  * <p>Disable by either removing this entry from {@code play.plugins} or setting
  * {@code http.headers.enabled=false} in {@code application.conf}; both routes
