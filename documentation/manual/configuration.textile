@@ -6,6 +6,32 @@ Configure your Play application by setting values for configuration keys in @con
 * "Managing application.conf in several environments":ids
 * "Put your application in production":production
 
+
+h2. <a name="envvar">Environment variable interpolation</a>
+
+Any value in @application.conf@ may reference an environment variable using @${ENV_VAR}@ syntax. This is the recommended pattern for secrets, deployment-specific URLs, and anything else that should not be checked into the config file (PF-10).
+
+bc.. application.secret = ${PLAY_SECRET}
+db.url = ${DATABASE_URL}
+mail.smtp.pass = ${SMTP_PASSWORD}
+
+p. Resolution happens at config load time. The @${...}@ placeholder is replaced with the environment variable's value before any other code reads the configuration, so callers see the resolved string transparently.
+
+To supply a fallback when the environment variable is unset, use @${ENV_VAR:-default}@:
+
+bc.. # Falls back to localhost when DB_HOST isn't exported
+db.url = jdbc:postgresql://${DB_HOST:-localhost}:5432/myapp
+
+# Empty default — yields an empty string when LOG_LEVEL is unset
+application.log = ${LOG_LEVEL:-INFO}
+
+p. The default may itself be a literal string (it is not recursively interpolated). Whitespace inside @${...}@ is significant — write @${DB_HOST:-localhost}@, not @${ DB_HOST :- localhost }@.
+
+Unresolved placeholders with no default log a @WARN@ at startup and resolve to the literal placeholder string. This is intentional — silent failure on a missing secret is worse than a warn-and-misbehave that surfaces during smoke tests.
+
+Configurations without any @${...}@ syntax behave identically to before — there is no migration needed when upgrading.
+
+
 h2(#application). Application configuration
 
 

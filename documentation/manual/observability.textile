@@ -1,0 +1,175 @@
+h1. Observability — health and metrics
+
+Play 1.12 ships built-in HTTP endpoints for health probes and Prometheus-format metrics, plus an optional OTLP push exporter for shipping metrics to OpenTelemetry collectors. None of these endpoints require an external module — they are first-class in the framework and serve from the same Netty pipeline as your application routes.
+
+This page covers the health-check SPI, Micrometer metrics integration, and the OTLP push exporter. See also "production deployment":production and "logging":logs.
+
+h2. <a name="health">Health endpoints</a>
+
+The framework exposes Kubernetes-style liveness and readiness probes (PF-11) under @/@health@ by default. Two endpoints are intercepted before action dispatch:
+
+* *@GET /@health/live@* — process liveness. Always returns @200@ with @{"status":"UP"}@ as long as the JVM is running. Use this for liveness probes that should restart the pod if the JVM is unresponsive.
+* *@GET /@health/ready@* — readiness. Iterates registered @HealthCheck@ instances and returns @200@ if every check is @UP@, @503@ if any is @DOWN@. Use this for readiness probes that should remove the pod from a load-balancer rotation while a dependency (DB, cache, downstream service) is unavailable.
+
+The @ready@ endpoint's JSON shape:
+
+bc.. {
+  "status": "UP",
+  "checks": [
+    {"name": "db",    "status": "UP"},
+    {"name": "cache", "status": "UP"}
+  ]
+}
+
+p. With no checks registered, @/@health/ready@ returns @{"status":"UP","checks":[]}@.
+
+h3. <a name="health-spi">The HealthCheck SPI</a>
+
+Apps and plugins register checks via @play.plugins.HealthCheckPlugin.register(...)@. The interface is small:
+
+bc.. package play.plugins;
+
+public interface HealthCheck {
+    String name();
+    Status check();
+    enum Status { UP, DOWN }
+}
+
+p. @check()@ is invoked synchronously on the request thread and should be cheap. Implementations must not throw — return @Status.DOWN@ on failure. The framework catches throwables defensively and reports @DOWN@ with a logged warning if a check throws.
+
+A typical DB connectivity check, registered from a plugin's @onApplicationStart()@ or your app's startup job:
+
+bc.. import play.db.DB;
+import play.plugins.HealthCheck;
+import play.plugins.HealthCheckPlugin;
+
+public class DbHealthCheck implements HealthCheck {
+    @Override public String name() { return "db"; }
+
+    @Override public Status check() {
+        try (var conn = DB.getConnection()) {
+            return conn.isValid(1) ? Status.UP : Status.DOWN;
+        } catch (Exception e) {
+            return Status.DOWN;
+        }
+    }
+}
+
+// Register at application start
+HealthCheckPlugin.register(new DbHealthCheck());
+
+p. Names should be unique across registered checks; duplicates are not deduplicated and will appear twice in the response.
+
+h3. <a name="health-config">Configuration</a>
+
+bc.. # Override the base path to match k8s convention if you prefer
+health.basePath=/@health      # default
+
+# Optional bearer token. If non-empty, requests must carry
+# Authorization: Bearer <token>; empty disables auth (default).
+health.authToken=
+
+p. Setting @health.authToken@ guards both endpoints — useful when the cluster's probe sidecar speaks the configured token but external scrapers do not.
+
+h2. <a name="metrics">Metrics</a>
+
+The framework's @MetricsPlugin@ (PF-13) installs a "Micrometer":https://micrometer.io meter registry and exposes a Prometheus-format scrape endpoint at @/@metrics@. JVM binders (memory, GC, threads, classloader) and an HTTP-request timer are wired in automatically.
+
+h3. <a name="metrics-jvm">Bundled JVM metrics</a>
+
+The plugin auto-registers Micrometer's bundled JVM binders:
+
+* @JvmMemoryMetrics@ — heap and non-heap regions
+* @JvmGcMetrics@ — GC pause counts and durations by collector
+* @JvmThreadMetrics@ — thread counts by state
+* @ClassLoaderMetrics@ — loaded class counts
+
+These are visible at @/@metrics@ under names like @jvm_memory_used_bytes@, @jvm_gc_pause_seconds@, etc. — the standard Micrometer naming scheme.
+
+h3. <a name="metrics-http">HTTP request metrics</a>
+
+@ActionInvoker.invoke()@ records every request into a single @http_server_requests@ Timer with three tags:
+
+* @method@ — the HTTP method (@GET@, @POST@, ...)
+* @status@ — the response status code as a string (@200@, @404@, ...)
+* @route@ — the matched route pattern (e.g. @/users/{id}@), not the literal URL — so cardinality stays bounded
+
+The result is a typical Prometheus histogram you can query from Grafana:
+
+bc. # 95th-percentile request latency by route
+histogram_quantile(0.95, sum by (route, le) (rate(http_server_requests_seconds_bucket[5m])))
+
+# Request rate by status code
+sum by (status) (rate(http_server_requests_seconds_count[1m]))
+
+h3. <a name="metrics-app">Custom application metrics</a>
+
+Use the static @play.libs.Metrics@ facade to record application-specific metrics. The facade forwards to whatever registry is installed by @MetricsPlugin@ — or to an in-memory @SimpleMeterRegistry@ if metrics are disabled, so the calls never blow up.
+
+bc.. import play.libs.Metrics;
+
+public class UserAccounts extends Controller {
+
+    public static void signup(String email) {
+        // ... validation, persistence ...
+        Metrics.counter("user.signup").increment();
+        renderJSON(user);
+    }
+
+    public static void search(String query) {
+        long start = System.nanoTime();
+        try {
+            renderJSON(User.findByQuery(query));
+        } finally {
+            Metrics.timer("user.search").record(
+                System.nanoTime() - start, java.util.concurrent.TimeUnit.NANOSECONDS);
+        }
+    }
+}
+
+// Register a gauge once at startup
+Metrics.gauge("queue.depth", workQueue, q -> q.size());
+
+p. Counters, timers, and gauges all support tags via Micrometer's standard fluent API — @Metrics.counter("user.signup", "channel", "web").increment()@.
+
+h3. <a name="metrics-config">Configuration</a>
+
+bc.. # Master switch (default true). When false, the /@metrics endpoint
+# returns 404 and JVM binders are skipped — the static facade still
+# works against an in-memory SimpleMeterRegistry.
+metrics.enabled=true
+
+# Override the scrape path
+metrics.basePath=/@metrics
+
+p. Disabling the plugin entirely (by removing @play.plugins.MetricsPlugin@ from @play.plugins@) is also supported — useful if you want zero Micrometer overhead.
+
+h2. <a name="otlp">OTLP push exporter</a>
+
+When @metrics.otlp.endpoint@ is set, an @OtlpMeterRegistry@ joins the Prometheus registry behind a Micrometer @CompositeMeterRegistry@ (PF-82). Both backends receive every metric — the Prometheus registry continues to back @/@metrics@ (so existing scrapers keep working), and the OTLP registry pushes to the configured collector on the configured interval.
+
+This is what you want when you're shipping metrics to an OpenTelemetry-aware backend like Honeycomb, Grafana Cloud, Datadog, or a self-hosted "OpenTelemetry Collector":https://opentelemetry.io/docs/collector/.
+
+h3. <a name="otlp-config">Configuration</a>
+
+bc.. # Empty (default) disables OTLP. Set to your collector's HTTP endpoint to enable.
+metrics.otlp.endpoint=https://otel-collector.example.com:4318/v1/metrics
+
+# Push interval. Accepts ISO-8601 duration syntax or '60s', '1m', etc.
+metrics.otlp.step=60s
+
+# Optional comma-separated KV list of HTTP headers (e.g. for auth)
+metrics.otlp.headers=authorization=Bearer abc123,x-team=platform
+
+# Optional comma-separated KV list of OTLP resource attributes
+metrics.otlp.resourceAttributes=service.name=myapp,deployment.environment=prod
+
+p. With these set, every metric your app records flows simultaneously to @/@metrics@ (for Prometheus scrapers) and to the OTLP collector (for whatever pipeline ingests it).
+
+h3. <a name="otlp-failure">Failure mode</a>
+
+The OTLP registry is best-effort: network errors during push are logged at @WARN@ level and the next push interval retries. The application continues running normally. If you cannot afford metric loss, deploy an OTLP collector locally (sidecar or daemonset) so the network hop is reliable.
+
+p(note). **Continuing the discussion**
+
+Next: %(next)"Production deployment":production%.

@@ -91,6 +91,100 @@ You can of course add the @checkAuthenticity()@ method call as a "before filter"
 
 "More on cross-site request forgery":http://en.wikipedia.org/wiki/Cross-site_request_forgery
 
+h2. <a name="headers">Default security headers</a>
+
+Play 1.12 ships a @SecurityHeadersPlugin@ that attaches a configurable set of security headers to every HTTP response (PF-5) — controller-rendered pages, static assets, error pages, all of them. Headers are emitted at the Netty response layer after @response.headers@ from the action is copied, so anything an action sets explicitly always wins.
+
+The defaults are conservative and meet the OWASP recommendations for "secure response headers":https://owasp.org/www-project-secure-headers/:
+
+|_. Header |_. Default value |_. When emitted |
+| @X-Content-Type-Options@ | @nosniff@ | always |
+| @X-Frame-Options@ | @DENY@ | always |
+| @Referrer-Policy@ | @strict-origin-when-cross-origin@ | always |
+| @X-XSS-Protection@ | @0@ | always (modern browsers ignore it; @0@ disables the legacy XSS auditor — defer to CSP) |
+| @Content-Security-Policy@ | @default-src 'self'@ | always |
+| @Strict-Transport-Security@ | @max-age=31536000; includeSubDomains@ | HTTPS responses only |
+
+Configure via @application.conf@:
+
+bc.. # Master switch (default: true). Set to false to disable the whole feature.
+http.headers.enabled=true
+
+# Per-header values. Set to empty string or "disabled" to skip a header.
+http.headers.xContentTypeOptions=nosniff
+http.headers.xFrameOptions=DENY
+http.headers.referrerPolicy=strict-origin-when-cross-origin
+http.headers.xXssProtection=0
+http.headers.contentSecurityPolicy=default-src 'self'
+
+# HSTS — only attached on HTTPS responses.
+http.headers.hsts.enabled=true
+http.headers.hsts.maxAge=31536000
+http.headers.hsts.includeSubDomains=true
+http.headers.hsts.preload=false
+
+p. To disable the plugin entirely, remove @play.plugins.SecurityHeadersPlugin@ from your application's @play.plugins@ file.
+
+h3. Per-response overrides
+
+Headers are applied additively — if a controller has already set a header (e.g., @response.setHeader("X-Frame-Options", "SAMEORIGIN")@) the framework default does not overwrite it. Same for any other header in the table above. Tighten the global default for everyone, then loosen per-action when an embed view (admin iframe, public widget) genuinely needs it.
+
+The default @Content-Security-Policy@ is intentionally strict — @default-src 'self'@ blocks third-party scripts, fonts, and frames. Most apps will need to relax it. Override per-app via @http.headers.contentSecurityPolicy@, or per-response via @response.setHeader("Content-Security-Policy", "...")@ in a @@Before@ filter or specific action.
+
+h2. <a name="cors">CORS</a>
+
+Play 1.12 ships a @CorsPlugin@ for "Cross-Origin Resource Sharing":https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS (PF-6). The plugin is *off by default* — opt in by setting @cors.enabled=true@. When enabled, it handles preflight @OPTIONS@ requests automatically and adds the appropriate @Access-Control-*@ response headers to actual requests.
+
+Configure via @application.conf@:
+
+bc.. # Opt-in (default: false). When true, every response from the app
+# carries CORS headers and OPTIONS preflight is handled automatically.
+cors.enabled=true
+
+# Comma-separated list of origins, or '*' for any origin.
+cors.allowedOrigins=https://app.example.com,https://admin.example.com
+
+# Comma-separated list of HTTP methods clients may invoke.
+cors.allowedMethods=GET,POST,PUT,DELETE,OPTIONS
+
+# Comma-separated list of request headers clients may send.
+cors.allowedHeaders=Content-Type,Authorization,X-Requested-With
+
+# Comma-separated list of response headers exposed to the client.
+cors.exposedHeaders=X-Total-Count,X-RateLimit-Remaining
+
+# Whether the response includes Access-Control-Allow-Credentials: true.
+cors.allowCredentials=true
+
+# Preflight cache lifetime, in seconds.
+cors.maxAge=3600
+
+h3. Wildcard with credentials
+
+Per the CORS spec, you cannot combine @Access-Control-Allow-Origin: *@ with @Access-Control-Allow-Credentials: true@ — the browser rejects the response. The plugin enforces this: when @cors.allowCredentials=true@ and the request's @Origin@ matches @cors.allowedOrigins@, the response echoes the specific origin rather than @*@. When credentials are off, @*@ is honored verbatim.
+
+h3. Vary: Origin
+
+Whenever the response's @Access-Control-Allow-Origin@ depends on the request's @Origin@ header (any case where @cors.allowedOrigins@ isn't @*@ or where credentials are enabled), the plugin adds @Vary: Origin@ to keep CDN and proxy caches honest. Caches that ignore @Vary@ — and there are many — may serve a wrong-origin response to a different client. If you front Play with a CDN, double-check that it respects @Vary@.
+
+h2. <a name="samesite">SameSite cookies</a>
+
+Play 1.12 sets @SameSite=Lax@ on session cookies by default (PF-7). The "SameSite":https://datatracker.ietf.org/doc/html/draft-ietf-httpbis-rfc6265bis attribute tells the browser whether to attach the cookie to cross-site requests — the original CSRF mitigation, complementing the authenticity token machinery above.
+
+Configure the session cookie's @SameSite@ globally:
+
+bc. application.session.sameSite=Lax
+
+Values: @Strict@, @Lax@ (default), or @None@. Override per-cookie when setting cookies directly:
+
+bc. response.setCookie("preferences", value, "MyApp", "/", null, false, false, "Strict");
+
+For arbitrary cookies, configure @cookie.sameSite@ to set the framework-wide default for any non-session cookie that does not specify its own value.
+
+h3. Secure flag with SameSite=None
+
+"RFC 6265bis":https://datatracker.ietf.org/doc/html/draft-ietf-httpbis-rfc6265bis requires that any cookie marked @SameSite=None@ also be @Secure@ — browsers reject the cookie otherwise. The framework enforces this: when @SameSite=None@ is set on a session or per-cookie value, the @Secure@ flag is added automatically regardless of @application.session.secure@. This means @SameSite=None@ silently breaks if you serve over plain HTTP — you must be on HTTPS for cross-site cookies to work at all.
+
 p(note). **Continuing the discussion**
- 
+
 Next: %(next)"Play modules":modules%.

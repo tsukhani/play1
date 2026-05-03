@@ -1,0 +1,121 @@
+h1. The embedded HTTP server
+
+Play 1.12 ships an embedded "Netty":https://netty.io HTTP server that serves HTTP/1.1, HTTP/2, and HTTP/3 from a single configuration. There are no per-protocol enable flags: bind @https.port@ with a PEM cert+key and the framework activates all three protocols simultaneously. Plain HTTP/1.1 stays available on @http.port@.
+
+This page covers the server's protocol support, TLS configuration, the virtual-thread execution model, response compression, and the operational caveats you need to know when running in production. See also "production deployment":production and "the deployment options":deployment.
+
+h2. <a name="protocols">HTTP/1.1, HTTP/2, and HTTP/3</a>
+
+The server speaks all three HTTP versions automatically when HTTPS is configured:
+
+* *HTTP/1.1* on @http.port@ (plain TCP) and as the ALPN fallback on @https.port@. This is the default for any client that doesn't negotiate something newer.
+* *HTTP/2* on @https.port@ via "ALPN":https://en.wikipedia.org/wiki/Application-Layer_Protocol_Negotiation. ALPN-capable clients see @h2@ in the server's protocol list and switch to it; older clients fall back to @http/1.1@. Both versions run through the same controllers — the protocol-version difference is absorbed entirely inside the Netty pipeline.
+* *HTTP/3* over QUIC on the same port number as @https.port@, but on UDP. TCP and UDP have separate port spaces, so TCP:9443 and UDP:9443 coexist on one socket. The framework binds the UDP listener whenever a native QUIC binary is available on the platform.
+
+There are no @http2.enabled@ or @http3.enabled@ configuration flags — they were removed deliberately. ALPN h2 is always available on TLS, h3 binds when native QUIC is present, and HTTP/1.1 plain-text remains on @http.port@.
+
+h3. <a name="alt-svc">The Alt-Svc cascade</a>
+
+A fresh client doesn't know your server speaks HTTP/3 — it has no way to ask via TCP. The server tells it. Every TLS-protected response carries an @Alt-Svc: h3=":<port>"; ma=86400@ header, which advertises the h3 endpoint. Browsers that see this header remember it and try QUIC for subsequent requests.
+
+The cascade for a fresh browser:
+
+|_. Step |_. What happens |
+| First TCP request | TLS + ALPN, server picks @h2@ |
+| Server responds | Carries @Alt-Svc: h3=":9443"; ma=86400@ |
+| Browser remembers Alt-Svc | Tries QUIC on the next request |
+| Subsequent requests | HTTP/3 over QUIC; falls back to h2 if QUIC is blocked |
+
+If h3 didn't bind (no native QUIC, or UDP blocked at the load balancer), the server suppresses the @Alt-Svc@ header — clients stay on h2 indefinitely with no error.
+
+h3. <a name="quic-platforms">Native QUIC platform support</a>
+
+HTTP/3 ships native binaries for:
+
+* @osx-aarch_64@ and @osx-x86_64@
+* @linux-aarch_64@ and @linux-x86_64@
+* @windows-x86_64@
+
+On any other platform — currently @linux-riscv64@ — the framework logs a @WARN@ at boot, skips the UDP bind, and suppresses the @Alt-Svc@ header. HTTPS+h2+h1.1 keep working normally on TCP. There is no client-side error and no fallback path needed; the absence of @Alt-Svc@ is itself the signal.
+
+h2. <a name="tls">TLS configuration</a>
+
+Play 1.12 supports PEM-encoded X.509 certificates only. The legacy JKS keystore path was removed (PF-68). Configure two paths in @application.conf@:
+
+bc.. https.port = 9443
+certificate.file = conf/host.cert
+certificate.key.file = conf/host.key
+
+p. The certificate file is a PEM cert (or full chain). The key file is the corresponding PEM private key. Both paths can be absolute or relative to the application root.
+
+h3. <a name="enable-https">Quick start with @play enable-https@</a>
+
+For local development, the @play enable-https@ CLI command sets up a working HTTPS listener in one step:
+
+bc. play enable-https myapp
+
+This generates a PEM cert+key under @certs/host.cert@ and @certs/host.key@, then uncomments (or inserts) the @https.port@, @certificate.file@, and @certificate.key.file@ entries in @conf/application.conf@. The command prefers @mkcert@ — which produces a system-trusted cert that Chrome's HTTP/3 stack will actually negotiate against — and falls back to @openssl@ self-signed if @mkcert@ is not installed.
+
+After running the command, h2 and h3 are both serving. No further configuration is needed.
+
+h3. <a name="encrypted-keys">Encrypted private keys</a>
+
+If your private key is passphrase-encrypted (typical for production hardening), set @certificate.key.password@ alongside the file paths. Read the password from an environment variable rather than checking it into config:
+
+bc.. https.port = 9443
+certificate.file = conf/host.cert
+certificate.key.file = conf/host.key
+certificate.key.password = ${CERT_KEY_PASSWORD}
+
+p. The framework decrypts the key at first use via Netty's @SslContextBuilder@. Certbot writes unencrypted keys by default, in which case you can leave @certificate.key.password@ unset entirely.
+
+h3. <a name="production-cert">Production certificates</a>
+
+For production, use a real CA-issued certificate. "Let's Encrypt":https://letsencrypt.org with @certbot@ is the lowest-friction option. Point the properties at the PEM files certbot writes:
+
+bc. certificate.file = /etc/letsencrypt/live/example.com/fullchain.pem
+certificate.key.file = /etc/letsencrypt/live/example.com/privkey.pem
+
+Certbot's renew hooks rewrite the same files in place, so the property values do not change between renewals.
+
+h3. <a name="cert-rotation">Cert rotation requires a restart</a>
+
+The framework caches both the TCP @SslContext@ and the UDP @QuicSslContext@ for the JVM's lifetime. There is no live-reload path today: after rotating a certificate on disk you must restart the JVM for the new cert to take effect. Plan for this in your renewal automation.
+
+h2. <a name="virtual-threads">Virtual threads</a>
+
+Play 1.12 runs on virtual threads exclusively. Request invocation, background jobs, and mail dispatch all dispatch through @play.utils.VirtualThreadScheduledExecutor@. The executor uses two platform threads only for timer dispatch; everything else — the actual request, job, and mail work — runs on virtual threads with no thread-pool cap.
+
+This requires Java 25 or newer. "JEP 491":https://openjdk.org/jeps/491 eliminated @synchronized@ pinning, which made virtual threads strictly cheaper than platform threads under blocking I/O. The legacy @play.threads.virtual*@ toggles are gone — there is no longer any platform-thread fallback. @Play.java@ emits a @WARN@ at boot if any of the retired keys are still present in @application.conf@ (including profile-prefixed forms like @%test.play.pool=3@) so operators upgrading from upstream Play 1.x see exactly which lines to delete.
+
+Practical implications:
+
+* You no longer need to size a thread pool for blocking I/O. Database queries, JDBC waits, and outbound HTTP calls scale to whatever the JVM can mount as virtual threads.
+* @play.pool@ and @play.jobs.pool@ no longer have any effect. Remove them from @application.conf@ to silence the boot warning.
+* Continuations and Javaflow have been removed entirely. Code that used them must be rewritten as straight blocking calls — virtual threads make that the natural style.
+
+h2. <a name="compression">Response compression</a>
+
+The server's HTTP pipeline includes a content compressor configured via Netty 4.2's @StandardCompressionOptions@. The compressor negotiates @Accept-Encoding@ with the client and selects the best encoding the client accepts:
+
+* *brotli* — preferred when supported. Native libraries ship for macOS @arm64@ and @x86_64@, Linux @x86_64@, @arm64@, and @riscv64@, and Windows @x86_64@. Quality defaults to 4 (configurable via @play.netty.compression.brotli.quality@, range 0–11).
+* *gzip* — universal fallback, level 6 by default.
+* *deflate* — for clients that prefer it over gzip.
+* *zstd* — opt-in. Activates when @zstd-jni@ is on the classpath; Play does not depend on it directly.
+
+Brotli's native library is bundled transitively through @netty-codec-compression@, so most apps get brotli for free without touching their @dependencies.yml@. On platforms without a native brotli binary, the compressor silently falls back to gzip — no error, no configuration needed.
+
+h2. <a name="operational">Operational notes</a>
+
+A handful of caveats are worth surfacing before you deploy:
+
+* *UDP firewall rules for HTTP/3.* Many container runtimes and cloud load balancers block UDP egress/ingress by default. Verify the LB forwards UDP on the configured port — AWS ALB does not, NLB does. If UDP is blocked, browsers stay on the TCP h2 path; there is no error, just no h3.
+* *QUIC retry-token validation is currently insecure.* The shipped configuration uses Netty's @InsecureQuicTokenHandler@: it accepts any retry token without cryptographic verification. This is fine for development, staging, and deployments behind a DDoS-mitigating edge. Production deployments directly exposed to the internet should swap to a server-secret-keyed token handler. The framework does not currently expose a configuration toggle for this.
+* *Per-connection logs may interleave on h2 and h3.* Both protocols multiplex multiple requests over one transport connection, so a single client can have several requests in flight against the same socket. Logs keyed by connection id will show interleaved request lines that look out of order if you're used to the HTTP/1.1 one-request-per-socket pattern.
+* *No h2c upgrade path.* Plain HTTP (only @http.port@, no HTTPS) gets HTTP/1.1 only. Browsers don't use h2c, so there's no point implementing it.
+* *0-RTT and HTTP/3 server push are out of scope.* 0-RTT brings replay-attack tradeoffs that should be opted into deliberately; server push is deprecated in modern browsers.
+* *@netty-tcnative@ is not required.* The JDK SSLEngine handles TLS 1.2/1.3, and Netty's @SslContextBuilder@ handles ALPN selection deterministically. Adding @netty-tcnative-boringssl-static@ would speed up TLS handshakes via OpenSSL but is not needed for correctness. The HTTP/3 path uses Netty's QUIC native unconditionally — that is a separate dependency, already on the classpath when you bind @https.port@.
+
+p(note). **Continuing the discussion**
+
+Next: %(next)"Production deployment":production%.

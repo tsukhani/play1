@@ -342,7 +342,12 @@ URL:${url}
 END:VCARD  
 
 
+h2. <a name="openapi">Generating OpenAPI from your routes</a>
+
+The framework auto-generates an "OpenAPI 3 spec":openapi from your @conf/routes@ file plus reflection on your controller method signatures. The spec is exposed at @/@api/openapi.json@ (and @/@api/openapi.yaml@), with an interactive Swagger UI at @/@api/docs@ in development mode. Most apps need no annotations to get a useful spec — the routes file alone is enough — but you can decorate controllers and actions with @io.swagger.v3.oas.annotations.*@ to enrich the output. See "OpenAPI 3 spec generation":openapi for the full reference.
+
+
 p(note). **Continuing the discussion**
- 
+
 When the Router has determined which Java call to invoke for the received HTTP Request, the Play framework then invokes that Java call. Let’s see how %(next)"Controllers":controllers% work.
 

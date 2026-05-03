@@ -51,6 +51,38 @@ h3. <a name="production">Production configuration</a>
 
 See: "configure logging for production":production#logging for another example.
 
+
+h2. <a name="json">Structured JSON logging</a>
+
+For deployments that ship logs to "Loki":https://grafana.com/oss/loki/, "Datadog":https://www.datadoghq.com, "Splunk":https://www.splunk.com, or the Elastic stack, plain-text @PatternLayout@ output forces fragile regex parsing in the log pipeline. Play 1.12 supports first-class JSON logging (PF-9) via Log4j 2's "JsonTemplateLayout":https://logging.apache.org/log4j/2.x/manual/json-template-layout.html with the bundled "Elastic Common Schema":https://www.elastic.co/guide/en/ecs/current/index.html template.
+
+Switch on JSON mode in @application.conf@:
+
+bc. application.log.format=json
+
+Default is @text@ (the classic @PatternLayout@ — no behavior change). When @json@ is set, the framework's default Log4j configuration switches to a layout that emits one JSON object per log line, formatted against @classpath:EcsLayout.json@. Every event becomes a self-describing record:
+
+bc. {"@timestamp":"2026-05-03T14:22:01.234Z","log.level":"INFO","message":"Application has started","ecs.version":"1.2.0","log.logger":"play"}
+
+Existing apps that don't set @application.log.format@ keep the @text@ default and their existing patterns unchanged. There is no migration step needed.
+
+h3. <a name="json-mdc">Per-request context (MDC)</a>
+
+When JSON mode is active, @ActionInvoker.invoke()@ pushes a handful of per-request fields into Log4j's @ThreadContext@ (the JSON equivalent of MDC). Every log line emitted during a request — by the framework, by the controller, by Hibernate, by anything else — automatically carries:
+
+|_. Field |_. Value |
+| @request_id@ | A short ID assigned at request entry, useful for correlating logs across services |
+| @http_method@ | @GET@, @POST@, ... |
+| @http_path@ | The URL path |
+| @client_ip@ | The originating client IP, respecting @X-Forwarded-For@ |
+| @action_name@ | The matched controller action (e.g. @Users.show@) |
+
+These are emitted as flat top-level keys in the ECS-format JSON, so log aggregators index and filter on them natively. Search "all errors from one user's session" by filtering on @request_id@; chart "404s by route" by aggregating on @action_name@.
+
+The fields are pushed before the action runs and cleared in the existing @finally@ block, so they never leak into background-thread logging from jobs or async work.
+
+In @text@ mode the @ThreadContext@ values are still set but the default pattern doesn't render them. Operators who want them can extend the pattern with @%X{request_id}@ etc. — that's a per-deployment customization, not a framework concern.
+
 p(note). **Continuing the discussion**
- 
+
 Next, we continue configuration with %(next)"Configuration in several environments":ids%.
