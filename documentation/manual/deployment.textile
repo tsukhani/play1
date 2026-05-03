@@ -1,235 +1,165 @@
 h1. Deployment options
 
-Play applications can be deployed virtually anywhere: inside Servlet containers, as standalone servers, on Heroku, Google Application Engine, Stack, a Cloud, etc...
+Play 1.12 applications are deployed as **standalone JVM processes** running an embedded Netty server. There is no servlet-container path: the marquee features of this fork — HTTP/2 ALPN, HTTP/3 over QUIC, virtual-thread dispatch — are Netty-exclusive by design.
+
+For the embedded HTTP server's capabilities — HTTP/2, HTTP/3, virtual threads, TLS — see the "HTTP server":httpserver section.
+
+This page covers the two supported deployment topologies: running Play directly, and running it behind a reverse proxy.
 
 h2. <a name="standalone">Standalone Play applications</a>
 
-The simplest and the most robust way is to simply run your Play application without any container. You can use a frontal HTTP server like Lighttpd or Apache if you need more advanced HTTP features like virtual hosting.
+The simplest deployment is to run Play directly. The embedded Netty server handles thousands of concurrent connections per CPU core, supports long polling, server-sent events, WebSockets, and direct streaming of @File@ and @InputStream@ bodies — without blocking the request thread. Virtual threads (always on in this fork) make blocking I/O calls inside controllers cheap.
 
-The built-in HTTP server can serve thousands of HTTP requests per second so it will never be the performance bottleneck. Moreover it uses a more efficient threading model (where a Servlet container uses 1 thread per request). Different "modules":http://playframework.com/modules allow you to use different servers (Grizzly, Netty, etc...) as well.
+Please refer to the "'Put your application in production' page":production for a full pre-flight checklist (logging, secrets, JPA configuration, JVM flags).
 
-Those servers support long polling and allow to manage very long requests (waiting for a long task to complete), and direct streaming of File objects (and any InputStream if you specify the Content-Length), without blocking the execution thread.
+h3. Starting and stopping
 
-You will have fewer problems running your application this way, as you will use the same environment that you used during the development process. A lot of bugs can be discovered only when you deploy to a JEE application server (different home dir, classloader issues, library conflicts, etc...).
+Start the application in the background:
 
-Please refer to the "'Put your application in production' page":production for more information.
+bc. play start /path/to/myapp
 
-h2. <a name="appservers">Java EE application servers</a>
+This forks a JVM, redirects stdout and stderr to @logs/system.out@, writes the PID to @server.pid@, and returns. The framework boots in @prod@ mode by default; pass @--%<id>@ to choose a different framework ID (e.g. @--%staging@).
 
-Your Play application can also run inside your favorite application server. Most application servers are supported out of the box.
+Stop a running instance with:
 
-h3. Supported application servers
+bc. play stop /path/to/myapp
 
-The following application servers are known to work with Play. Please feel free to report any other working deployment.
+That reads @server.pid@ and sends a clean shutdown signal so in-flight requests drain.
 
-* JBoss 4.2.x
-* JBoss 5.x
-* JBoss 6M2
-* Glassfish v3
-* IBM Websphere 6.1
-* IBM Websphere 7
-* Geronimo 2.x
-* Tomcat 6.x
-* Jetty 7.x
-* Resin 4.0.5
+To restart without dropping the running instance entirely (useful after a config change), call @play stop@ then @play start@ in sequence; for production zero-downtime swaps, run two instances behind a reverse proxy (next section) and rotate them.
 
-h3. Deploying
+h3. Tailing the logs
 
-You need to package your application as a WAR file. This is easily done with the following command:
+Once started, tail @logs/system.out@ for stdout/stderr from the JVM and @logs/application.log@ for the framework's log4j2 output:
 
-bc. play war myapp -o myapp.war
+bc. tail -F /path/to/myapp/logs/system.out
+tail -F /path/to/myapp/logs/application.log
 
-It can be invoke with the following parameters:
+If you've enabled JSON logging (@application.log.format=json@), the application log is line-delimited JSON suitable for ingestion by Loki, Elasticsearch, Datadog, etc. See "Structured JSON logging":logs#json.
 
-* --output, or -o:
- The path where the WAR directory will be created. The contents of this directory will first be deleted.
+h3. JVM tuning
 
-* --zip:
- By default, the script creates an exploded WAR. If you want a zipped archive, specify the --zip option.
+Pass JVM flags to @play start@ via the JVM options syntax — @play@ forwards anything matching @-X@ / @-D@ / @-XX:@:
 
-* --%fwk_id:
- Use this ID to run the application (override the default framework ID)
+bc. play start /path/to/myapp -Xms2g -Xmx2g -XX:MaxRAMPercentage=75
 
-* --deps:
- Resolve and install dependencies before running the command.
+Virtual threads make per-request stack memory negligible, so the historical "tune @play.pool@ to match cores" guidance no longer applies — those keys are gone in 1.12 (see the boot @WARN@ if your config still references them).
 
-* --exclude:
- Excludes a list of directories (separator is ':').
- Example: --exclude .svn:tmp:logs:target
+h2. <a name="reverseproxy">Behind a reverse proxy</a>
 
-p(note). Please note that your application server must support deployment of exploded WAR files.
+For production deployments, most operators front Play with a reverse proxy that handles TLS termination, virtual hosting, request routing, and (optionally) static-asset caching. Common choices:
 
-You are now ready to deploy your application.
+* "nginx":https://nginx.org/ — most popular self-hosted choice; supports HTTP/2 and HTTP/3 to the client, plus HTTP/1.1 or HTTP/2 to the upstream.
+* "HAProxy":https://www.haproxy.org/ — preferred when L4 load balancing or sticky sessions are needed.
+* "AWS Application Load Balancer":https://aws.amazon.com/elasticloadbalancing/application-load-balancer/ — terminates TLS and HTTP/2; does **not** forward UDP, so HTTP/3 from clients ends at the ALB and Play sees TCP only.
+* "AWS Network Load Balancer":https://aws.amazon.com/elasticloadbalancing/network-load-balancer/ — passes UDP through, so end-to-end HTTP/3 to Play works (TLS terminates at Play).
+* "Cloudflare":https://www.cloudflare.com/ — terminates TLS, HTTP/2, and HTTP/3 at the edge; speaks HTTP/1.1 or HTTP/2 to the origin.
 
-You are advised to ‘isolate’ your Play application from the other applications to avoid version mismatches between the application libraries. This step is not standardized by the JEE/Servlet specification, and is therefore vendor-specific.
+h3. TLS termination
 
-We recommend you refer to your application server manual in order to ‘isolate’ your WAR. As an example below is how you isolate a war file in JBoss Application server. Note that this is an optional step:
+You have two patterns. Pick whichever matches your operational model:
 
-Insert the following content (or create the file) in your application war directory at @myapp.war/WEB-INF/jboss-web.xml@:
+**Pattern A — TLS at the edge, plain HTTP to Play.** The proxy holds the cert; Play binds @http.port@ only, no @https.port@. This is the simplest setup when the proxy is on the same private network. Tell Play the canonical scheme and host so reverse routing emits the right URLs:
 
-bc. 
-<jboss-web>
- <class-loading java2classloadingcompliance="false">
- <loader-repository>
- com.example:archive=unique-archive-name
- <loader-repository-config>java2ParentDelegation=false</loader-repository-config>
- </loader-repository>
-</class-loading>
-</jboss-web>
+bc. http.port=9000
+XForwardedSupport=127.0.0.1
+XForwardedProto=https
 
-Replace com.example:archive=unique-archive-name with whatever you wish as long as it is unique.            
+**Pattern B — TLS at Play.** Play handles TLS itself, including HTTP/2 ALPN and HTTP/3 QUIC negotiation. The proxy can pass through TCP+UDP transparently (NLB / HAProxy in TCP mode) or speak HTTPS to the origin. Bind both @https.port@ and a PEM cert+key:
 
+bc. https.port=9443
+certificate.file=/etc/letsencrypt/live/example.com/fullchain.pem
+certificate.key.file=/etc/letsencrypt/live/example.com/privkey.pem
 
-h3. Datasource
+See "HTTP server":httpserver for the full TLS configuration reference, and "Default security headers":security#headers for HSTS settings.
 
-Play also supports Datasource and resource look-up. To use a JNDI Datasource, set the "database configuration":configuration#dbconf as shown below:
+h3. Path-prefix rewriting
 
-bc. db=java:comp/env/jdbc/mydb
-jpa.dialect=org.hibernate.dialect.Oracle10gDialect
-jpa.ddl=verify
+If the proxy mounts your app under a subpath (e.g. @example.com/myapp@), tell Play so reverse routing emits the right URLs:
 
-The database plugin detects the pattern @db=java:@ and will de-activate the default JDBC system.
+bc. http.path=/myapp
 
+The framework prefixes all generated URLs with this value but does **not** strip it from incoming requests — the proxy is responsible for forwarding the full path.
 
-h3. Custom web.xml
+h3. nginx example
 
-Some application servers, such as IBM Websphere, require you to declare a datasource in a @resource-ref@ element in the Servlet API’s @web.xml@ configuration file. By default, @web.xml@ is a file that is generated by Play when you execute the @play war@ command. To customise the generated @web.xml@, generate the exploded WAR version, then copy the generated @web.xml@ file to the @war/WEB-INF@ folder in your application. The next time you will execute the @play war@ command, it will copy your custom @web.xml@ from to the generated folder.
+A minimal nginx upstream config terminating TLS at the edge and proxying plain HTTP to Play on @127.0.0.1:9000@:
 
-For instance, to declare a datasource for IBM Websphere 7, we can declare a @resource-ref@ in our @war/WEB-INF/web.xml@ file:
+bc. server {
+    listen 443 ssl http2;
+    server_name example.com;
 
-bc. <?xml version="1.0" ?>
-<web-app xmlns="http://java.sun.com/xml/ns/j2ee"
-        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-        xsi:schemaLocation="http://java.sun.com/xml/ns/j2ee http://java.sun.com/xml/ns/j2ee/web-app_2_4.xsd"
-        version="2.4">
-  <display-name>Play! (%APPLICATION_NAME%)</display-name>
-  <context-param>
-    <param-name>play.id</param-name>
-    <param-value>%PLAY_ID%</param-value>
-  </context-param>
-  <listener>
-      <listener-class>play.server.ServletWrapper</listener-class>
-  </listener>
-  <servlet>
-    <servlet-name>play</servlet-name>
-    <servlet-class>play.server.ServletWrapper</servlet-class>	
-  </servlet>
-  <servlet-mapping>
-    <servlet-name>play</servlet-name>
-    <url-pattern>/</url-pattern>
-  </servlet-mapping>
-  <resource-ref>
-        <description>Play Datasource for testDatasource</description>
-        <res-ref-name>jdbc/mydb</res-ref-name>
-        <res-type>javax.sql.DataSource</res-type>
-        <res-auth>Container</res-auth>
-  </resource-ref>
-</web-app>
+    ssl_certificate     /etc/letsencrypt/live/example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/example.com/privkey.pem;
 
+    location / {
+        proxy_pass         http://127.0.0.1:9000;
+        proxy_http_version 1.1;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_read_timeout 600s;
+    }
+}
 
-h2. <a name="cloud">Cloud-based hosting</a>
+Add @application.conf@:
 
+bc. http.port=9000
+XForwardedSupport=127.0.0.1
+XForwardedProto=https
 
-h3. <a name="elasticbeanstalk">AWS Elastic Beanstalk</a>
+For HTTP/3 client support without end-to-end QUIC, enable @listen 443 quic@ in nginx and let nginx emit @Alt-Svc@ on its own.
 
-"AWS Elastic Beanstalk":http://aws.amazon.com/en/elasticbeanstalk/ is Amazon’s Java hosting platform, based on their Amazon Web Services infrastructure. For more information about deploying a Play application, see "Java development 2.0: Play-ing with Amazon RDS":http://www.ibm.com/developerworks/java/library/j-javadev2-19/.
+h3. WebSockets through the proxy
 
+WebSockets need an explicit @Upgrade@ / @Connection@ pass-through. With nginx:
 
-h3. <a name="cloudbees">CloudBees</a>
+bc. location /ws/ {
+    proxy_pass         http://127.0.0.1:9000;
+    proxy_http_version 1.1;
+    proxy_set_header   Upgrade    $http_upgrade;
+    proxy_set_header   Connection "upgrade";
+    proxy_read_timeout 86400s;
+}
 
-"CloudBees":http://www.cloudbees.com/ is a Java application hosting platform. For more information, see the "CloudBees module":https://www.playframework.com/modules/cloudbees.
+Server-sent events also work over standard @proxy_pass@, but make sure response buffering is off:
 
+bc. proxy_buffering off;
 
-h3. <a name="cloudfondry">Cloud Foundry</a>
+h3. Heroku and other PaaS
 
-"Cloud Foundry":http://www.cloudfoundry.com/ is VMware’s cloud provider. For more information, see "Running Play Framework Application on CloudFoundry":http://iambivas.blogspot.com/2011/08/running-play-framework-application-on.html and the "CloudFoundry module":https://www.playframework.com/modules/cloudfoundry.
+PaaS platforms generally just need the app to honor a @PORT@ environment variable. Read it in @application.conf@:
 
+bc. http.port=${PORT}
 
-h3. <a name="gae">Google App Engine (GAE)</a>
+The platform handles TLS at the edge. See the "VPS / Custom Server":#upstart section below for a generic process-supervisor pattern.
 
-The "Google App Engine":http://code.google.com/appengine/ is one of the first cloud hosting platforms, which has different pros and cons compared to generic hosting solutions. In particular, GAE does not support JPA persistence. For more information, see the "GAE module":https://www.playframework.com/modules/gae.
+h2. <a name="upstart">Running as a system service</a>
 
+For a long-running process on a Linux server, use systemd, an init script, or a process supervisor. Example systemd unit:
 
-h3. <a name="heroku">Heroku</a>
+bc. [Unit]
+Description=Play Framework — myapp
+After=network.target
 
-The "Heroku cloud application platform":http://www.heroku.com/ has Play-specific application hosting support. To deploy and run your Play application, use the following steps.
+[Service]
+Type=forking
+User=play
+Group=play
+WorkingDirectory=/srv/myapp
+PIDFile=/srv/myapp/server.pid
+ExecStart=/opt/playframework/play start /srv/myapp --%prod
+ExecStop=/opt/playframework/play stop /srv/myapp
+Restart=on-failure
+RestartSec=5
 
-1. Install the Heroku command line client on "Linux":http://toolbelt.herokuapp.com/linux/readme, "Mac":http://toolbelt.herokuapp.com/osx/download, or "Windows":http://toolbelt.herokuapp.com/windows/download.
-2. Install "git":http://git-scm.com/ and setup your SSH key.
-3. Create an account on "Heroku.com":http://heroku.com/signup.
-4. Log in to Heroku from the command line:
+[Install]
+WantedBy=multi-user.target
 
-bc. heroku auth:login
+Then:
 
-5. Create a git repository:
-
-bc. git init
-
-6. Create a @.gitignore@ file containing the following content, to ignore files generated by Play:
-
-bc. /tmp
-/modules
-/lib
-/test-result
-/logs
-
-7. Add the files to the git repository and commit them:
-
-bc. git add .
-git commit -m init
-
-8. Create a new application on Heroku:
-
-bc. heroku create -s cedar
-
-9. Push the application to Heroku:
-
-bc. git push heroku master
-
-10. Open the application in your browser:
-
-bc. heroku open
-
-
-To view the logs run:
-
-bc. heroku logs
-
-To scale the application to multiple ‘dynos’ run:
-
-bc. heroku scale web=2
-
-To use the "Heroku Shared Database":http://devcenter.heroku.com/articles/database in production add the following to your @conf/application.conf@ file:
-
-bc. %prod.db=${DATABASE_URL}
-%prod.jpa.dialect=org.hibernate.dialect.PostgreSQLDialect
-%prod.jpa.ddl=update
-
-For more information, see the "Heroku Dev Center":http://devcenter.heroku.com.
-
-
-
-
-h3. <a name="upstart">VPS / Custom Server</a>
-
-If you want to run play as a service on your own server you can start it with this simple upstart script
-This upstart script works with ubuntu 10.04 and upwards (upstart 1.4)
-
-bc.
-description "Play Framework"
-version "1.0"
-env PLAY_BIN=/opt/playframework/play
-env PROFILE=prod
-start on runlevel [2345]
-stop on runlevel [016]
-respawn
-respawn limit 10 5
-umask 022
-setuid youruser
-setgid www-data
-chdir /home/youruser/app/current
-pre-start script
-    test -x $PLAY_BIN || { stop; exit 0; }
-    rm /home/youruser/app/current/server.pid || true
-end script
-exec $PLAY_BIN run $HOME -Xms1024M -Xmx1024M --%$PROFILE
+bc. systemctl daemon-reload
+systemctl enable myapp
+systemctl start myapp
+journalctl -u myapp -f

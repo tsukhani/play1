@@ -1,45 +1,16 @@
 h1. Sample applications
 
-Play comes with the following set of sample applications in the @samples-and-test/@ directory, in the framework installation path. We use them to run our automated test suite, and you can take a look at them to discover typical Play usages.
+This Play 1.12 fork no longer ships in-tree sample applications. The historical @samples-and-tests/@ directory was removed during the modernization phase — see the "1.12.x release notes":releases/release1.12.x/releasenotes-1.12.x for context.
 
-h2. <a>Yet Another Blog Engine</a>
+Instead, generate a fresh app with:
 
-The final application from the "Play guide":guide1 tutorial.
+bc. play new myapp
+play run myapp
 
-!images/yabe!
+For a frontend-integrated starter:
 
-h2. <a>Zencontact</a>
+bc. play new myapp --frontend nuxt
 
-A simple contact management application.
+The @play new@ command sets up a complete app skeleton with sensible defaults: an HTTPS-ready Netty server on port 9000, a @conf/routes@ file with one example route, a stub controller, and a @conf/application.conf@ pre-populated with documented configuration keys. Add features (CORS, OpenAPI generation, metrics) by enabling the relevant @*.enabled@ keys in your config — see the corresponding manual sections.
 
-!images/zencontact!
-
-h2. <a>Booking</a>
-
-A port of the well known 'booking' application from the JBoss seam framework.
-
-!images/booking!
-
-h2. <a>Forum</a>
-
-A simple forum application that uses JPA.
-
-!images/forum!
-
-h2. <a>Jobboard</a>
-
-A fully-featured job board application that uses the CRUD module to automatically generate the administration area. 
-
-!images/jobboard!
-
-h2. <a>Chat</a>
-
-An HTTP-based chat application. It uses the asynchronous request model to be able to handle a lot of simultaneous connected users without wasting resources.
-
-!images/chat!
-
-h2. <a>Validation</a>
-
-Demonstrates the different ways to create a form with validation support.
-
-!images/validation!
+For framework integration tests, see @framework/test-src/integration/testapp/@ — that's the test fixture @ant integration-test@ runs against.

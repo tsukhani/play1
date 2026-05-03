@@ -180,7 +180,7 @@ The `Request.current().args.get(ServletWrapper.SERVLET_REQ)` escape-hatch for ac
 
 The framework auto-generates an OpenAPI 3 spec from your `routes` file and controller method signatures, exposed at `/@api/openapi.json`, `/@api/openapi.yaml`, and Swagger UI at `/@api/docs` (dev mode only). Decorate controllers with `io.swagger.v3.oas.annotations.*` to enrich the generated spec with operation summaries, response codes, request body schemas, and tag groupings.
 
-Full reference and examples: [`documentation/fork-features/openapi.textile`](documentation/fork-features/openapi.textile).
+Full reference and examples: [`documentation/manual/openapi.textile`](documentation/manual/openapi.textile).
 
 ## Migrating from Joda Time
 
