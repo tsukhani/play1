@@ -3,9 +3,8 @@
     <head>
         <title>Not found</title>
         <meta http-equiv="Content-Type" content="text/html; charset=${_response_encoding}"/>
-        <link rel="stylesheet" href="@{'/public/stylesheets/play-tailwind.css'}"/>
     </head>
-    <body class="m-0 p-0 font-sans bg-gray-200">
+    <body>
     	#{if play.mode.name() == 'DEV'}
                 #{404 result /}
     	#{/if}
