@@ -174,20 +174,42 @@ public class JPAPlugin extends PlayPlugin {
      * {@code hibernate.second.level.cache.requests}, {@code hibernate.flushes},
      * and others. Most are zero unless {@code hibernate.generate_statistics=true}
      * is set — see {@link #properties} where the framework defaults that to true.
+     *
+     * <p>PF-87: skipped on jakarta-only classpaths. Micrometer's HibernateMetrics
+     * class declares {@code throws javax.persistence.PersistenceException} on its
+     * legacy overload, which the JVM cannot link without the legacy spec on the
+     * classpath. Operators wanting Hibernate metrics on this fork can opt in by
+     * adding {@code javax.persistence -> javax.persistence-api 2.2} (or any
+     * source of {@code javax.persistence.*}) to {@code conf/dependencies.yml}.
      */
     private void bindHibernateMetrics(String dbName) {
+        // Micrometer 1.13.x..1.16.x ships HibernateMetrics with overloads
+        // referencing both org.hibernate.SessionFactory AND the legacy
+        // javax.persistence.EntityManagerFactory. The legacy overload also
+        // declares `throws javax.persistence.PersistenceException`, which
+        // means even though we use reflection to name only the SessionFactory
+        // overload, the JVM still has to verify the class on load — and
+        // verification resolves every type referenced in the constant pool,
+        // including the legacy throws-clause type. On a jakarta-only classpath
+        // that resolution fails with NoClassDefFoundError before we ever get
+        // to getMethod (PF-87). Reflection sidesteps javac, not the linker.
+        //
+        // Probe for the legacy package up front. Skip cleanly if absent —
+        // this fork chose not to ship javax.persistence compatibility, so a
+        // missing class is the expected state, not an error. Operators who
+        // want Hibernate metrics on the legacy classpath can opt in by adding
+        // javax.persistence-api to their app's dependencies.yml.
+        try {
+            Class.forName("javax.persistence.EntityManagerFactory");
+        } catch (ClassNotFoundException e) {
+            Logger.info("JPA -> skipping Hibernate metrics for db=%s "
+                + "(Micrometer HibernateMetrics requires javax.persistence; "
+                + "this jakarta-only fork does not ship it)", dbName);
+            return;
+        }
         try {
             EntityManagerFactory emf = JPA.emfs.get(dbName);
             SessionFactory sf = emf.unwrap(SessionFactory.class);
-            // Micrometer 1.13.x..1.16.x ships HibernateMetrics with overloads
-            // referencing both org.hibernate.SessionFactory AND
-            // javax.persistence.EntityManagerFactory (legacy Java EE). On this
-            // jakarta-only classpath, javac can't resolve the latter overload
-            // even when we'd be calling the SessionFactory one — Java's overload
-            // resolution loads every overload's parameter types up front and
-            // fails on the missing javax.persistence symbol. Reflection names
-            // only the SessionFactory overload and dodges the issue without
-            // adding javax.persistence-api just to satisfy the compiler.
             Class<?> hm = Class.forName("io.micrometer.core.instrument.binder.jpa.HibernateMetrics");
             java.lang.reflect.Method monitor = hm.getMethod(
                 "monitor",
