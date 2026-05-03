@@ -44,8 +44,9 @@ import java.util.regex.Pattern;
  * controllers. Routes that cannot be classified cleanly still appear with
  * minimal info rather than being silently dropped.
  *
- * <p>Annotation-driven enrichment of schemas (via {@code io.swagger.v3.oas.annotations})
- * is intentionally out of scope for the initial implementation.
+ * <p>Annotation-driven enrichment (via {@code io.swagger.v3.oas.annotations}) is
+ * applied on top of inferred values by {@link OpenApiAnnotationReader}: see
+ * PF-81 for the supported annotations and merge-precedence rules.
  */
 public class OpenApiGenerator {
 
@@ -66,10 +67,12 @@ public class OpenApiGenerator {
 
     private final ClassLoader classLoader;
     private final String title;
+    private final OpenApiAnnotationReader annotationReader;
 
     public OpenApiGenerator(ClassLoader classLoader, String title) {
         this.classLoader = classLoader;
         this.title = title;
+        this.annotationReader = new OpenApiAnnotationReader(this);
     }
 
     /**
@@ -127,6 +130,11 @@ public class OpenApiGenerator {
         if (actionMethod != null) {
             buildParameters(op, actionMethod, pathParamNames, route.method);
             op.setResponses(buildResponses(actionMethod));
+            // PF-81: merge Swagger annotations on top of inferred values.
+            // Annotation-supplied values win; tags are unioned (class-level
+            // @Tag is the controller-wide grouping, method-level adds finer-
+            // grained tags).
+            annotationReader.apply(op, actionMethod);
         } else {
             // Reflective lookup failed (controller not on classpath, name mismatch, etc.).
             // Still emit any path parameters we discovered from the URL pattern so the
