@@ -209,7 +209,7 @@ bc. WS.url(
     "https://graph.facebook.com/me?access_token=%s", access_token
 ).get().getJson();
 
-The full example usage is available in @samples-and-tests/facebook-oauth2@.
+For a working OAuth2 flow, wire @WS@ calls into a controller action: @retrieveVerificationCode()@ in the auth-start action, @retrieveAccessToken()@ in the redirect-back action, then call the resource API with the token.
 
 
 h2. OpenID
