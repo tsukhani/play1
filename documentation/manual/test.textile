@@ -238,17 +238,17 @@ or for Selenium tests @#{fixture delete:'all', loadAsTemplate:false, load:'data.
 
 h2. <a name="running">Running the tests</a>
 
-To run the tests, you must run your application in @test@ mode using the @play test@ command.
+To run the tests, you must run your application in @test@ mode using the @play test@ command:
 
-bc. # play test myApp
+bc. play test myapp
 
-In this mode, Play will automatically load the @test-runner@ module. This module provides a Web based test runner, available at the "http://localhost:9000/@tests":http://localhost:9000/@tests URL.
+In this mode, Play will automatically load the @testrunner@ module. This module provides a Web-based test runner, available at the "http://localhost:9000/@tests":http://localhost:9000/@tests URL.
 
 !images/test-runner!
 
 When you run a test, the result is saved into the @/test-result@ directory of your application.
 
-On the test runner page, each test is a link. You can ‘right click’ and ‘Open in a new tab’, to run the test directly outside of the test-runner. 
+On the test runner page, each test is a link. You can ‘right click’ and ‘Open in a new tab’, to run the test directly outside of the test-runner.
 
 When you run tests this way, Play will start with a special @test@ framework ID. So you can define special configurations in the @application.conf@ file.
 
@@ -263,16 +263,18 @@ bc. %test.db=mem
 
 h2. <a name="continuous">Continuous integration, and running the tests automatically</a>
 
-The @auto-test@ command does the same as the @test@ command, but it automatically launches a browser, runs all the tests, and stops.
+The @auto-test@ command does the same as the @test@ command, but it automatically launches a headless browser via Selenium/Firephoque, runs all the tests, and stops:
 
-This is a useful command if you want to set up a continuous integration system; 
+bc. play auto-test myapp
+
+This is a useful command if you want to set up a continuous integration system.
 
 After the run, all results are saved to the @/test-result@ directory. Moreover, this directory contains a marker file (either @result.failed@ or @result.passed@) for the test suite’s final result. Finally, this directory contains all the logs, in an @application.log@ file.
 
-So setting up a continuous integration system to test your application, could be:
+So setting up a continuous integration system to test your application could be:
 
 * Checkout the latest version of your application
-* Run @play auto-test@
+* Run @play auto-test myapp@
 * Wait for the end of the process
 * Check for the marker file @result.passed@ or @result.failed@ in the @/test-result@ directory
 

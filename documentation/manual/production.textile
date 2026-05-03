@@ -2,6 +2,14 @@ h1. Put your application in production
 
 Here some simple tips to optimize your application for production.
 
+h2. <a name="jdk">JDK requirement</a>
+
+Play 1.12 requires **JDK 25 or later** at runtime. Build your application targeting Java 25 (e.g. @--release 25@ if you compile with @javac@ directly). Older JDKs are not supported — the framework relies on Java 25 features including JEP 491 (virtual threads no longer pin the carrier thread under @synchronized@).
+
+h2. <a name="server-narrative">Deployment model</a>
+
+Play 1.12 deploys as a stand-alone Netty server — there is no servlet/WAR path. Production is a @play start@ process (typically running behind a reverse proxy that terminates TLS / HTTP/2 / HTTP/3 and load-balances). For the underlying HTTP server's capabilities (HTTP/2, HTTP/3, ALPN, virtual-thread dispatch), see "the HTTP server":httpserver. For deployment topology and process supervision, see "deployment":deployment.
+
 h2. <a name="application">application.conf</a>
 
 First off, the best way to specify production mode is to give a specific ID to your production framework. Let’s pick @production@ as an example. Refer "manage application.conf in several environments":ids to see how.

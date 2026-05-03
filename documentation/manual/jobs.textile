@@ -6,6 +6,8 @@ But sometimes you will need to execute some application logic outside of any HTT
 
 Jobs are fully managed by the framework. That means that Play will manage all the database connection stuff, JPA entity manager synchronization and transactions management for you. To create a job you just need to extend the @play.jobs.Job@ super class.
 
+p(note). **Virtual threads.** Job execution runs on "virtual threads":https://openjdk.org/jeps/491. There is no fixed job pool size to tune — the framework dispatches each scheduled or triggered job on its own virtual thread; only timer dispatch uses the two-thread platform pool. The legacy @play.jobs.pool@ key is gone, along with @play.threads.virtual*@; @Play.java@ emits a WARN at boot if any of those keys are still present in @application.conf@.
+
 bc. package jobs;
  
 import play.jobs.*;

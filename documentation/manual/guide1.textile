@@ -18,7 +18,7 @@ We will call this blog engine project **yabe**.
 
 !images/guide1-0!
 
-p(note). This tutorial is also distributed as a sample application. You can find the final code in your Play installation’s @samples-and-tests/yabe/@ directory.
+p(note). The YABE tutorial walks through building the application from scratch; the snippets below are self-contained and can be copy-pasted into a new app generated with @play new myapp@.
 
 h2. <a>Prerequisites</a>
 

@@ -288,7 +288,11 @@ require:
 
 h2. <a name="repositories">Adding new repositories</a>
 
-By default, Play will search for **JAR** dependencies in the "central Maven repository":http://repo1.maven.org/maven2/, and will search for **Play modules** in the "central Play modules repository":https://www.playframework.com/modules. 
+By default, Play will search for **JAR** dependencies in the "central Maven repository":http://repo1.maven.org/maven2/, and will search for **Play modules** in the "central Play modules repository":https://www.playframework.com/modules.
+
+h3. <a name="core-chain">Play core resolver chain</a>
+
+For the framework's own core dependencies, Play uses a chain resolver named @playCoreDependencies@: it tries @playCoreDependenciesLocal@ first (offline jars in @framework/lib/@) and falls back to @playCoreDependenciesCentral@ (Maven Central) when a coordinate is missing locally. This means new dependencies you add to @framework/dependencies.yml@ (or transitive dependencies of existing ones) are auto-fetched from Maven Central on the first @ant resolve@ — there is no need to manually pre-seed @framework/lib/@ before resolving. Application-level @conf/dependencies.yml@ resolution still uses the standard Maven Central + Play modules repositories described above.
 
 You can, of course, specify new custom repositories in the @repositories@ section:
 

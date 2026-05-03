@@ -14,7 +14,7 @@ In practice, the two steps go together: you both internationalise and localise o
 
 h2. <a>Yet Another Blog Engine</a>
 
-p(note). The starting point for this section is the finished tutorial code, which you can find in the Play distribution's @samples-and-tests/yabe@ directory. The goal is to fully internationalise the application, and add French and Dutch language localisations.
+p(note). The starting point for this section is the YABE application built up across "guides 1–11":guide1. The goal is to fully internationalise the application, and add French and Dutch language localisations.
 
 To get started, first edit @conf/application.conf@ and uncomment (in the default configuration file) or add a line with three supported languages: 
 
