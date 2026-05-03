@@ -43,7 +43,7 @@
                 <include name="**/*.pyc"/>
             </fileset>
         </delete>
-        <antcall target="clean-unittest"/>
+        <antcall target="clean-tests"/>
     </target>
 
     <target name="version" unless="version">
@@ -218,42 +218,15 @@
         <nbjpdaconnect name="${application.name}" address="${jpda.port}" transport="dt_socket" />
     </target>
 
-    <target name="test-application">
-        <loadfile property="version" srcFile="src/play/version"/>
-        <loadproperties srcfile="${application.path}/conf/application.conf" />
-        <property name="jpda.port" value="8000" />
-        <java classname="play.server.Server" dir="${basedir}" fork="true">
-            <classpath>
-                <pathelement path="${application.path}/conf"/>
-                <fileset dir="${basedir}/../modules/testrunner/lib">
-                    <include name="play-testrunner.jar"/>
-                </fileset>
-                <fileset dir="${application.path}/lib">
-                    <include name="*.jar"/>
-                </fileset>
-                <fileset dir="${application.path}/modules">
-                    <include name="**/*.jar"/>
-                </fileset>
-                <path refid="project.classpath"/>
-            </classpath>
-            <sysproperty key="application.path" value="${application.path}" />
-            <sysproperty key="play.id" value="test" />
-            <sysproperty key="java.endorsed.dirs" value="${basedir}/endorsed" />
-            <sysproperty key="play.debug" value="true" />
-            <jvmarg value="-javaagent:${basedir}/play-${version}.jar" />
-            <jvmarg value="-agentlib:jdwp=transport=dt_socket,address=${jpda.port},server=y,suspend=n"/>
-        </java>
-    </target>
-
-    <target name="test-in-nb" depends="test">
-         <nbbrowse file="tests-results/html/index.html"/>
-    </target>
-
     <!-- Tests -->
     <!-- PF-79: depend on agent-jar so consumers (integration-test, test-single,
-         debug-test-single) that fork a JVM with -javaagent:play-${version}.jar
+         debug-test-single, unittest) that fork a JVM with -javaagent:play-${version}.jar
          get the jar built before the test JVM tries to load it. agent-jar already
-         depends on version+compile, so the cascade does not double-compile. -->
+         depends on version+compile, so the cascade does not double-compile.
+         PF-80: also copies non-Java resource fixtures (.plugins, .yml, .properties,
+         images) into test-classes so classpath lookups work under all test runners.
+         Previously this copy was only in compile-unittest, which silently broke any
+         resource-loading test invoked via test-single. -->
     <target name="compile-tests" depends="version,agent-jar,compile">
         <mkdir dir="test-classes"/>
         <javac encoding="utf-8" nowarn="${compile.nowarn}" debug="true"
@@ -262,6 +235,19 @@
             <classpath refid="classpath.test" />
             <include name="**/*.java"/>
         </javac>
+        <copy todir="test-classes">
+            <fileset dir="test-src">
+                <include name="**/*.properties"/>
+                <include name="**/*.sql"/>
+                <include name="**/*.yml"/>
+                <include name="**/*.xml"/>
+                <include name="**/*.plugins"/>
+                <include name="**/*.gif"/>
+                <include name="**/*.png"/>
+                <include name="**/*.jpg"/>
+                <include name="**/IOTest/**"/>
+            </fileset>
+        </copy>
     </target>
 
     <target name="integration-test" depends="compile-tests,version">
@@ -301,62 +287,27 @@
         </exec>
     </target>
 
-    <!-- Launch all *Test.java -->
-
-    <target name="test" depends="clean,jar" description="run tests suite">
+    <!-- Single ordered verification entrypoint: clean build, framework JUnit
+         tests (fastest signal first), real-Netty integration tests, then the
+         python CLI tests. See PF-80. -->
+    <target name="test" depends="clean,jar" description="full verification: unit + integration + CLI tests">
 
         <echo message="Running unit tests" />
-
         <antcall target="unittest" />
 
         <echo message="Running integration tests" />
-
         <antcall target="integration-test" />
 
         <echo message="Running CLI tests" />
-
         <antcall target="cli-test" />
 
         <antcall target="test-success" />
-
     </target>
 
     <target name="test-success">
         <echo message="*****************" />
-        <echo message="All test passed !" />
+        <echo message="All tests passed !" />
         <echo message="*****************" />
-    </target>
-
-    <target name="check-dependencies-file">
-            <available file="${testAppPath}/conf/dependencies.yml" property="dependencies.present"/>
-    </target>
-
-    <target name="do-deps" depends="check-dependencies-file" if="dependencies.present">
-        <exec executable="${basedir}/../play${playExtension}" failonerror="false" spawn="false">
-            <arg value="deps"/>
-            <arg value="${testAppPath}"/>
-        </exec>
-    </target>
-
-    <target name="play-test">
-	<antcall target="do-deps">
-            <param name="testAppPath" value="${testAppPath}"/>
-	</antcall>
-        <echo message="play auto-test ${testAppPath} (wait)" />
-        <exec executable="${basedir}/../play${playExtension}" failonerror="true">
-            <arg value="auto-test"/>
-            <arg value="${testAppPath}"/>
-            <arg value="${play.user.language}" if:set="play.user.language"/>
-            <arg value="${play.user.country}" if:set="play.user.country"/>
-        </exec>
-        <available file="${testAppPath}/test-result/result.passed" property="${testAppPath}testPassed" />
-        <fail message="Last test has failed ! (Check results in file://${testAppPath}/test-result)">
-            <condition>
-                <not>
-                    <isset property="${testAppPath}testPassed"/>
-                </not>
-            </condition>
-        </fail>
     </target>
 
     <target name="debug-test-single" depends="compile-tests" description="debug a single test">
@@ -420,27 +371,7 @@
         <fail if="junit.failure" message="Single test failed. See reports!"/>
     </target>
 
-    <target name="compile-unittest" depends="compile">
-        <mkdir dir="test-classes"/>
-        <javac encoding="utf-8" srcdir="test-src" destdir="test-classes" debug="true" release="${build-release}" includeantruntime="false">
-            <classpath refid="classpath.test" />
-        </javac>
-        <copy todir="test-classes">
-            <fileset dir="test-src">
-                <include name="**/*.properties"/>
-                <include name="**/*.sql"/>
-                <include name="**/*.yml"/>
-                <include name="**/*.xml"/>
-                <include name="**/*.plugins"/>
-                <include name="**/*.gif"/>
-                <include name="**/*.png"/>
-                <include name="**/*.jpg"/>
-                <include name="**/IOTest/**"/>
-            </fileset>
-        </copy>
-    </target>
-
-    <target name="clean-unittest">
+    <target name="clean-tests">
         <delete dir="test-classes" />
     </target>
 
@@ -455,7 +386,7 @@
         </jar>
     </target>
 
-    <target name="unittest" depends="version,agent-jar,compile-unittest">
+    <target name="unittest" depends="version,compile-tests">
         <mkdir dir="${basedir}/tests-tmp" />
         <junitlauncher haltonfailure="false" failureproperty="junit.failure" printSummary="true">
             <classpath refid="classpath.test" />
@@ -488,7 +419,7 @@
         <mkdir dir="dist" />
         <mkdir dir="dist/play-${version}" />
         <copy todir="dist/play-${version}">
-            <fileset dir=".." excludes=".github,**/cobertura.ser,**/*.pyc,**/*.log,hs_err*,.*,.*/*,framework/dist/**,framework/test-src/**,id,nbproject/**,**/.bzr/**,**/.git/**,*.bzrignore,support/textmate/**,framework/classes/**,framework/tests-results/**,samples-and-tests/**/test-result,samples-and-tests/**/i-am-working-here,samples-and-tests/**/data,samples-and-tests/**/logs,samples-and-tests/**/tmp,samples-and-tests/**/db,samples-and-tests/**/attachments,modules/**,openspec/**,.claude/**,CLAUDE.md,sync-fork.sh,_bmad/**,_bmad-output/**,.agents/**,AGENTS.md" />
+            <fileset dir=".." excludes=".github,**/cobertura.ser,**/*.pyc,**/*.log,hs_err*,.*,.*/*,framework/dist/**,framework/test-src/**,id,nbproject/**,**/.bzr/**,**/.git/**,*.bzrignore,support/textmate/**,framework/classes/**,framework/tests-results/**,modules/**,openspec/**,.claude/**,CLAUDE.md,sync-fork.sh,_bmad/**,_bmad-output/**,.agents/**,AGENTS.md" />
             <fileset dir=".." includes="modules/crud/**,modules/secure/**,modules/docviewer/**,modules/testrunner/**" excludes="**/*.pyc" />
         </copy>
     </target>

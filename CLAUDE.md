@@ -82,20 +82,17 @@ ant jar                          # Clean, compile, and create play-*.jar
 ant compile                      # Compile only (no clean)
 
 # Tests
-ant unittest                     # Framework unit tests only
-ant test                         # Full suite: unit tests + sample app functional tests
+ant unittest                     # Framework JUnit tests only (fast inner loop)
+ant integration-test             # Real-Netty integration tests (test-src/integration/)
+ant cli-test                     # Python tests for the play CLI (test-src/cli/)
+ant test                         # Full verification: clean + jar + unittest + integration-test + cli-test
 ant test-single -Dtestclass=play.mvc.RouterTest  # Single test class (no package prefix in path, use dots)
-ant compile-tests                # Compile tests without running
+ant compile-tests                # Compile tests + copy fixture resources, no run
 
 # Other
 ant javadoc                      # Generate API docs
 ant package                      # Create distribution ZIP
 ant resolve                      # Resolve framework/dependencies.yml via Ivy and update framework/lib/ in place. Run after editing dependencies.yml. Idempotent. -Dprune=true to delete stray jars; -Dverbose for Ivy detail (PF-62)
-```
-
-To run functional tests on a sample app:
-```bash
-python3 play auto-test samples-and-tests/just-test-cases
 ```
 
 ## Architecture
@@ -132,8 +129,9 @@ Built-in modules in `modules/`: `testrunner`, `docviewer`, `crud`, `secure`. Eac
 
 ### Testing Patterns
 
-- Framework unit tests: `framework/test-src/play/**/*Test.java` (JUnit 5)
-- Sample app tests: `samples-and-tests/*/test/` — mix of Java `FunctionalTest` subclasses and HTML-based Selenium tests
+- Framework unit tests: `framework/test-src/play/**/*Test.java` (JUnit 5) — invoked by `ant unittest`
+- Integration tests: `framework/test-src/integration/**/*Test.java` (JUnit 5) — bind a real Netty server, exercise HTTP/1.1, h2 ALPN, h3, the SSE pipeline, and PlayHandler error paths. Invoked by `ant integration-test`. Test-app fixture lives at `framework/test-src/integration/testapp/`.
+- CLI tests: `framework/test-src/cli/test_*.py` (Python `unittest`) — invoked by `ant cli-test`
 - Test data via YAML fixtures loaded with `Fixtures.load("data.yml")`
 
 ### CLI (`play` command)
