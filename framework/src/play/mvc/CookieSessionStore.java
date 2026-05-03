@@ -76,6 +76,7 @@ public class CookieSessionStore implements SessionStore {
             // The session is empty: delete the cookie
             if (Http.Request.current().cookies.containsKey(COOKIE_PREFIX + "_SESSION") || !SESSION_SEND_ONLY_IF_CHANGED) {
                 Http.Response.current().setCookie(COOKIE_PREFIX + "_SESSION", "", null, "/", 0, COOKIE_SECURE, SESSION_HTTPONLY);
+                Scope.applySameSite(COOKIE_PREFIX + "_SESSION");
             }
             return;
         }
@@ -89,6 +90,7 @@ public class CookieSessionStore implements SessionStore {
                 Http.Response.current().setCookie(COOKIE_PREFIX + "_SESSION", sign + "-" + sessionData, null, "/",
                         Time.parseDuration(COOKIE_EXPIRE), COOKIE_SECURE, SESSION_HTTPONLY);
             }
+            Scope.applySameSite(COOKIE_PREFIX + "_SESSION");
         } catch (Exception e) {
             throw new UnexpectedException("Session serializationProblem", e);
         }

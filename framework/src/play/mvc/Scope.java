@@ -32,8 +32,36 @@ public class Scope {
             .equalsIgnoreCase("true");
     public static boolean SESSION_SEND_ONLY_IF_CHANGED = Play.configuration
             .getProperty("application.session.sendOnlyIfChanged", "false").equalsIgnoreCase("true");
+    /**
+     * SameSite attribute applied to session and flash cookies. Defaults to {@code Lax}.
+     * Set {@code application.session.sameSite=Strict} or {@code None} in {@code application.conf}.
+     * Per the SameSite spec, {@code None} requires {@code Secure}; the session/flash cookie
+     * write path auto-upgrades {@code secure=true} when this is {@code None}.
+     * Non-final so tests can override the value at runtime (matches {@link #SESSION_SEND_ONLY_IF_CHANGED}).
+     */
+    public static String COOKIE_SAMESITE = Play.configuration.getProperty("application.session.sameSite", "Lax");
 
     public static final SessionStore sessionStore = createSessionStore();
+
+    /**
+     * Apply {@link #COOKIE_SAMESITE} to the named cookie on the current response, if present.
+     * Per the SameSite spec, {@code SameSite=None} requires {@code Secure}; this auto-upgrades
+     * the cookie's {@code secure} flag in that case so browsers don't reject it.
+     */
+    static void applySameSite(String cookieName) {
+        Http.Response response = Http.Response.current();
+        if (response == null) {
+            return;
+        }
+        Http.Cookie cookie = response.cookies.get(cookieName);
+        if (cookie == null) {
+            return;
+        }
+        cookie.sameSite = COOKIE_SAMESITE;
+        if ("None".equalsIgnoreCase(COOKIE_SAMESITE) && !cookie.secure) {
+            cookie.secure = true;
+        }
+    }
 
     private static SessionStore createSessionStore() {
         String sessionStoreClass = Play.configuration.getProperty("application.session.storeClass");
@@ -79,12 +107,14 @@ public class Scope {
             if (out.isEmpty()) {
                 if (Http.Request.current().cookies.containsKey(COOKIE_PREFIX + "_FLASH") || !SESSION_SEND_ONLY_IF_CHANGED) {
                     Http.Response.current().setCookie(COOKIE_PREFIX + "_FLASH", "", null, "/", 0, COOKIE_SECURE, SESSION_HTTPONLY);
+                    applySameSite(COOKIE_PREFIX + "_FLASH");
                 }
                 return;
             }
             try {
                 String flashData = CookieDataCodec.encode(out);
                 Http.Response.current().setCookie(COOKIE_PREFIX + "_FLASH", flashData, null, "/", null, COOKIE_SECURE, SESSION_HTTPONLY);
+                applySameSite(COOKIE_PREFIX + "_FLASH");
             } catch (Exception e) {
                 throw new UnexpectedException("Flash serializationProblem", e);
             }
