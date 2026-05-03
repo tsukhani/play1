@@ -250,7 +250,11 @@
     </target>
 
     <!-- Tests -->
-    <target name="compile-tests" depends="version,compile">
+    <!-- PF-79: depend on agent-jar so consumers (integration-test, test-single,
+         debug-test-single) that fork a JVM with -javaagent:play-${version}.jar
+         get the jar built before the test JVM tries to load it. agent-jar already
+         depends on version+compile, so the cascade does not double-compile. -->
+    <target name="compile-tests" depends="version,agent-jar,compile">
         <mkdir dir="test-classes"/>
         <javac encoding="utf-8" nowarn="${compile.nowarn}" debug="true"
                destdir="test-classes" classpathref="project.classpath" srcdir="test-src"
