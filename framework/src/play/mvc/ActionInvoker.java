@@ -2,12 +2,15 @@ package play.mvc;
 
 import com.jamonapi.Monitor;
 import com.jamonapi.MonitorFactory;
+import io.micrometer.core.instrument.Tags;
+import io.micrometer.core.instrument.Timer;
 import org.apache.logging.log4j.ThreadContext;
 import play.Invoker.Suspend;
 import play.Logger;
 import play.Play;
 import play.cache.Cache;
 import play.cache.CacheFor;
+import play.libs.Metrics;
 import play.classloading.enhancers.ControllersEnhancer;
 import play.classloading.enhancers.ControllersEnhancer.ControllerInstrumentation;
 import play.data.binding.Binder;
@@ -108,6 +111,9 @@ public class ActionInvoker {
 
     public static void invoke(Http.Request request, Http.Response response) {
         Monitor monitor = null;
+        // PF-13: stamp request start so the finally block can record
+        // http_server_requests duration into the active Micrometer registry.
+        long metricsStartNanos = System.nanoTime();
 
         // PF-9: surface request-scoped context to log lines via Log4j 2's
         // ThreadContext (MDC). When application.log.format=json the ECS
@@ -234,6 +240,23 @@ public class ActionInvoker {
 
             if (monitor != null) {
                 monitor.stop();
+            }
+            // PF-13: record request count + duration into the active
+            // Micrometer registry. Tags use request.action when known
+            // (post-routing) and fall back to request.path so unrouted
+            // requests still show up — high-cardinality paths can be
+            // filtered at the registry level if needed.
+            try {
+                String route = request.action != null ? request.action : request.path;
+                Timer.builder("http_server_requests")
+                        .tags(Tags.of(
+                                "method", request.method,
+                                "status", Integer.toString(response.status),
+                                "route", route))
+                        .register(Metrics.registry())
+                        .record(System.nanoTime() - metricsStartNanos, java.util.concurrent.TimeUnit.NANOSECONDS);
+            } catch (Throwable t) {
+                Logger.trace("Failed to record HTTP request metric: %s", t.getMessage());
             }
             // PF-9: drop MDC entries so subsequent virtual-thread reuses don't
             // inherit prior request context.

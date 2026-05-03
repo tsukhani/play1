@@ -164,6 +164,27 @@ require:    &allDependencies
     - io.swagger.core.v3 -> swagger-models 2.2.39
     - io.swagger.core.v3 -> swagger-core 2.2.39
     - io.swagger.core.v3 -> swagger-annotations 2.2.39
+    # PF-13: Micrometer + Prometheus exposition. micrometer-core ships the meter
+    # registry + bundled JVM binders; micrometer-registry-prometheus carries
+    # the PrometheusMeterRegistry that scrapes to OpenMetrics text. From
+    # Micrometer 1.13.x onward the Prometheus registry uses the new
+    # io.prometheus:prometheus-metrics-* (client_java v1) family, NOT the
+    # legacy io.prometheus:simpleclient line. HdrHistogram + LatencyUtils are
+    # micrometer-core runtime transitives — declared explicitly because
+    # transitiveDependencies is off.
+    - io.micrometer -> micrometer-core 1.13.6
+    - io.micrometer -> micrometer-commons 1.13.6
+    - io.micrometer -> micrometer-observation 1.13.6
+    - io.micrometer -> micrometer-registry-prometheus 1.13.6
+    - io.prometheus -> prometheus-metrics-core 1.2.1
+    - io.prometheus -> prometheus-metrics-model 1.2.1
+    - io.prometheus -> prometheus-metrics-config 1.2.1
+    - io.prometheus -> prometheus-metrics-tracer-common 1.2.1
+    - io.prometheus -> prometheus-metrics-tracer-initializer 1.2.1
+    - io.prometheus -> prometheus-metrics-exposition-formats 1.2.1
+    - io.prometheus -> prometheus-metrics-shaded-protobuf 1.2.1
+    - org.hdrhistogram -> HdrHistogram 2.2.2
+    - org.latencyutils -> LatencyUtils 2.0.3
 
 # Default repositories, used for all projects
 repositories:
