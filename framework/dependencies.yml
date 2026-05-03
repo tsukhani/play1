@@ -149,8 +149,21 @@ require:    &allDependencies
     - com.fasterxml.jackson.core -> jackson-core 2.21.3
     - com.fasterxml.jackson.core -> jackson-databind 2.21.3
     - com.fasterxml.jackson.dataformat -> jackson-dataformat-xml 2.21.3
+    - com.fasterxml.jackson.dataformat -> jackson-dataformat-yaml 2.21.3
+    - com.fasterxml.jackson.datatype -> jackson-datatype-jsr310 2.21.3
     - com.fasterxml.woodstox -> woodstox-core 7.1.1
     - org.codehaus.woodstox -> stax2-api 4.3.0
+    # PF-12: OpenAPI 3 spec generation. swagger-models supplies the OpenAPI
+    # object graph; swagger-core supplies Json/Yaml pretty-printers that wrap
+    # Jackson with consistent ordering; swagger-annotations is a compile-time
+    # peer of swagger-models. Annotation-driven enrichment of controllers is
+    # deliberately out of scope for the initial cut — swagger-jaxrs2 et al.
+    # would pull JAX-RS, which Play does not use. jackson-dataformat-yaml +
+    # jackson-datatype-jsr310 are runtime peers of swagger-core's Yaml.mapper()
+    # and ObjectMapper customizations.
+    - io.swagger.core.v3 -> swagger-models 2.2.39
+    - io.swagger.core.v3 -> swagger-core 2.2.39
+    - io.swagger.core.v3 -> swagger-annotations 2.2.39
 
 # Default repositories, used for all projects
 repositories:
