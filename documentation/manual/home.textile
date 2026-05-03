@@ -162,11 +162,11 @@ Everything you need to know about Play.
 ## "Configure logging":production#logging
 ## "Set-up a front-end HTTP server":production#server
 # "HTTP server, virtual threads, HTTP/2, HTTP/3":httpserver
-## "Embedded Netty server":httpserver#netty
-## "TLS, HTTP/2 (ALPN), and HTTP/3 (QUIC)":httpserver#tls
-## "Virtual threads":httpserver#virtualthreads
-## "Brotli and gzip compression":httpserver#compression
-## "Alt-Svc and protocol negotiation":httpserver#altsvc
+## "HTTP/1.1, HTTP/2, and HTTP/3":httpserver#protocols
+## "TLS configuration":httpserver#tls
+## "Virtual threads":httpserver#virtual-threads
+## "Response compression":httpserver#compression
+## "Operational notes":httpserver#operational
 # "Deployment options":deployment
 ## "Standalone Play application":deployment#standalone
 ## "Behind a reverse proxy":deployment#reverseproxy
