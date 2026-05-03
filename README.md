@@ -127,6 +127,47 @@ If h3 didn't bind (no native QUIC, or UDP blocked at the LB), the `Alt-Svc` head
 - **QUIC retry-token validation is currently insecure.** The shipped configuration uses `InsecureQuicTokenHandler` — accepts any retry token without cryptographic verification. Fine for dev, staging, and deployments behind a DDoS-mitigating edge. Production deployments directly exposed to the internet should swap to a server-secret-keyed token handler (planned PF-57 phase 3 follow-up). The framework does not currently expose a configuration toggle for this.
 - **0-RTT and HTTP/3 server push are out of scope.** 0-RTT brings replay-attack tradeoffs that should be opted into deliberately; server push is deprecated in modern browsers.
 
+## Default security headers
+
+Every HTTP response — controller-rendered, static asset, 404, or 500 — carries a configurable set of security headers by default (PF-5). Headers are emitted at the Netty/servlet response layer (after `response.headers` from the action is copied) so app-set headers always win.
+
+### Defaults
+
+| Header | Default value | When emitted |
+|---|---|---|
+| `X-Content-Type-Options` | `nosniff` | always |
+| `X-Frame-Options` | `DENY` | always |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` | always |
+| `X-XSS-Protection` | `0` | always (modern browsers ignore it; `0` disables legacy XSS auditor — defer to CSP) |
+| `Content-Security-Policy` | `default-src 'self'` | always |
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` | HTTPS responses only |
+
+### Configuration (`application.conf`)
+
+```properties
+# Master switch (default: true). Set to false to disable the whole feature.
+http.headers.enabled=true
+
+# Per-header values. Set to empty string or "disabled" to skip an individual header.
+http.headers.xContentTypeOptions=nosniff
+http.headers.xFrameOptions=DENY
+http.headers.referrerPolicy=strict-origin-when-cross-origin
+http.headers.xXssProtection=0
+http.headers.contentSecurityPolicy=default-src 'self'
+
+# HSTS — only attached on HTTPS responses regardless of these flags.
+http.headers.hsts.enabled=true
+http.headers.hsts.maxAge=31536000
+http.headers.hsts.includeSubDomains=true
+http.headers.hsts.preload=false
+```
+
+The plugin itself can also be disabled by removing `play.plugins.SecurityHeadersPlugin` from your app's `play.plugins` (or removing it from `framework/src/play.plugins` for fork builds).
+
+### Per-response overrides
+
+Headers are applied additively — if a controller has already set `X-Frame-Options` (e.g., `response.setHeader("X-Frame-Options", "SAMEORIGIN")`) the framework default does not overwrite it. Same for any other header in the table above.
+
 ## Migrating from Joda Time
 
 Joda Time was removed from this fork (PF-27). Form-binding is now `java.time` (JSR-310) only. Replace any controller-arg or model-field types as follows:

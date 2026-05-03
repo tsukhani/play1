@@ -514,6 +514,17 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
             nettyResponse.headers().set(CACHE_CONTROL, "no-cache");
         }
 
+        // PF-5: apply the configured default security headers (additive — never overrides
+        // anything the application or framework already set on the response). Centralizing the
+        // call here covers controller results, the static raw branch, and websocket fallthroughs;
+        // serve404 / serve500 / serveStatic's file branch each call the policy themselves
+        // because they build their netty response without going through addToResponse.
+        Request currentRequest = null;
+        try {
+            currentRequest = Request.current();
+        } catch (Throwable ignored) { /* request thread-local not bound on edge paths */ }
+        SecurityHeadersPolicy.current().applyTo(nettyResponse.headers(),
+                currentRequest != null && Boolean.TRUE.equals(currentRequest.secure));
     }
 
     protected static void writeResponse(ChannelHandlerContext ctx, Response response, HttpResponse nettyResponse,
@@ -955,6 +966,9 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
             }
             nettyResponse.headers().set(CONTENT_TYPE, MimeTypes.getContentType("404." + format, "text/plain"));
             setContentLength(nettyResponse, bytes.length);
+            // PF-5: error pages get the same default security headers as normal responses.
+            SecurityHeadersPolicy.current().applyTo(nettyResponse.headers(),
+                    request != null && Boolean.TRUE.equals(request.secure));
             ChannelFuture writeFuture = ctx.channel().writeAndFlush(nettyResponse);
             writeFuture.addListener(ChannelFutureListener.CLOSE);
         } catch (UnsupportedEncodingException fex) {
@@ -1039,6 +1053,11 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
             }
 
             nettyResponse.headers().set("Content-Type", (MimeTypes.getContentType("500." + format, "text/plain")));
+            // PF-5: apply default security headers to the 500 response. All three writeAndFlush
+            // paths below (template-rendered, static fallback, last-resort) reuse this same
+            // nettyResponse, so applying once here covers every error-emission case.
+            SecurityHeadersPolicy.current().applyTo(nettyResponse.headers(),
+                    request != null && Boolean.TRUE.equals(request.secure));
             try {
                 String errorHtml = TemplateLoader.load("errors/500." + format).render(binding);
 
@@ -1146,6 +1165,13 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
                     boolean keepAlive = isKeepAlive(nettyRequest);
                     nettyResponse = addEtag(nettyRequest, nettyResponse, localFile);
 
+                    // PF-5: static asset responses bypass copyResponse / addToResponse, so apply
+                    // the default security headers here before either the 304 fast-path flush or
+                    // FileService.serve takes over (FileService mutates the same nettyResponse,
+                    // adding Content-Length / Content-Type, but never strips what we set here).
+                    SecurityHeadersPolicy.current().applyTo(nettyResponse.headers(),
+                            request != null && Boolean.TRUE.equals(request.secure));
+
                     if (nettyResponse.status().equals(HttpResponseStatus.NOT_MODIFIED)) {
                         Channel ch = ctx.channel();
                         ChannelFuture writeFuture = ch.writeAndFlush(nettyResponse);
@@ -1170,6 +1196,9 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
                 FullHttpResponse errorResponse = new DefaultFullHttpResponse(
                         HttpVersion.HTTP_1_1, HttpResponseStatus.INTERNAL_SERVER_ERROR, body);
                 setContentLength(errorResponse, bytes.length);
+                // PF-5: even the catastrophic-failure path keeps default security headers.
+                SecurityHeadersPolicy.current().applyTo(errorResponse.headers(),
+                        request != null && Boolean.TRUE.equals(request.secure));
                 ChannelFuture future = ctx.channel().writeAndFlush(errorResponse);
                 future.addListener(ChannelFutureListener.CLOSE);
             } catch (Exception ex) {

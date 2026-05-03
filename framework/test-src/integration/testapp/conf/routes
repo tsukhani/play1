@@ -4,4 +4,5 @@ POST    /echo                      TestController.echo
 GET     /redirect                  TestController.redirect
 GET     /json                      TestController.json
 GET     /events                    TestController.events
+GET     /boom                      TestController.boom
 GET     /public/                   staticDir:public

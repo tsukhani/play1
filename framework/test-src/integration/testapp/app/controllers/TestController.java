@@ -46,4 +46,8 @@ public class TestController extends Controller {
         sse.send(Map.of("seq", 3, "msg", "third"));
         sse.close();
     }
+
+    public static void boom() {
+        throw new RuntimeException("integration-test 500 trigger");
+    }
 }

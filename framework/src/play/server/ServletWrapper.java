@@ -201,6 +201,8 @@ public class ServletWrapper extends HttpServlet implements ServletContextListene
             if (raw) {
                 copyResponse(Request.current(), Response.current(), servletRequest, servletResponse);
             } else {
+                // PF-5: static assets bypass copyResponse, so apply the policy directly here.
+                SecurityHeadersPolicy.current().applyTo(servletResponse, servletRequest.isSecure());
                 if (Play.mode == Play.Mode.DEV) {
                     servletResponse.setHeader("Cache-Control", "no-cache");
                     servletResponse.setHeader("Content-Length", String.valueOf(file.length()));
@@ -336,6 +338,8 @@ public class ServletWrapper extends HttpServlet implements ServletContextListene
         Logger.warn("404 -> %s %s (%s)", servletRequest.getMethod(), servletRequest.getRequestURI(), e.getMessage());
         servletResponse.setStatus(404);
         servletResponse.setContentType("text/html");
+        // PF-5: error pages get the same default security headers as normal responses.
+        SecurityHeadersPolicy.current().applyTo(servletResponse, servletRequest.isSecure());
         Map<String, Object> binding = ErrorBindings.forError(e, false);
         String format = Request.current().format;
         servletResponse.setStatus(404);
@@ -360,6 +364,9 @@ public class ServletWrapper extends HttpServlet implements ServletContextListene
             if (!(e instanceof PlayException)) {
                 e = new play.exceptions.UnexpectedException(e);
             }
+            // PF-5: applied early so even a failure during template rendering below leaves the
+            // default security headers on the response that goes to the wire.
+            SecurityHeadersPolicy.current().applyTo(response, request.isSecure());
             // Flush some cookies
             try {
                 Map<String, Http.Cookie> cookies = Response.current().cookies;
@@ -428,6 +435,10 @@ public class ServletWrapper extends HttpServlet implements ServletContextListene
                 servletResponse.setHeader(key, value);
             }
         }
+
+        // PF-5: kept aligned with the Netty path's addToResponse — additive, never overrides
+        // anything the application set in response.headers above.
+        SecurityHeadersPolicy.current().applyTo(servletResponse, servletRequest.isSecure());
 
         Map<String, Http.Cookie> cookies = response.cookies;
         for (Http.Cookie cookie : cookies.values()) {
