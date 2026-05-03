@@ -203,15 +203,29 @@ repositories:
             - play -> play
 
     - playCoreDependencies:
-        type:       local
-        # PF-57: the (-[classifier]) optional segment is Ivy syntax for "include only if
-        # the classifier extra-attribute is set". Lets entries declare native artifacts
-        # via "io.netty -> netty-codec-native-quic 4.2.12.Final osx-aarch_64" and the
-        # resolver looks up the classifier-suffixed jar on disk; classifier-less entries
-        # like "io.netty -> netty-codec-http 4.2.12.Final" continue to resolve to plain
-        # name-revision.jar. YamlParser already populates the classifier extra-attribute
-        # via the regex at YamlParser.java:172-187.
-        artifact:   "${play.path}/framework/lib/[artifact]-[revision](-[classifier]).jar"
+        # PF-83: chain wraps the local-jar lookup with a Maven Central fallback so
+        # newly declared deps in the require: list above resolve from Central on
+        # first run instead of failing with "module not found". Ivy's
+        # addModuleConfiguration pins each contains: entry to a single resolver
+        # name; making that resolver a ChainResolver (returnFirst=true) preserves
+        # the cached-jar fast path while letting absent jars fall through to
+        # Central. SettingsParser.parseRepository chain branch sets returnFirst
+        # automatically.
+        type:       chain
+        using:
+            - playCoreDependenciesLocal:
+                type:       local
+                # PF-57: the (-[classifier]) optional segment is Ivy syntax for "include only if
+                # the classifier extra-attribute is set". Lets entries declare native artifacts
+                # via "io.netty -> netty-codec-native-quic 4.2.12.Final osx-aarch_64" and the
+                # resolver looks up the classifier-suffixed jar on disk; classifier-less entries
+                # like "io.netty -> netty-codec-http 4.2.12.Final" continue to resolve to plain
+                # name-revision.jar. YamlParser already populates the classifier extra-attribute
+                # via the regex at YamlParser.java:172-187.
+                artifact:   "${play.path}/framework/lib/[artifact]-[revision](-[classifier]).jar"
+            - playCoreDependenciesCentral:
+                type:       iBiblio
+                m2compatible: true
         contains:   *allDependencies
         
     - playCoreCrud:
