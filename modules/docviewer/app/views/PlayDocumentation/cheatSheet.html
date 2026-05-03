@@ -69,7 +69,7 @@
                 </div>
                 <div class="absolute right-1 top-1 text-center">
                     <img src="@{'/public/playmanual/logo.png'}">
-                    <h2 id="logobar-version" class="text-[10px] mt-0 font-normal">Play ${play.version}</h2>
+                    <h2 id="logobar-version" class="text-[10px] mt-0 font-normal">Play ${play.version.substring(0, play.version.lastIndexOf('.'))}</h2>
                 </div>
             </div>
             <div class="wikistyle">

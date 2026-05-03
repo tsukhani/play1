@@ -48,7 +48,7 @@
 
                 <div class="mt-2.5 text-center">
                     <img src="@{'/public/playmanual/logo.png'}">
-                    <h2 class="text-[10px] mt-0 font-normal">Play ${play.version}</h2>
+                    <h2 class="text-[10px] mt-0 font-normal">Play ${play.version.substring(0, play.version.lastIndexOf('.'))}</h2>
                 </div>
 
                 <h2 class="font-bold text-gray-500 text-sm mb-1 mt-5">Browse ${module ? '('+module.capitalizeWords()+')' : ''}</h2>

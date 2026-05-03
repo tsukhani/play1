@@ -156,3 +156,74 @@ h2. Upgrade checklist
 # Optionally tune @play.netty.spoolThresholdBytes@ for your workload pattern
 # If your app needs an earlier Java syntax level (e.g. 17 or 21), stay on Play 1.11.x — Play 1.12.x accepts only @java.source=25@ and rejects pre-25 JDKs at startup
 # Run your test suite under @-Dio.netty.leakDetection.level=PARANOID@ to catch any application-side @ByteBuf@ refcount issues
+
+h2. What's shipped across the 1.12.x line
+
+The 1.12.0 release covered the foundational Netty 4.2 / Java 25 / virtual-threads migration. The patches that followed turned 1.12 into a production-grade microservices framework with zero-config defaults for cloud deployment. Highlights:
+
+h3. HTTP server (PF-57, PF-58)
+
+* *HTTP/2 over TLS* via ALPN — always advertised when @https.port@ is configured. ALPN-capable clients negotiate @h2@; older clients fall back to @http/1.1@ on the same listener. No @http2.enabled@ flag.
+* *HTTP/3 over QUIC* — auto-enabled on platforms with native QUIC binaries (macOS arm64/x86_64, Linux x86_64/arm64, Windows x86_64). Browsers discover the h3 endpoint via the @Alt-Svc@ header that's emitted on every TLS-protected response. Graceful WARN-and-skip on platforms without native support.
+* *Brotli, gzip, deflate, zstd* compression with platform-specific brotli natives.
+
+See the "HTTP server":httpserver section.
+
+h3. Security headers (PF-5)
+
+A new @SecurityHeadersPlugin@ emits a conservative baseline on every response: @X-Content-Type-Options: nosniff@, @X-Frame-Options: DENY@, @Referrer-Policy: strict-origin-when-cross-origin@, @X-XSS-Protection: 0@, and (on HTTPS) @Strict-Transport-Security@. Every header is individually overridable via @http.headers.*@ keys, and per-response application overrides win over framework defaults. Content-Security-Policy is intentionally disabled in fresh @play new@ apps so starter pages aren't blocked before the developer has designed a real CSP. See the "security guide":security#headers.
+
+h3. Built-in CORS (PF-6)
+
+A new @CorsPlugin@ handles preflight @OPTIONS@ short-circuiting and adds CORS headers to all cross-origin responses. Disabled by default (opt-in via @cors.enabled=true@). Supports wildcard and specific origin lists, credentials, custom methods/headers, and exposed headers. See the "security guide":security#cors.
+
+h3. SameSite cookies (PF-7)
+
+@Http.Cookie@ has a @sameSite@ field (defaulting to @Lax@) and the netty serializer emits the attribute correctly. Session and flash cookies honor @application.session.sameSite@ in @application.conf@; @SameSite=None@ auto-upgrades the cookie to @Secure@ per RFC.
+
+h3. PBKDF2 password hashing (PF-8)
+
+@Crypto.passwordHash@ now uses PBKDF2 instead of the legacy MD5 default. Old MD5 hashes can still be verified for backward compatibility.
+
+h3. Structured JSON logging (PF-9)
+
+Set @application.log.format=json@ to emit ECS-shaped JSON log lines via Log4j 2's @JsonTemplateLayout@ — broad compatibility with Loki, Datadog, Splunk, Elastic. Request context (@request_id@, @http_method@, @http_path@, @client_ip@, @action_name@) flows via Log4j MDC. Default @text@ mode is unchanged. See "logging":logs#json.
+
+h3. Environment variable interpolation (PF-10)
+
+@${ENV_VAR}@ and @${ENV_VAR:-default}@ are now resolved in @application.conf@ at config load time. Unresolved placeholders without defaults log a @WARN@ at startup. See "configuration":configuration#envvar.
+
+h3. Health endpoints (PF-11)
+
+* @/@health/live@ — always 200 when the JVM is up.
+* @/@health/ready@ — aggregates registered @HealthCheck@ instances; 200 if all UP, 503 if any DOWN.
+
+Extensible via the @HealthCheck@ SPI: implement @name()@ and @check()@, register via @HealthCheckPlugin.register(...)@. See "observability":observability#health.
+
+h3. OpenAPI 3 spec generation (PF-12, PF-81)
+
+Auto-generates an OpenAPI 3 spec from your @routes@ file and controller method signatures, exposed at @/@api/openapi.json@, @/@api/openapi.yaml@, and Swagger UI at @/@api/docs@ in dev mode. Decorate controllers with @@Operation@, @@ApiResponse(s)@, @@RequestBody@, @@Parameter@, and class-level @@Tag@ for richer metadata. No JAX-RS dependency. See "OpenAPI":openapi.
+
+h3. Micrometer metrics + Prometheus + OTLP (PF-13, PF-82)
+
+* @/@metrics@ returns Prometheus exposition format. JVM binders auto-registered (memory, GC, threads, classloader). HTTP request metrics (@http_server_requests@ Timer with @method@/@status@/@route@ tags) wired into @ActionInvoker@.
+* Static @play.libs.Metrics@ facade for application code: @counter@, @timer@, @gauge@.
+* Optional OTLP push: set @metrics.otlp.endpoint@ and metrics also push to OTel Collector / Honeycomb / Datadog / etc. via a @CompositeMeterRegistry@. Prometheus scrape continues alongside. See "observability":observability.
+
+h3. Build infrastructure
+
+* *@ant test@ as the single ordered verification entrypoint* (PF-80) — clean → jar → unittest → integration-test → cli-test, all in one invocation. Cold-start fixed (PF-79): @compile-tests@ now depends on @agent-jar@ so the test JVM can load the framework agent.
+* *@ant resolve@ Maven Central fallback* (PF-83) — newly declared dependencies in @dependencies.yml@ are auto-fetched from Maven Central; no manual jar pre-seeding.
+* *@samples-and-tests/@ removed* — replaced by an in-tree integration testapp (@framework/test-src/integration/testapp/@) that @ant integration-test@ exercises directly.
+
+h3. ServletWrapper / WAR removal (PF-78)
+
+@ServletWrapper@, the @play war@ CLI command, the @WEB-INF/web.xml@ template, and the @jakarta.servlet-api@ dependency are gone. Apps that were deployed via @play war@ must switch to the embedded Netty path (@play run@ / @play start@) and front it with a reverse proxy if they need a container.
+
+h3. Deprecated API removal (PF-76)
+
+The 14-arg @Http.Request.createRequest@ overload is removed. Adapter modules that built @Request@ instances via the legacy form must migrate to @createRequest(new Request.RequestData(...))@.
+
+h3. Documentation (PF-84)
+
+The manual is now officially Play 1.12 — WAR / JEE / GAE / Stax sections were stripped from @deployment.textile@, @samples-and-tests@ references were cleared, the version label was relabeled, and new sections were added for HTTP server, OpenAPI, observability, security extensions, JSON logging, and env-var interpolation.

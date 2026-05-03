@@ -3,6 +3,17 @@ h1. About Play releases
 You can download Play releases "here":https://www.playframework.com/download. Each release has a Migration Guide that explains how to upgrade from the previous release.
 
 
+h2. Play 1.12
+
+Play 1.12 is the modernized line that takes the framework into the Java 25 / Netty 4.2 / virtual-threads era. The headline change from 1.11.x is a complete server-transport migration off Netty 3.10.6.Final (long-EOL) onto Netty 4.2.x, which closes the unpatched Netty 3 CVEs and unlocks HTTP/2 over ALPN and HTTP/3 over QUIC out of the box — both protocols light up automatically when {{https.port}} is configured, no per-protocol enable flags. Request invocation, background jobs, and mail dispatch all run on virtual threads via @VirtualThreadScheduledExecutor@; JEP 491's elimination of @synchronized@-pinning makes the VT path strictly cheaper than platform threads under blocking I/O.
+
+The 1.12 line also drops servlet/WAR deployment (apps run as embedded Netty fronted by a reverse proxy), removes Joda Time in favor of @java.time@, and consolidates the build/test workflow around a single @ant test@ verification entrypoint. New observability, security, and API features ship in-tree: default security headers, built-in CORS, SameSite cookies, JSON logging, env-var interpolation in @application.conf@, health endpoints, OpenAPI 3 spec generation, and Micrometer metrics with Prometheus + OTLP push.
+
+Java 25 or later is required. Apps that need to stay on Java 17 or 21 should pin to Play 1.11.x.
+
+# "Play 1.12.0":release1.12.x/releasenotes-1.12.0
+
+
 h2. Play 1.11.x
 
 # "Play 1.11.0":release1.11.x/releasenotes-1.11.0
