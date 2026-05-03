@@ -75,6 +75,25 @@ class TestPlayNew(unittest.TestCase):
             content = f.read()
         self.assertIn('play', content)
 
+    def test_csp_disabled_by_default(self):
+        # New apps ship with Content-Security-Policy explicitly disabled so the
+        # framework default ("default-src 'self'") doesn't break starter pages /
+        # frontend frameworks before the developer designs a real CSP. The other
+        # security headers (X-Frame-Options, X-Content-Type-Options, HSTS, etc.)
+        # remain at their conservative defaults.
+        run_play(['new', self.app_path, '--name=CspApp'])
+
+        conf_path = os.path.join(self.app_path, 'conf', 'application.conf')
+        with open(conf_path) as f:
+            content = f.read()
+        self.assertIn('http.headers.contentSecurityPolicy=', content)
+        # Make sure the active line is the empty assignment, not a commented example
+        active_lines = [
+            line for line in content.splitlines()
+            if line.strip().startswith('http.headers.contentSecurityPolicy=')
+        ]
+        self.assertEqual(active_lines, ['http.headers.contentSecurityPolicy='])
+
 
 class TestPlayNewWithNuxt(unittest.TestCase):
 
