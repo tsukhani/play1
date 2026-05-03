@@ -96,8 +96,29 @@ public class MetricsPlugin extends PlayPlugin {
 
         Metrics.install(installed);
         bindJvmMetrics(installed);
+        bindFrameworkCacheMetrics(installed);
 
         Logger.info("MetricsPlugin enabled at %s", basePath);
+    }
+
+    /**
+     * PF-86: bind the framework's Caffeine in-process cache to the meter
+     * registry. Cache.init() runs in Play.start() before the plugin lifecycle,
+     * so {@code CaffeineImpl}'s constructor cannot bind itself — by the time
+     * this plugin runs, the singleton already exists, and the registry has
+     * just been installed via {@code Metrics.install} above. Guard with an
+     * instanceof check so users running an alternate {@code CacheImpl}
+     * (Memcached, custom) don't fail.
+     */
+    private void bindFrameworkCacheMetrics(MeterRegistry registry) {
+        play.cache.CacheImpl impl = play.cache.Cache.cacheImpl;
+        if (impl instanceof play.cache.CaffeineImpl caffeine) {
+            try {
+                caffeine.bindMetrics(registry);
+            } catch (Throwable t) {
+                Logger.warn(t, "Failed to bind Caffeine cache metrics — /@metrics will be missing cache_*");
+            }
+        }
     }
 
     @Override

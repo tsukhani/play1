@@ -2,10 +2,12 @@ package play.db.hikaricp;
 
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
+import com.zaxxer.hikari.metrics.micrometer.MicrometerMetricsTrackerFactory;
 import play.Play;
 import play.db.Configuration;
 import play.db.DB;
 import play.db.DataSourceFactory;
+import play.libs.Metrics;
 
 import javax.sql.DataSource;
 import java.beans.PropertyVetoException;
@@ -49,6 +51,15 @@ public class HikariDataSourceFactory implements DataSourceFactory {
     if (dbConfig.getProperty("db.isolation") != null) {
       ds.setTransactionIsolation(toHikariIsolation(dbConfig.getProperty("db.isolation")));
     }
+
+    // PF-85: bind HikariCP's Micrometer tracker against the framework's
+    // meter registry so /@metrics exposes hikaricp_connections_*. The
+    // tracker must be set BEFORE the pool initializes — Hikari snapshots
+    // the factory at first getConnection. By the time DBPlugin (slot 300)
+    // calls this factory, MetricsPlugin (slot 30) has already swapped the
+    // facade to the real PrometheusMeterRegistry, so Metrics.registry()
+    // here returns the live registry, not the SimpleMeterRegistry default.
+    ds.setMetricsTrackerFactory(new MicrometerMetricsTrackerFactory(Metrics.registry()));
 
     if (dbConfig.getProperty("db.testquery") != null) {
       ds.setConnectionTestQuery(dbConfig.getProperty("db.testquery"));

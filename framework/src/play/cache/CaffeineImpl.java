@@ -3,6 +3,8 @@ package play.cache;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.Expiry;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.binder.cache.CaffeineCacheMetrics;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -58,6 +60,23 @@ public class CaffeineImpl implements CacheImpl {
     public static CaffeineImpl newInstance() {
         uniqueInstance = new CaffeineImpl();
         return uniqueInstance;
+    }
+
+    /**
+     * PF-86: bind this cache's hit/miss/eviction/load metrics to the supplied
+     * {@link MeterRegistry}. Called from {@code MetricsPlugin.onApplicationStart()}
+     * after the framework's Prometheus registry is installed — a Cache.init()-time
+     * binding wouldn't work because Cache.init() runs in {@code Play.start()}
+     * before the plugin lifecycle, when {@code Metrics.registry()} still points at
+     * the {@code SimpleMeterRegistry} default. Binding deferred to plugin start
+     * ensures the live Prometheus registry receives every metric.
+     *
+     * <p>Safe to call multiple times — Caffeine's binder registers gauges on each
+     * call, so a re-register would duplicate. The plugin guards against that by
+     * binding exactly once during {@code onApplicationStart}.
+     */
+    public void bindMetrics(MeterRegistry registry) {
+        CaffeineCacheMetrics.monitor(registry, cache, "play_cache");
     }
 
     private static long ttlNanos(int seconds) {

@@ -1,5 +1,6 @@
 package play.cache;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -32,5 +33,32 @@ public class CaffeineImplTest {
         // Now make sure it disappears after the 1 sec + 200 ms.
         Thread.sleep(150);
         assertThat(cache.get(key)).isNull();
+    }
+
+    @Test
+    public void bindMetricsRegistersCacheMetersOnRegistry() {
+        // PF-86: bindMetrics attaches Caffeine's hit/miss/eviction/load gauges
+        // and counters to the supplied MeterRegistry. Verify against a
+        // SimpleMeterRegistry — same surface area as the production
+        // PrometheusMeterRegistry from MetricsPlugin's perspective.
+        CaffeineImpl cache = CaffeineImpl.newInstance();
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+
+        cache.bindMetrics(registry);
+
+        // Touch the cache so cache.gets / cache.size have a sample to publish.
+        cache.set("k", "v", 60);
+        Object hit = cache.get("k");
+        Object miss = cache.get("nonexistent");
+        assertThat(hit).isEqualTo("v");
+        assertThat(miss).isNull();
+
+        // Caffeine's binder names follow the cache.* convention with a "cache"
+        // tag scoping each meter to a named cache. PF-86 names the framework
+        // cache "play_cache".
+        assertThat(registry.find("cache.size").tag("cache", "play_cache").gauge())
+                .as("cache.size gauge present").isNotNull();
+        assertThat(registry.find("cache.gets").tag("cache", "play_cache").meters())
+                .as("cache.gets meters present").isNotEmpty();
     }
 }
