@@ -21,13 +21,21 @@ import jakarta.validation.ValidatorFactory;
 import org.hibernate.validator.messageinterpolation.ParameterMessageInterpolator;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.core.config.Configurator;
+import org.hibernate.SessionFactory;
 import org.hibernate.cfg.AvailableSettings;
 import org.hibernate.jpa.boot.internal.EntityManagerFactoryBuilderImpl;
 import org.hibernate.jpa.boot.internal.PersistenceUnitInfoDescriptor;
 
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Tags;
+import io.micrometer.core.instrument.binder.cache.JCacheMetrics;
+// HibernateMetrics is referenced by reflection in bindHibernateMetrics — see the
+// comment there for why a direct import would fail to compile.
+
 import play.Logger;
 import play.Play;
 import play.PlayPlugin;
+import play.libs.Metrics;
 import play.classloading.ApplicationClasses.ApplicationClass;
 import play.data.binding.Binder;
 import play.data.binding.ParamNode;
@@ -143,11 +151,83 @@ public class JPAPlugin extends PlayPlugin {
                 }
                 
                 JPA.emfs.put(dbName, newEntityManagerFactory(dbName, dbConfig));
+                bindHibernateMetrics(dbName);
             } finally {
                 thread.setContextClassLoader(contextClassLoader);
             }
         }
         JPQL.instance = new JPQL();
+        bindJCacheMetrics();
+    }
+
+    /**
+     * PF-86 follow-up: bind {@link HibernateMetrics} (Micrometer) against the
+     * just-built {@link SessionFactory}, tagged with the per-DB name so multi-DB
+     * setups produce one metric series per data source. Slot ordering means
+     * {@link Metrics#registry()} already returns the live Prometheus registry
+     * by the time JPAPlugin (slot 400) runs — MetricsPlugin (slot 30) installed
+     * it first.
+     *
+     * <p>HibernateMetrics emits {@code hibernate.connections.obtained},
+     * {@code hibernate.transactions}, {@code hibernate.cache.requests} (with
+     * {@code result=hit|miss} and {@code region=<region>} tags),
+     * {@code hibernate.second.level.cache.requests}, {@code hibernate.flushes},
+     * and others. Most are zero unless {@code hibernate.generate_statistics=true}
+     * is set — see {@link #properties} where the framework defaults that to true.
+     */
+    private void bindHibernateMetrics(String dbName) {
+        try {
+            EntityManagerFactory emf = JPA.emfs.get(dbName);
+            SessionFactory sf = emf.unwrap(SessionFactory.class);
+            // Micrometer 1.13.x..1.16.x ships HibernateMetrics with overloads
+            // referencing both org.hibernate.SessionFactory AND
+            // javax.persistence.EntityManagerFactory (legacy Java EE). On this
+            // jakarta-only classpath, javac can't resolve the latter overload
+            // even when we'd be calling the SessionFactory one — Java's overload
+            // resolution loads every overload's parameter types up front and
+            // fails on the missing javax.persistence symbol. Reflection names
+            // only the SessionFactory overload and dodges the issue without
+            // adding javax.persistence-api just to satisfy the compiler.
+            Class<?> hm = Class.forName("io.micrometer.core.instrument.binder.jpa.HibernateMetrics");
+            java.lang.reflect.Method monitor = hm.getMethod(
+                "monitor",
+                MeterRegistry.class, SessionFactory.class, String.class, Iterable.class);
+            monitor.invoke(null, Metrics.registry(), sf, "play.jpa", Tags.of("db", dbName));
+        } catch (Throwable t) {
+            Logger.warn(t, "JPA -> failed to bind Hibernate metrics for db=%s", dbName);
+        }
+    }
+
+    /**
+     * PF-86 follow-up: bind {@link JCacheMetrics} (Micrometer) against every
+     * JSR-107 cache in the default {@link javax.cache.CacheManager} — this
+     * captures Hibernate's L2 cache regions when L2 is configured with
+     * {@code hibernate.cache.region.factory_class=org.hibernate.cache.jcache.JCacheRegionFactory},
+     * exposing per-region {@code cache.gets}, {@code cache.puts},
+     * {@code cache.evictions}, {@code cache.size}.
+     *
+     * <p>If no JCache provider is on the classpath (apps that don't enable L2,
+     * or use a non-JCache region factory), {@link javax.cache.Caching#getCachingProvider()}
+     * throws — caught and logged at debug level, not WARN, because it's the
+     * expected state for apps without L2.
+     */
+    private void bindJCacheMetrics() {
+        MeterRegistry registry = Metrics.registry();
+        try {
+            javax.cache.spi.CachingProvider provider = javax.cache.Caching.getCachingProvider();
+            javax.cache.CacheManager manager = provider.getCacheManager();
+            for (String cacheName : manager.getCacheNames()) {
+                javax.cache.Cache<?, ?> cache = manager.getCache(cacheName);
+                if (cache == null) continue;
+                try {
+                    JCacheMetrics.monitor(registry, cache, Tags.empty());
+                } catch (Throwable per) {
+                    Logger.warn(per, "JPA -> failed to bind JCacheMetrics for cache=%s", cacheName);
+                }
+            }
+        } catch (Throwable t) {
+            Logger.debug("JPA -> JCacheMetrics binding skipped (no JCache provider configured): %s", t.getMessage());
+        }
     }
 
     private List<Class<?>> entityClasses(String dbName) {
@@ -237,6 +317,15 @@ public class JPAPlugin extends PlayPlugin {
         }
 
         properties.put("hibernate.connection.datasource", DB.getDataSource(dbName));
+
+        // PF-86 follow-up: turn on Hibernate's statistics collector by default so
+        // the HibernateMetrics binder bound in onApplicationStart produces meaningful
+        // values. Statistics overhead is small relative to the observability benefit
+        // (Hibernate's own docs describe it as production-safe). Apps that explicitly
+        // disable statistics via hibernate.generate_statistics in dbConfig are
+        // honored — putIfAbsent only sets when the user hasn't.
+        properties.putIfAbsent("hibernate.generate_statistics", "true");
+
         return properties;
     }
 
