@@ -159,6 +159,21 @@ class Play1Plugin : Plugin<Project> {
         }
     }
 
+    private fun loadDotEnv(envFile: File): Map<String, String> {
+        if (!envFile.isFile) return emptyMap()
+        val out = linkedMapOf<String, String>()
+        envFile.readLines().forEach { raw ->
+            val line = raw.trim()
+            if (line.isEmpty() || line.startsWith("#")) return@forEach
+            val eq = line.indexOf('=')
+            if (eq <= 0) return@forEach
+            val key = line.substring(0, eq).trim()
+            val value = line.substring(eq + 1).trim().removeSurrounding("\"").removeSurrounding("'")
+            out[key] = value
+        }
+        return out
+    }
+
     private fun registerPlayJvmTask(
         project: Project,
         ext: Play1Extension,
@@ -209,6 +224,10 @@ class Play1Plugin : Plugin<Project> {
             jvmArgs(ext.frameworkVersion.map { "-Dplay.version=$it" }.get())
             jvmArgs("-javaagent:${frameworkJar.get().asFile.absolutePath}")
             extraSysprops.forEach { jvmArgs(it) }
+
+            loadDotEnv(File(project.projectDir, "certs/.env")).forEach { (k, v) ->
+                environment(k, v)
+            }
 
             if (includeHttpPort) {
                 args(ext.httpPort.map { "--http.port=$it" }.get())
@@ -361,11 +380,23 @@ abstract class PlayAutotestTask : DefaultTask() {
         }
 
         logger.lifecycle("~ Starting Play in test mode...")
-        val playProcess = ProcessBuilder(playCmd)
+        val playPb = ProcessBuilder(playCmd)
             .directory(appDir)
             .redirectOutput(systemOut)
             .redirectErrorStream(true)
-            .start()
+        val dotenv = File(appDir, "certs/.env")
+        if (dotenv.isFile) {
+            dotenv.readLines().forEach { raw ->
+                val line = raw.trim()
+                if (line.isEmpty() || line.startsWith("#")) return@forEach
+                val eq = line.indexOf('=')
+                if (eq <= 0) return@forEach
+                val key = line.substring(0, eq).trim()
+                val value = line.substring(eq + 1).trim().removeSurrounding("\"").removeSurrounding("'")
+                playPb.environment().putIfAbsent(key, value)
+            }
+        }
+        val playProcess = playPb.start()
 
         try {
             waitForReady(systemOut, playProcess)
