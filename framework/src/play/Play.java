@@ -961,6 +961,14 @@ public class Play {
                 // Load module without considering the dependencies.yml order
                 modules.addAll(Arrays.asList(localModules.list()));
             }
+            if (modules.isEmpty()) {
+                // PF-90: Gradle-managed apps don't ship a conf/dependencies.yml — the
+                // play-gradle-plugin populates modules/ directly. Fall back to whatever's
+                // on disk so those apps load their modules without needing a stub
+                // dependencies.yml. Conservative: only fires when retrieveModules()
+                // returned empty (file missing or no module declarations).
+                modules.addAll(Arrays.asList(localModules.list()));
+            }
 
             for (String moduleName : modules) {
                 File module = new File(localModules, moduleName);

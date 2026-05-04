@@ -10,6 +10,7 @@ import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.FileSystemOperations
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.plugins.JavaPluginExtension
+import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Delete
 import org.gradle.api.tasks.Input
@@ -38,6 +39,11 @@ abstract class Play1Extension {
     abstract val frameworkVersion: Property<String>
     abstract val playId: Property<String>
     abstract val httpPort: Property<Int>
+    abstract val modules: ListProperty<String>
+
+    fun modules(vararg names: String) {
+        modules.addAll(*names)
+    }
 }
 
 class Play1Plugin : Plugin<Project> {
@@ -48,6 +54,7 @@ class Play1Plugin : Plugin<Project> {
             frameworkVersion.convention("1.13.0-SNAPSHOT")
             playId.convention("")
             httpPort.convention(9000)
+            modules.convention(emptyList())
         }
 
         project.configurations.create("playFramework").apply {
@@ -66,8 +73,15 @@ class Play1Plugin : Plugin<Project> {
 
         project.tasks.register<ExtractPlayModulesTask>("extractPlayModules") {
             group = "play1"
-            description = "Extract Play module zips into modules/<name>/"
+            description = "Populate modules/<name>/ from framework-bundled and Ivy-resolved sources"
             moduleZips.from(playModule)
+            frameworkModules.from(project.provider {
+                val modulesRoot = ext.frameworkPath.dir("modules").get().asFile
+                ext.modules.get().mapNotNull { name ->
+                    val candidate = File(modulesRoot, name)
+                    if (candidate.isDirectory) candidate else null
+                }
+            })
             outputDir.set(project.layout.projectDirectory.dir("modules"))
         }
 
@@ -242,6 +256,9 @@ abstract class ExtractPlayModulesTask : DefaultTask() {
     @get:InputFiles
     abstract val moduleZips: ConfigurableFileCollection
 
+    @get:InputFiles
+    abstract val frameworkModules: ConfigurableFileCollection
+
     @get:OutputDirectory
     abstract val outputDir: DirectoryProperty
 
@@ -259,14 +276,24 @@ abstract class ExtractPlayModulesTask : DefaultTask() {
             val moduleName = if (baseName.contains("-"))
                 baseName.substringBeforeLast('-')
             else baseName
-            val dest = outDir.resolve(moduleName)
-            fileSystemOps.delete {
-                delete(dest)
-            }
-            fileSystemOps.copy {
+            extractTo(outDir.resolve(moduleName)) {
                 from(archiveOps.zipTree(zip))
-                into(dest)
             }
+        }
+        frameworkModules.forEach { srcDir ->
+            extractTo(outDir.resolve(srcDir.name)) {
+                from(srcDir)
+            }
+        }
+    }
+
+    private fun extractTo(dest: File, configure: org.gradle.api.file.CopySpec.() -> Unit) {
+        fileSystemOps.delete {
+            delete(dest)
+        }
+        fileSystemOps.copy {
+            configure()
+            into(dest)
         }
     }
 }

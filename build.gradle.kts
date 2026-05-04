@@ -34,6 +34,8 @@ abstract class PlayNewAppTask : DefaultTask() {
         }
         File(dest, "app/models").mkdirs()
         File(dest, "lib").mkdirs()
+        // Python-era artifact; the Gradle plugin uses play1 { modules(...) } instead.
+        File(dest, "conf/dependencies.yml").delete()
 
         // Substitute %APPLICATION_NAME% in conf/application.conf
         val appConf = File(dest, "conf/application.conf")
