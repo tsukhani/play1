@@ -45,6 +45,51 @@ bc. play start /path/to/myapp -Xms2g -Xmx2g -XX:MaxRAMPercentage=75
 
 Virtual threads make per-request stack memory negligible, so the historical "tune @play.pool@ to match cores" guidance no longer applies — those keys are gone in 1.12 (see the boot @WARN@ if your config still references them).
 
+h2. <a name="precompiled">Deploying without source code</a>
+
+When you want to ship only the build artifact — for locked-down servers, lean container images, or distributing a closed-source app to a customer — Play can run from a precompiled bytecode tree alone, with no @app/@ sources on disk. Note that "production mode" (@application.mode=prod@) on its own does not do this: it pre-compiles at boot, but still reads the source tree to do so. The flow below is what lets you omit @app/@ entirely from the deployed artifact.
+
+h3. Step 1 — precompile on the build host
+
+bc. play precompile /path/to/myapp
+
+This compiles every Java class under @app/@ and every Groovy template under @app/views/@ (plus equivalents inside any modules) and writes the bytecode to:
+
+bc. myapp/precompiled/
+
+The directory is regenerated from scratch on each invocation — the command deletes any existing @precompiled/@ and @tmp/@ before running.
+
+h3. Step 2 — assemble the deployment artifact
+
+The runtime needs:
+
+* @precompiled/@ — output from step 1
+* @conf/@ — @application.conf@, @routes@, log4j config, messages, keystores
+* @lib/@ — runtime dependencies
+* @public/@ — static assets
+
+You can omit:
+
+* @app/@ — controllers, models, templates (now living as bytecode under @precompiled/@)
+* @test/@ — tests
+* @tmp/@ — runtime cache (recreated on boot)
+* @build.xml@, @dependencies.yml@ — build-time only
+
+If the host has no @logs/@ directory, the @play@ launcher creates one on first start.
+
+h3. Step 3 — start in precompiled mode
+
+Tell the framework to load from @precompiled/@ instead of recompiling at boot:
+
+bc. play start /path/to/myapp -Dprecompiled=true
+
+The system property forces @prod@ mode and skips both the Java and template compile passes. If @precompiled/@ is missing, the framework logs @"Precompiled classes are missing!!"@ and refuses to start.
+
+h3. Caveats
+
+* @application.mode=dev@ is incompatible with this layout — hot reload requires source files. The @-Dprecompiled=true@ flag implies @prod@ mode regardless of @application.conf@.
+* Stack traces reference bytecode line numbers, not source lines. Keep a copy of the matching sources somewhere off the deployment host for debugging.
+
 h2. <a name="reverseproxy">Behind a reverse proxy</a>
 
 For production deployments, most operators front Play with a reverse proxy that handles TLS termination, virtual hosting, request routing, and (optionally) static-asset caching. Common choices:
