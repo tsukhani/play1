@@ -322,10 +322,17 @@ class Play1Plugin : Plugin<Project> {
                 project.files()
             }
         }
+        // Gradle-resolved Maven dependencies (implementation, etc.) live in main's
+        // runtimeClasspath. Include them so consumers get their declared deps.
+        val gradleRuntimeClasspath = project.provider {
+            val javaExt = project.extensions.findByType(org.gradle.api.plugins.JavaPluginExtension::class.java)
+            javaExt?.sourceSets?.findByName("main")?.runtimeClasspath ?: project.files()
+        }
         return project.files(
             project.layout.projectDirectory.dir("conf"),
             frameworkJar,
             project.configurations.named("playFramework"),
+            gradleRuntimeClasspath,
             project.fileTree("lib") { include("**/*.jar") },
             project.fileTree("modules") { include("*/lib/*.jar") },
             project.provider { project.fileTree(frameworkLibDir.get().asFile) { include("**/*.jar") } },
