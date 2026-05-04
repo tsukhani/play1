@@ -97,8 +97,25 @@ public class MetricsPlugin extends PlayPlugin {
         Metrics.install(installed);
         bindJvmMetrics(installed);
         bindFrameworkCacheMetrics(installed);
+        rebindHikariTrackers(installed);
 
         Logger.info("MetricsPlugin enabled at %s", basePath);
+    }
+
+    /**
+     * PF-85 follow-up: re-attach the HikariCP Micrometer tracker on every
+     * existing data source to the freshly installed registry. No-op on cold
+     * start (DB.datasources empty when this slot-30 plugin runs before
+     * DBPlugin at slot 300); fixes the dev-mode hot-reload path where the
+     * pool is reused with a stale tracker pointing at the previous, closed
+     * registry.
+     */
+    private void rebindHikariTrackers(MeterRegistry registry) {
+        try {
+            play.db.hikaricp.HikariDataSourceFactory.rebindAllToRegistry(registry);
+        } catch (Throwable t) {
+            Logger.warn(t, "MetricsPlugin -> failed to rebind Hikari trackers; hikaricp_* may be stale after reload");
+        }
     }
 
     /**

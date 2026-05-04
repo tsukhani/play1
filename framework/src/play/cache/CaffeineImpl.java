@@ -71,9 +71,11 @@ public class CaffeineImpl implements CacheImpl {
      * the {@code SimpleMeterRegistry} default. Binding deferred to plugin start
      * ensures the live Prometheus registry receives every metric.
      *
-     * <p>Safe to call multiple times — Caffeine's binder registers gauges on each
-     * call, so a re-register would duplicate. The plugin guards against that by
-     * binding exactly once during {@code onApplicationStart}.
+     * <p>Not safe to call multiple times against the same registry —
+     * {@link CaffeineCacheMetrics#monitor} registers fresh gauges on every
+     * invocation, so a re-bind would duplicate the meters under the same name.
+     * The plugin guards against that by binding exactly once per
+     * {@code onApplicationStart}, and the registry itself is rebuilt on stop.
      */
     public void bindMetrics(MeterRegistry registry) {
         CaffeineCacheMetrics.monitor(registry, cache, "play_cache");
