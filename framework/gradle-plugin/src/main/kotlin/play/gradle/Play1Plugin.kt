@@ -55,7 +55,9 @@ class Play1Plugin : Plugin<Project> {
         val ext = project.extensions.create<Play1Extension>("play1").apply {
             frameworkVersion.convention("1.13.0-SNAPSHOT")
             playId.convention("")
-            httpPort.convention(9000)
+            // httpPort intentionally has NO convention. Conf/application.conf is the
+            // source of truth; the plugin only passes --http.port when explicitly set
+            // via DSL or -PhttpPort, in which case it overrides conf at JVM startup.
             modules.convention(emptyList())
         }
         // -PplayId / -PhttpPort override DSL set. afterEvaluate runs after the user's
@@ -379,7 +381,7 @@ class Play1Plugin : Plugin<Project> {
                 environment(k, v)
             }
 
-            if (includeHttpPort) {
+            if (includeHttpPort && ext.httpPort.isPresent) {
                 args(ext.httpPort.map { "--http.port=$it" }.get())
             }
 
@@ -507,7 +509,14 @@ abstract class PlayAutotestTask : DefaultTask() {
     fun runAutotest() {
         val appDir = applicationPath.get().asFile
         val fwPath = frameworkPath.get().asFile
-        val port = httpPort.get()
+        // Fall back to conf/application.conf's http.port when DSL/-P didn't set it.
+        // Both Play and FirePhoque need to agree on the port; without an explicit
+        // override, conf is the source of truth.
+        val confFile = File(appDir, "conf/application.conf")
+        val confText = if (confFile.isFile) confFile.readText() else ""
+        val port = httpPort.orNull
+            ?: activeValue(confText, "http.port")?.toIntOrNull()
+            ?: 9000
         val version = frameworkVersion.get()
 
         killExistingInstance(port, timeoutMs = 200)
@@ -951,7 +960,7 @@ abstract class PlayStartTask : DefaultTask() {
         }
 
         val process = spawnPlay(appDir, frameworkPath.get().asFile, frameworkVersion.get(),
-            playId.get(), httpPort.get(), playClasspath.asPath)
+            playId.get(), httpPort.orNull, playClasspath.asPath)
         pidFile.writeText(process.pid().toString())
         val sysOut = File(appDir, "logs/system.out")
         logger.lifecycle("~ OK, ${appDir.absolutePath} is started")
@@ -1009,7 +1018,7 @@ abstract class PlayRestartTask : DefaultTask() {
         }
 
         val process = spawnPlay(appDir, frameworkPath.get().asFile, frameworkVersion.get(),
-            playId.get(), httpPort.get(), playClasspath.asPath)
+            playId.get(), httpPort.orNull, playClasspath.asPath)
         pidFile.writeText(process.pid().toString())
         val sysOut = File(appDir, "logs/system.out")
         logger.lifecycle("~ OK, ${appDir.absolutePath} is restarted")
@@ -1089,7 +1098,7 @@ private fun spawnPlay(
     frameworkPath: File,
     frameworkVersion: String,
     playId: String,
-    httpPort: Int,
+    httpPort: Int?,
     classpath: String,
 ): Process {
     val playJar = File(frameworkPath, "framework/play-$frameworkVersion.jar")
@@ -1104,7 +1113,7 @@ private fun spawnPlay(
         add("-classpath")
         add(classpath)
         add("play.server.Server")
-        add("--http.port=$httpPort")
+        if (httpPort != null) add("--http.port=$httpPort")
     }
     val logsDir = File(appDir, "logs").apply { mkdirs() }
     val sysOut = File(logsDir, "system.out")

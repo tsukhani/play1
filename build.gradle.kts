@@ -93,7 +93,8 @@ abstract class PlayNewAppTask : DefaultTask() {
             play1 {
                 frameworkPath.set(file("$fwPath"))
                 frameworkVersion.set("$fwVer")
-                httpPort.set(9000)
+                // http.port comes from conf/application.conf. Override here with
+                // httpPort.set(8080), or pass -PhttpPort=8080 at task time.
                 // playId is empty by default. Set to a value like "staging" to apply
                 // %staging.* conf overrides at runtime. -PplayId=foo overrides at task time.
                 // playId.set("staging")
