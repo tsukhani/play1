@@ -8,6 +8,7 @@ import org.gradle.api.file.ArchiveOperations
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.FileSystemOperations
+import org.gradle.api.file.FileCollection
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.plugins.JavaPluginExtension
 import org.gradle.api.provider.ListProperty
@@ -29,6 +30,7 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URI
+import java.security.SecureRandom
 import java.util.concurrent.TimeUnit
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
@@ -55,6 +57,14 @@ class Play1Plugin : Plugin<Project> {
             playId.convention("")
             httpPort.convention(9000)
             modules.convention(emptyList())
+        }
+        // -PplayId / -PhttpPort override DSL set. afterEvaluate runs after the user's
+        // play1 { ... } block in build.gradle.kts has applied, so this set wins over
+        // anything the DSL set. Without -P, DSL set or convention default applies.
+        project.afterEvaluate {
+            project.providers.gradleProperty("playId").orNull?.let { ext.playId.set(it) }
+            project.providers.gradleProperty("httpPort").orNull?.toIntOrNull()
+                ?.let { ext.httpPort.set(it) }
         }
 
         project.configurations.create("playFramework").apply {
@@ -113,9 +123,16 @@ class Play1Plugin : Plugin<Project> {
 
         project.tasks.register<PlayDistTask>("playDist") {
             group = "play1"
-            description = "Package the application as a ZIP distribution"
+            description = "Package the application as a ZIP distribution. Optional: -Poutput=<path>"
             projectDir.set(project.layout.projectDirectory)
-            outputFile.set(project.layout.projectDirectory.dir("dist").file("${project.name}.zip"))
+            val customOutput = project.providers.gradleProperty("output").orNull
+            outputFile.set(
+                if (customOutput != null && customOutput.isNotBlank()) {
+                    project.layout.projectDirectory.file(customOutput)
+                } else {
+                    project.layout.projectDirectory.dir("dist").file("${project.name}.zip")
+                }
+            )
             outputs.upToDateWhen { false }
         }
 
@@ -128,26 +145,147 @@ class Play1Plugin : Plugin<Project> {
             frameworkVersion.set(ext.frameworkVersion)
             httpPort.set(ext.httpPort)
             applicationPath.set(project.layout.projectDirectory)
-
-            val frameworkJar = ext.frameworkPath.file(ext.frameworkVersion.map { "framework/play-$it.jar" })
-            val frameworkLibDir = ext.frameworkPath.dir("framework/lib")
-            playClasspath.from(
-                project.layout.projectDirectory.dir("conf"),
-                frameworkJar,
-                project.configurations.named("playFramework"),
-                project.fileTree("lib") { include("**/*.jar") },
-                project.fileTree("modules") { include("*/lib/*.jar") },
-                project.provider { project.fileTree(frameworkLibDir.get().asFile) { include("**/*.jar") } },
-                project.provider {
-                    project.fileTree(ext.frameworkPath.dir("modules/testrunner/lib").get().asFile) { include("**/*.jar") }
-                }
-            )
+            playClasspath.from(playClasspathFor(project, ext, includeTestrunner = true))
 
             runUnit.set(project.findProperty("runUnit")?.toString().toBoolean())
             runFunctional.set(project.findProperty("runFunctional")?.toString().toBoolean())
             runSelenium.set(project.findProperty("runSelenium")?.toString().toBoolean())
             project.findProperty("webclientTimeout")?.toString()?.let { webclientTimeout.set(it) }
 
+            outputs.upToDateWhen { false }
+        }
+
+        project.tasks.register<Delete>("playClean") {
+            group = "play1"
+            description = "Delete the tmp/ directory"
+            delete(project.layout.projectDirectory.dir("tmp"))
+        }
+
+        registerPlayJvmTask(project, ext, "playEvolutions",
+            description = "Run Play DB Evolutions. Optional: -Pmode=apply|resolve|markApplied",
+            playIdOverride = null,
+            extraSysprops = project.providers.gradleProperty("mode").orNull
+                ?.takeIf { it.isNotBlank() }
+                ?.let { listOf("-Dmode=$it") }
+                ?: emptyList(),
+            includeHttpPort = false,
+            mainClassName = "play.db.Evolutions")
+
+        project.tasks.register<PlaySecretTask>("playSecret") {
+            group = "play1"
+            description = "Generate a new application secret and write to certs/.env"
+            applicationPath.set(project.layout.projectDirectory)
+            outputs.upToDateWhen { false }
+        }
+
+        project.tasks.register("playVersion") {
+            group = "play1"
+            description = "Print the Play framework version"
+            val ver = ext.frameworkVersion
+            doLast {
+                println(ver.get())
+            }
+        }
+
+        project.tasks.register("playClasspath") {
+            group = "play1"
+            description = "Print the computed classpath"
+            val cp = playClasspathFor(project, ext, includeTestrunner = false)
+            doLast {
+                cp.files.sortedBy { it.absolutePath }.forEach { println(it.absolutePath) }
+            }
+        }
+
+        project.tasks.register<PlayEnableHttpsTask>("playEnableHttps") {
+            group = "play1"
+            description = "Enable HTTPS on port 9443. Optional: -Pregenerate (force fresh cert)"
+            applicationPath.set(project.layout.projectDirectory)
+            regenerate.set(project.providers.gradleProperty("regenerate").map { true }.orElse(false))
+            outputs.upToDateWhen { false }
+        }
+
+        project.tasks.register<PlayDisableHttpsTask>("playDisableHttps") {
+            group = "play1"
+            description = "Disable HTTPS but keep cert files for re-enabling later"
+            applicationPath.set(project.layout.projectDirectory)
+            outputs.upToDateWhen { false }
+        }
+
+        project.tasks.register<PlayStartTask>("playStart") {
+            group = "play1"
+            description = "Start the application in the background"
+            dependsOn("extractPlayModules")
+            applicationPath.set(project.layout.projectDirectory)
+            frameworkPath.set(ext.frameworkPath)
+            frameworkVersion.set(ext.frameworkVersion)
+            playId.set(ext.playId)
+            httpPort.set(ext.httpPort)
+            playClasspath.from(playClasspathFor(project, ext, includeTestrunner = false))
+            outputs.upToDateWhen { false }
+        }
+
+        project.tasks.register<PlayStopTask>("playStop") {
+            group = "play1"
+            description = "Stop the running application"
+            applicationPath.set(project.layout.projectDirectory)
+            outputs.upToDateWhen { false }
+        }
+
+        project.tasks.register<PlayRestartTask>("playRestart") {
+            group = "play1"
+            description = "Restart the running application"
+            dependsOn("extractPlayModules")
+            applicationPath.set(project.layout.projectDirectory)
+            frameworkPath.set(ext.frameworkPath)
+            frameworkVersion.set(ext.frameworkVersion)
+            playId.set(ext.playId)
+            httpPort.set(ext.httpPort)
+            playClasspath.from(playClasspathFor(project, ext, includeTestrunner = false))
+            outputs.upToDateWhen { false }
+        }
+
+        project.tasks.register<PlayPidTask>("playPid") {
+            group = "play1"
+            description = "Show the PID of the running application"
+            applicationPath.set(project.layout.projectDirectory)
+            outputs.upToDateWhen { false }
+        }
+
+        project.tasks.register<PlayOutTask>("playOut") {
+            group = "play1"
+            description = "Tail the logs/system.out file"
+            applicationPath.set(project.layout.projectDirectory)
+            outputs.upToDateWhen { false }
+        }
+
+        project.tasks.register<PlayModulesInfoTask>("playModulesInfo") {
+            group = "play1"
+            description = "List the modules that would be loaded for this app"
+            applicationPath.set(project.layout.projectDirectory)
+            frameworkPath.set(ext.frameworkPath)
+            playId.set(ext.playId)
+            outputs.upToDateWhen { false }
+        }
+
+        project.tasks.register<PlayJavadocTask>("playJavadoc") {
+            group = "play1"
+            description = "Generate Javadoc for the application + declared modules. Optional: -Plinks (add external API doc links)"
+            dependsOn("extractPlayModules")
+            applicationPath.set(project.layout.projectDirectory)
+            frameworkPath.set(ext.frameworkPath)
+            frameworkVersion.set(ext.frameworkVersion)
+            modules.set(ext.modules)
+            playClasspath.from(playClasspathFor(project, ext, includeTestrunner = false))
+            withLinks.set(project.providers.gradleProperty("links").map { true }.orElse(false))
+            outputs.upToDateWhen { false }
+        }
+
+        project.tasks.register<PlayStatusTask>("playStatus") {
+            group = "play1"
+            description = "Display the running application's status. Optional: -Purl=<url>, -Psecret=<key>"
+            applicationPath.set(project.layout.projectDirectory)
+            urlOverride.set(project.providers.gradleProperty("url").orElse(""))
+            secretOverride.set(project.providers.gradleProperty("secret").orElse(""))
             outputs.upToDateWhen { false }
         }
     }
@@ -173,19 +311,26 @@ class Play1Plugin : Plugin<Project> {
         }
     }
 
-    private fun loadDotEnv(envFile: File): Map<String, String> {
-        if (!envFile.isFile) return emptyMap()
-        val out = linkedMapOf<String, String>()
-        envFile.readLines().forEach { raw ->
-            val line = raw.trim()
-            if (line.isEmpty() || line.startsWith("#")) return@forEach
-            val eq = line.indexOf('=')
-            if (eq <= 0) return@forEach
-            val key = line.substring(0, eq).trim()
-            val value = line.substring(eq + 1).trim().removeSurrounding("\"").removeSurrounding("'")
-            out[key] = value
+
+    private fun playClasspathFor(project: Project, ext: Play1Extension, includeTestrunner: Boolean): FileCollection {
+        val frameworkJar = ext.frameworkPath.file(ext.frameworkVersion.map { "framework/play-$it.jar" })
+        val frameworkLibDir = ext.frameworkPath.dir("framework/lib")
+        val testrunnerLib = project.provider {
+            if (includeTestrunner) {
+                project.fileTree(ext.frameworkPath.dir("modules/testrunner/lib").get().asFile) { include("**/*.jar") }
+            } else {
+                project.files()
+            }
         }
-        return out
+        return project.files(
+            project.layout.projectDirectory.dir("conf"),
+            frameworkJar,
+            project.configurations.named("playFramework"),
+            project.fileTree("lib") { include("**/*.jar") },
+            project.fileTree("modules") { include("*/lib/*.jar") },
+            project.provider { project.fileTree(frameworkLibDir.get().asFile) { include("**/*.jar") } },
+            testrunnerLib
+        )
     }
 
     private fun registerPlayJvmTask(
@@ -197,6 +342,7 @@ class Play1Plugin : Plugin<Project> {
         extraSysprops: List<String>,
         includeHttpPort: Boolean,
         extraDependsOn: List<String> = emptyList(),
+        mainClassName: String = "play.server.Server",
     ) {
         val isTestMode = playIdOverride?.startsWith("test") == true
 
@@ -206,27 +352,10 @@ class Play1Plugin : Plugin<Project> {
             dependsOn("extractPlayModules")
             extraDependsOn.forEach { dependsOn(it) }
 
-            mainClass.set("play.server.Server")
+            mainClass.set(mainClassName)
 
             val frameworkJar = ext.frameworkPath.file(ext.frameworkVersion.map { "framework/play-$it.jar" })
-            val frameworkLibDir = ext.frameworkPath.dir("framework/lib")
-            val testrunnerLib = project.provider {
-                if (isTestMode) {
-                    project.fileTree(ext.frameworkPath.dir("modules/testrunner/lib").get().asFile) { include("**/*.jar") }
-                } else {
-                    project.files()
-                }
-            }
-
-            classpath = project.files(
-                project.layout.projectDirectory.dir("conf"),
-                frameworkJar,
-                project.configurations.named("playFramework"),
-                project.fileTree("lib") { include("**/*.jar") },
-                project.fileTree("modules") { include("*/lib/*.jar") },
-                project.provider { project.fileTree(frameworkLibDir.get().asFile) { include("**/*.jar") } },
-                testrunnerLib
-            )
+            classpath = playClasspathFor(project, ext, isTestMode)
 
             jvmArgs(
                 "--enable-native-access=ALL-UNNAMED",
@@ -411,17 +540,8 @@ abstract class PlayAutotestTask : DefaultTask() {
             .directory(appDir)
             .redirectOutput(systemOut)
             .redirectErrorStream(true)
-        val dotenv = File(appDir, "certs/.env")
-        if (dotenv.isFile) {
-            dotenv.readLines().forEach { raw ->
-                val line = raw.trim()
-                if (line.isEmpty() || line.startsWith("#")) return@forEach
-                val eq = line.indexOf('=')
-                if (eq <= 0) return@forEach
-                val key = line.substring(0, eq).trim()
-                val value = line.substring(eq + 1).trim().removeSurrounding("\"").removeSurrounding("'")
-                playPb.environment().putIfAbsent(key, value)
-            }
+        loadDotEnv(File(appDir, "certs/.env")).forEach { (k, v) ->
+            playPb.environment().putIfAbsent(k, v)
         }
         val playProcess = playPb.start()
 
@@ -507,5 +627,635 @@ abstract class PlayAutotestTask : DefaultTask() {
     private fun javaExecutable(): String {
         val javaHome = System.getProperty("java.home")
         return "$javaHome/bin/java"
+    }
+}
+
+abstract class PlaySecretTask : DefaultTask() {
+    @get:Internal abstract val applicationPath: DirectoryProperty
+
+    @TaskAction
+    fun rotate() {
+        val appDir = applicationPath.get().asFile
+        val varName = readSecretVarName(File(appDir, "conf/application.conf"))
+        val secret = generateSecret()
+        val envFile = File(appDir, "certs/.env").apply { parentFile.mkdirs() }
+        writeEnvVar(envFile, varName, secret)
+        try {
+            java.nio.file.Files.setPosixFilePermissions(envFile.toPath(),
+                java.util.EnumSet.of(
+                    java.nio.file.attribute.PosixFilePermission.OWNER_READ,
+                    java.nio.file.attribute.PosixFilePermission.OWNER_WRITE
+                ))
+        } catch (_: UnsupportedOperationException) { /* non-POSIX FS */ }
+        ensureEnvExample(File(appDir, "certs/.env.example"), varName)
+        logger.lifecycle("~ $varName written to ${envFile.absolutePath}")
+        logger.lifecycle("~ Keep this value secret and consistent across all instances of your app.")
+    }
+
+    private fun readSecretVarName(appConf: File): String {
+        if (!appConf.isFile) return "PLAY_SECRET"
+        val pattern = Regex("""^\s*application\.secret\s*=\s*\$\{([^}:]+)\}\s*$""")
+        appConf.readLines().forEach { line ->
+            val stripped = line.trimStart()
+            if (stripped.startsWith("#") || stripped.startsWith("!")) return@forEach
+            pattern.matchEntire(line.trimEnd())?.let { return it.groupValues[1] }
+        }
+        return "PLAY_SECRET"
+    }
+
+    private fun writeEnvVar(envFile: File, varName: String, value: String) {
+        val newLine = "$varName=$value"
+        if (!envFile.exists()) {
+            envFile.writeText(newLine + "\n")
+            return
+        }
+        val lines = envFile.readLines().toMutableList()
+        var replaced = false
+        for (i in lines.indices) {
+            val stripped = lines[i].trimStart()
+            if (stripped.startsWith("$varName=") || stripped.startsWith("$varName ")) {
+                lines[i] = newLine
+                replaced = true
+                break
+            }
+        }
+        if (!replaced) lines.add(newLine)
+        envFile.writeText(lines.joinToString("\n") + "\n")
+    }
+
+    private fun ensureEnvExample(exampleFile: File, varName: String) {
+        if (exampleFile.exists()) return
+        exampleFile.parentFile.mkdirs()
+        exampleFile.writeText(buildString {
+            appendLine("# Environment variables for this Play application.")
+            appendLine("#")
+            appendLine("# Copy this file to `certs/.env` (which is gitignored) and fill in real values:")
+            appendLine("#     cp certs/.env.example certs/.env")
+            appendLine()
+            appendLine("$varName=")
+        })
+    }
+
+    private fun generateSecret(): String {
+        val alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+        val rng = SecureRandom()
+        return buildString(64) {
+            repeat(64) { append(alphabet[rng.nextInt(alphabet.length)]) }
+        }
+    }
+}
+
+abstract class PlayEnableHttpsTask : DefaultTask() {
+    @get:Internal abstract val applicationPath: DirectoryProperty
+    @get:Internal abstract val regenerate: Property<Boolean>
+
+    @get:Inject abstract val execOps: ExecOperations
+
+    @TaskAction
+    fun enable() {
+        val appDir = applicationPath.get().asFile
+        val configFile = File(appDir, "conf/application.conf")
+        if (!configFile.isFile) throw GradleException("conf/application.conf not found at ${configFile.absolutePath}")
+        var config = configFile.readText()
+
+        val certFileValue = activeValue(config, "certificate.file") ?: "certs/host.cert"
+        val keyFileValue = activeValue(config, "certificate.key.file") ?: "certs/host.key"
+        val certPath = File(appDir, certFileValue)
+        val keyPath = File(appDir, keyFileValue)
+
+        val httpsActive = hasActiveLine(config, "https.port")
+        val httpActive = hasActiveLine(config, "http.port")
+        val filesPresent = certPath.exists() && keyPath.exists()
+
+        val force = regenerate.getOrElse(false)
+        val regenerateReason: String? = when {
+            force && filesPresent -> "force"
+            !filesPresent -> "missing"
+            else -> when (checkCertValidity(certPath)) {
+                "expired" -> "expired"
+                "corrupted" -> "corrupted"
+                else -> null
+            }
+        }
+
+        if (regenerateReason == null && httpsActive && httpActive) {
+            logger.lifecycle("~ HTTPS is already enabled in conf/application.conf.")
+            logger.lifecycle("~ Cert+key present at $certFileValue and $keyFileValue.")
+            return
+        }
+
+        if (regenerateReason == null) {
+            logger.lifecycle("~ Reusing existing PEM cert+key at $certFileValue and $keyFileValue.")
+        } else {
+            when (regenerateReason) {
+                "expired" -> logger.lifecycle("~ Existing cert at $certFileValue has expired -- regenerating.")
+                "corrupted" -> logger.lifecycle("~ Existing cert at $certFileValue is unreadable -- regenerating.")
+                "force" -> logger.lifecycle("~ -Pregenerate: regenerating PEM cert+key (existing files will be replaced).")
+                // 'missing' falls through silently
+            }
+            try {
+                if (whichOnPath("mkcert")) {
+                    generateMkcert(certPath, keyPath)
+                    logger.lifecycle("~ Generated mkcert-signed PEM cert+key at $certFileValue and $keyFileValue.")
+                    logger.lifecycle("~ (Trusted by the system store after `mkcert -install` -- Chrome will accept HTTP/3.)")
+                } else if (whichOnPath("openssl")) {
+                    generateOpenssl(certPath, keyPath)
+                    logger.lifecycle("~ Generated self-signed PEM cert+key at $certFileValue and $keyFileValue (openssl fallback).")
+                    logger.lifecycle("~ Hint: install mkcert (https://github.com/FiloSottile/mkcert) for browser-trusted local-dev TLS.")
+                } else {
+                    throw GradleException("required tool not found on PATH: install either mkcert (preferred) or openssl, then re-run.")
+                }
+            } catch (e: Exception) {
+                throw GradleException("cert generation failed: ${e.message}", e)
+            }
+        }
+
+        if (!hasActiveLine(config, "certificate.file")) {
+            config = setOrUncomment(config, "certificate.file", "certs/host.cert")
+        }
+        if (!hasActiveLine(config, "certificate.key.file")) {
+            config = setOrUncomment(config, "certificate.key.file", "certs/host.key")
+        }
+        if (!httpsActive) {
+            config = setOrUncomment(config, "https.port", "9443")
+        }
+        if (!httpActive) {
+            config = setOrUncomment(config, "http.port", "9000")
+        }
+        if (!hasActiveLine(config, "%test.https.port")) {
+            config = setOrUncomment(config, "%test.https.port", "-1")
+        }
+        configFile.writeText(config)
+
+        val httpValue = activeValue(config, "http.port")
+        val httpsValue = activeValue(config, "https.port")
+        if (httpValue == "-1") {
+            logger.lifecycle("~ HTTP listener stays disabled per existing http.port=-1 setting.")
+        } else {
+            logger.lifecycle("~ HTTP enabled on port $httpValue.")
+        }
+        logger.lifecycle("~ HTTPS enabled on port $httpsValue (HTTP/2 + HTTP/3 via ALPN).")
+        logger.lifecycle("~ Run gradle playRun to apply.")
+    }
+
+    private fun whichOnPath(cmd: String): Boolean {
+        val pathDirs = System.getenv("PATH")?.split(File.pathSeparator) ?: emptyList()
+        return pathDirs.any { File(it, cmd).canExecute() }
+    }
+
+    private fun checkCertValidity(certPath: File): String {
+        if (!whichOnPath("openssl")) return "unknown"
+        val parseExit = try {
+            val sink = ByteArrayOutputStream()
+            execOps.exec {
+                commandLine("openssl", "x509", "-noout", "-in", certPath.absolutePath)
+                standardOutput = sink
+                errorOutput = sink
+                isIgnoreExitValue = true
+            }.exitValue
+        } catch (_: Exception) { return "corrupted" }
+        if (parseExit != 0) return "corrupted"
+        val expiryExit = try {
+            val sink = ByteArrayOutputStream()
+            execOps.exec {
+                commandLine("openssl", "x509", "-checkend", "0", "-noout", "-in", certPath.absolutePath)
+                standardOutput = sink
+                errorOutput = sink
+                isIgnoreExitValue = true
+            }.exitValue
+        } catch (_: Exception) { return "expired" }
+        return if (expiryExit == 0) "valid" else "expired"
+    }
+
+    private fun generateMkcert(certPath: File, keyPath: File) {
+        certPath.parentFile.mkdirs()
+        execOps.exec {
+            commandLine(
+                "mkcert",
+                "-cert-file", certPath.absolutePath,
+                "-key-file", keyPath.absolutePath,
+                "localhost", "127.0.0.1", "::1"
+            )
+        }
+    }
+
+    private fun generateOpenssl(certPath: File, keyPath: File) {
+        certPath.parentFile.mkdirs()
+        execOps.exec {
+            commandLine(
+                "openssl", "req", "-x509",
+                "-newkey", "rsa:2048", "-nodes",
+                "-keyout", keyPath.absolutePath,
+                "-out", certPath.absolutePath,
+                "-days", "3650",
+                "-subj", "/CN=localhost",
+                "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1"
+            )
+        }
+    }
+}
+
+abstract class PlayDisableHttpsTask : DefaultTask() {
+    @get:Internal abstract val applicationPath: DirectoryProperty
+
+    @TaskAction
+    fun disable() {
+        val appDir = applicationPath.get().asFile
+        val configFile = File(appDir, "conf/application.conf")
+        if (!configFile.isFile) throw GradleException("conf/application.conf not found at ${configFile.absolutePath}")
+        var config = configFile.readText()
+
+        val certFileValue = activeValue(config, "certificate.file") ?: "certs/host.cert"
+        val keyFileValue = activeValue(config, "certificate.key.file") ?: "certs/host.key"
+        val certPath = File(appDir, certFileValue)
+
+        if (!hasActiveLine(config, "https.port")) {
+            logger.lifecycle("~ HTTPS is already disabled.")
+            return
+        }
+
+        config = config.replace(Regex("""^(https\.port\s*=.*)$""", RegexOption.MULTILINE), "# $1")
+        config = config.replace(Regex("""^(%test\.https\.port\s*=.*)$""", RegexOption.MULTILINE), "# $1")
+        configFile.writeText(config)
+
+        logger.lifecycle("~ HTTPS disabled.")
+        if (certPath.exists()) {
+            logger.lifecycle("~ The cert+key at $certFileValue and $keyFileValue are preserved -- re-run gradle playEnableHttps to reactivate.")
+        }
+    }
+}
+
+private fun loadDotEnv(envFile: File): Map<String, String> {
+    if (!envFile.isFile) return emptyMap()
+    val out = linkedMapOf<String, String>()
+    envFile.readLines().forEach { raw ->
+        val line = raw.trim()
+        if (line.isEmpty() || line.startsWith("#")) return@forEach
+        val eq = line.indexOf('=')
+        if (eq <= 0) return@forEach
+        val key = line.substring(0, eq).trim()
+        val value = line.substring(eq + 1).trim().removeSurrounding("\"").removeSurrounding("'")
+        out[key] = value
+    }
+    return out
+}
+
+private fun hasActiveLine(config: String, key: String): Boolean {
+    return Regex("""^${Regex.escape(key)}\s*=""", RegexOption.MULTILINE).containsMatchIn(config)
+}
+
+private fun activeValue(config: String, key: String): String? {
+    val m = Regex("""^${Regex.escape(key)}\s*=\s*(.+?)\s*$""", RegexOption.MULTILINE).find(config)
+    return m?.groupValues?.get(1)?.trim()
+}
+
+private fun setOrUncomment(config: String, key: String, value: String): String {
+    val active = Regex("""^${Regex.escape(key)}\s*=.*$""", RegexOption.MULTILINE)
+    if (active.containsMatchIn(config)) {
+        return active.replaceFirst(config, "$key=$value")
+    }
+    val commented = Regex("""^#\s*${Regex.escape(key)}\s*=.*$""", RegexOption.MULTILINE)
+    if (commented.containsMatchIn(config)) {
+        return commented.replaceFirst(config, "$key=$value")
+    }
+    val withNewline = if (config.endsWith("\n")) config else "$config\n"
+    return "$withNewline$key=$value\n"
+}
+
+abstract class PlayStartTask : DefaultTask() {
+    @get:Internal abstract val applicationPath: DirectoryProperty
+    @get:Internal abstract val frameworkPath: DirectoryProperty
+    @get:Internal abstract val frameworkVersion: Property<String>
+    @get:Internal abstract val playId: Property<String>
+    @get:Internal abstract val httpPort: Property<Int>
+    @get:Internal abstract val playClasspath: ConfigurableFileCollection
+
+    @TaskAction
+    fun start() {
+        val appDir = applicationPath.get().asFile
+        val pidFile = File(appDir, "server.pid")
+        if (pidFile.exists()) {
+            val existing = pidFile.readText().trim().toLongOrNull()
+            if (existing != null && ProcessHandle.of(existing).isPresent) {
+                throw GradleException("Oops. ${appDir.absolutePath} is already started (pid:$existing). Stop it first or delete ${pidFile.absolutePath}.")
+            }
+            logger.lifecycle("~ Removing pid file ${pidFile.absolutePath} for not running pid $existing")
+            pidFile.delete()
+        }
+
+        val process = spawnPlay(appDir, frameworkPath.get().asFile, frameworkVersion.get(),
+            playId.get(), httpPort.get(), playClasspath.asPath)
+        pidFile.writeText(process.pid().toString())
+        val sysOut = File(appDir, "logs/system.out")
+        logger.lifecycle("~ OK, ${appDir.absolutePath} is started")
+        logger.lifecycle("~ output is redirected to ${sysOut.absolutePath}")
+        logger.lifecycle("~ pid is ${process.pid()}")
+    }
+}
+
+abstract class PlayStopTask : DefaultTask() {
+    @get:Internal abstract val applicationPath: DirectoryProperty
+
+    @TaskAction
+    fun stop() {
+        val appDir = applicationPath.get().asFile
+        val pidFile = File(appDir, "server.pid")
+        if (!pidFile.exists()) {
+            throw GradleException("Oops! ${appDir.absolutePath} is not started (server.pid not found)")
+        }
+        val pid = pidFile.readText().trim().toLong()
+        val handle = ProcessHandle.of(pid).orElse(null)
+        if (handle == null) {
+            logger.lifecycle("~ Play was not running (pid $pid not found); removing stale pid file")
+        } else {
+            handle.destroy()
+            handle.onExit().get(10, TimeUnit.SECONDS)
+        }
+        pidFile.delete()
+        logger.lifecycle("~ OK, ${appDir.absolutePath} is stopped")
+    }
+}
+
+abstract class PlayRestartTask : DefaultTask() {
+    @get:Internal abstract val applicationPath: DirectoryProperty
+    @get:Internal abstract val frameworkPath: DirectoryProperty
+    @get:Internal abstract val frameworkVersion: Property<String>
+    @get:Internal abstract val playId: Property<String>
+    @get:Internal abstract val httpPort: Property<Int>
+    @get:Internal abstract val playClasspath: ConfigurableFileCollection
+
+    @TaskAction
+    fun restart() {
+        val appDir = applicationPath.get().asFile
+        val pidFile = File(appDir, "server.pid")
+        if (pidFile.exists()) {
+            val pid = pidFile.readText().trim().toLongOrNull()
+            pidFile.delete()
+            if (pid != null) {
+                ProcessHandle.of(pid).ifPresent { h ->
+                    h.destroy()
+                    h.onExit().get(10, TimeUnit.SECONDS)
+                }
+            }
+        } else {
+            logger.lifecycle("~ ${appDir.absolutePath} was not started (server.pid not found); starting fresh")
+        }
+
+        val process = spawnPlay(appDir, frameworkPath.get().asFile, frameworkVersion.get(),
+            playId.get(), httpPort.get(), playClasspath.asPath)
+        pidFile.writeText(process.pid().toString())
+        val sysOut = File(appDir, "logs/system.out")
+        logger.lifecycle("~ OK, ${appDir.absolutePath} is restarted")
+        logger.lifecycle("~ output is redirected to ${sysOut.absolutePath}")
+        logger.lifecycle("~ New pid is ${process.pid()}")
+    }
+}
+
+abstract class PlayPidTask : DefaultTask() {
+    @get:Internal abstract val applicationPath: DirectoryProperty
+
+    @TaskAction
+    fun showPid() {
+        val pidFile = File(applicationPath.get().asFile, "server.pid")
+        if (!pidFile.exists()) {
+            throw GradleException("Oops! ${applicationPath.get().asFile.absolutePath} is not started (server.pid not found)")
+        }
+        val pid = pidFile.readText().trim()
+        logger.lifecycle("~ PID of the running application is $pid")
+    }
+}
+
+abstract class PlayOutTask : DefaultTask() {
+    @get:Internal abstract val applicationPath: DirectoryProperty
+    @get:Inject abstract val execOps: ExecOperations
+
+    @TaskAction
+    fun out() {
+        val sysOut = File(applicationPath.get().asFile, "logs/system.out")
+        if (!sysOut.exists()) {
+            throw GradleException("Oops! ${sysOut.absolutePath} not found")
+        }
+        execOps.exec {
+            commandLine("tail", "-f", sysOut.absolutePath)
+            standardInput = System.`in`
+        }
+    }
+}
+
+abstract class PlayStatusTask : DefaultTask() {
+    @get:Internal abstract val applicationPath: DirectoryProperty
+    @get:Internal abstract val urlOverride: Property<String>
+    @get:Internal abstract val secretOverride: Property<String>
+
+    @TaskAction
+    fun status() {
+        val appDir = applicationPath.get().asFile
+        val configFile = File(appDir, "conf/application.conf")
+        val config = if (configFile.isFile) configFile.readText() else ""
+
+        val url = urlOverride.orNull?.takeIf { it.isNotBlank() }
+            ?: run {
+                val httpPort = activeValue(config, "http.port") ?: "9000"
+                "http://localhost:$httpPort/@status"
+            }
+        val secret = secretOverride.orNull?.takeIf { it.isNotBlank() }
+            ?: activeValue(config, "application.statusKey")
+            ?: throw GradleException("application.statusKey not set in conf/application.conf and no -Psecret= provided")
+
+        val conn = URI(url).toURL().openConnection() as HttpURLConnection
+        conn.setRequestProperty("Authorization", secret)
+        conn.connectTimeout = 5_000
+        conn.readTimeout = 10_000
+        try {
+            val body = conn.inputStream.bufferedReader().use { it.readText() }
+            logger.lifecycle("~ Status from $url,")
+            logger.lifecycle("~")
+            println(body)
+        } catch (e: java.io.IOException) {
+            throw GradleException("Cannot retrieve status from $url: ${e.message}", e)
+        }
+    }
+}
+
+private fun spawnPlay(
+    appDir: File,
+    frameworkPath: File,
+    frameworkVersion: String,
+    playId: String,
+    httpPort: Int,
+    classpath: String,
+): Process {
+    val playJar = File(frameworkPath, "framework/play-$frameworkVersion.jar")
+    val cmd = buildList {
+        add(System.getProperty("java.home") + "/bin/java")
+        add("--enable-native-access=ALL-UNNAMED")
+        add("-javaagent:${playJar.absolutePath}")
+        add("-Dfile.encoding=utf-8")
+        add("-Dapplication.path=${appDir.absolutePath}")
+        add("-Dplay.id=$playId")
+        add("-Dplay.version=$frameworkVersion")
+        add("-classpath")
+        add(classpath)
+        add("play.server.Server")
+        add("--http.port=$httpPort")
+    }
+    val logsDir = File(appDir, "logs").apply { mkdirs() }
+    val sysOut = File(logsDir, "system.out")
+    val pb = ProcessBuilder(cmd)
+        .directory(appDir)
+        .redirectOutput(sysOut)
+        .redirectErrorStream(true)
+    loadDotEnv(File(appDir, "certs/.env")).forEach { (k, v) ->
+        pb.environment().putIfAbsent(k, v)
+    }
+    return pb.start()
+}
+
+abstract class PlayJavadocTask : DefaultTask() {
+    @get:Internal abstract val applicationPath: DirectoryProperty
+    @get:Internal abstract val frameworkPath: DirectoryProperty
+    @get:Internal abstract val frameworkVersion: Property<String>
+    @get:Internal abstract val modules: ListProperty<String>
+    @get:Internal abstract val playClasspath: ConfigurableFileCollection
+    @get:Internal abstract val withLinks: Property<Boolean>
+
+    @get:Inject abstract val execOps: ExecOperations
+    @get:Inject abstract val fileSystemOps: FileSystemOperations
+
+    @TaskAction
+    fun generate() {
+        val appDir = applicationPath.get().asFile
+        val outDir = File(appDir, "javadoc")
+        fileSystemOps.delete { delete(outDir) }
+        outDir.mkdirs()
+
+        val configFile = File(appDir, "conf/application.conf")
+        val appName = if (configFile.isFile) {
+            activeValue(configFile.readText(), "application.name") ?: "Application"
+        } else "Application"
+
+        val sources = mutableListOf<File>()
+        listOf(File(appDir, "app"), File(appDir, "src")).forEach { dir ->
+            if (dir.isDirectory) collectJavaFiles(dir, sources)
+        }
+        val frameworkModulesDir = File(frameworkPath.get().asFile, "modules")
+        modules.get().forEach { moduleName ->
+            val moduleDir = File(frameworkModulesDir, moduleName)
+            if (moduleDir.isDirectory) {
+                listOf(File(moduleDir, "app"), File(moduleDir, "src")).forEach { dir ->
+                    if (dir.isDirectory) collectJavaFiles(dir, sources)
+                }
+            }
+        }
+        if (sources.isEmpty()) {
+            logger.lifecycle("~ No Java sources found to document")
+            return
+        }
+
+        val cmd = mutableListOf<String>().apply {
+            add(javadocExecutable())
+            addAll(listOf("-d", outDir.absolutePath))
+            addAll(listOf("-classpath", playClasspath.asPath))
+            addAll(listOf("-encoding", "UTF-8", "-charset", "UTF-8"))
+            addAll(listOf("--enable-preview", "--source", "25"))
+            addAll(listOf("-doctitle", appName))
+            addAll(listOf("-header", "<b>$appName</b>"))
+            addAll(listOf("-footer", "<b>$appName</b>"))
+            if (withLinks.getOrElse(false)) {
+                addAll(listOf("-link", "https://docs.oracle.com/en/java/javase/25/docs/api/"))
+                addAll(listOf("-link", "https://www.playframework.com/documentation/${frameworkVersion.get()}/api/"))
+            }
+            addAll(sources.map { it.absolutePath })
+        }
+
+        logger.lifecycle("~ Generating Javadoc in ${outDir.absolutePath}...")
+        val logsDir = File(appDir, "logs").apply { mkdirs() }
+        val outLog = File(logsDir, "javadoc.log")
+        val errLog = File(logsDir, "javadoc.err")
+        val exitCode = outLog.outputStream().use { sout ->
+            errLog.outputStream().use { serr ->
+                execOps.exec {
+                    commandLine(cmd)
+                    standardOutput = sout
+                    errorOutput = serr
+                    isIgnoreExitValue = true
+                }.exitValue
+            }
+        }
+
+        if (exitCode != 0) {
+            throw GradleException("Unable to create Javadocs. See ${errLog.absolutePath} for errors.")
+        }
+        logger.lifecycle("~ Done! Open ${File(outDir, "overview-tree.html").absolutePath} in your browser.")
+    }
+
+    private fun collectJavaFiles(root: File, out: MutableList<File>) {
+        root.walkTopDown().filter { it.isFile && it.name.endsWith(".java") }.forEach { out.add(it) }
+    }
+
+    private fun javadocExecutable(): String {
+        val javaHome = System.getenv("JAVA_HOME")
+        if (!javaHome.isNullOrBlank()) {
+            return File(javaHome, "bin/javadoc").absolutePath
+        }
+        val home = System.getProperty("java.home")
+        val candidate = File(home, "bin/javadoc")
+        return if (candidate.exists()) candidate.absolutePath else "javadoc"
+    }
+}
+
+abstract class PlayModulesInfoTask : DefaultTask() {
+    @get:Internal abstract val applicationPath: DirectoryProperty
+    @get:Internal abstract val frameworkPath: DirectoryProperty
+    @get:Internal abstract val playId: Property<String>
+
+    @TaskAction
+    fun show() {
+        val appDir = applicationPath.get().asFile
+        val fwDir = frameworkPath.get().asFile
+        val configFile = File(appDir, "conf/application.conf")
+        val configText = if (configFile.isFile) configFile.readText() else ""
+
+        val modules = linkedSetOf<File>()
+
+        // 1. dev mode: framework auto-adds docviewer
+        val mode = (activeValue(configText, "application.mode") ?: "dev").lowercase()
+        if (mode == "dev") {
+            val docviewer = File(fwDir, "modules/docviewer")
+            if (docviewer.isDirectory) modules.add(docviewer)
+        }
+
+        // 2. module.X=path entries from application.conf
+        Regex("""^\s*module\.([^=\s]+)\s*=\s*(.+?)\s*$""", RegexOption.MULTILINE)
+            .findAll(configText)
+            .forEach { match ->
+                val raw = match.groupValues[2].trim()
+                val resolved = raw.replace("\${play.path}", fwDir.absolutePath)
+                val f = if (resolved.startsWith("/")) File(resolved) else File(appDir, resolved)
+                if (f.isDirectory) modules.add(f)
+            }
+
+        // 3. app's own modules/*
+        val localModules = File(appDir, "modules")
+        if (localModules.isDirectory) {
+            localModules.listFiles()
+                ?.filter { it.isDirectory && !it.name.startsWith(".") }
+                ?.sortedBy { it.name }
+                ?.forEach { modules.add(it) }
+        }
+
+        // 4. test mode: framework auto-adds testrunner (Play.runningInTestMode matches play.id ~ test|test-?.*)
+        if (playId.getOrElse("").startsWith("test")) {
+            val testrunner = File(fwDir, "modules/testrunner")
+            if (testrunner.isDirectory) modules.add(testrunner)
+        }
+
+        if (modules.isEmpty()) {
+            logger.lifecycle("~ No modules installed in this application")
+        } else {
+            logger.lifecycle("~ Application modules are:")
+            logger.lifecycle("~ ")
+            modules.forEach { logger.lifecycle("~ ${it.absolutePath}") }
+        }
     }
 }

@@ -9,6 +9,7 @@ abstract class PlayNewAppTask : DefaultTask() {
     @get:org.gradle.api.tasks.Internal abstract val frameworkVersion: org.gradle.api.provider.Property<String>
     @get:org.gradle.api.tasks.Internal abstract val appName: org.gradle.api.provider.Property<String>
     @get:org.gradle.api.tasks.Internal abstract val destDir: org.gradle.api.provider.Property<String>
+    @get:org.gradle.api.tasks.Internal abstract val withFrontend: org.gradle.api.provider.Property<Boolean>
 
     @get:javax.inject.Inject abstract val fileSystemOps: org.gradle.api.file.FileSystemOperations
     @get:javax.inject.Inject abstract val execOps: org.gradle.process.ExecOperations
@@ -18,7 +19,7 @@ abstract class PlayNewAppTask : DefaultTask() {
         val name = appName.orNull?.takeIf { it.isNotBlank() }
             ?: throw GradleException("Required: -Pname=<app-name>")
         val destPath = destDir.orNull?.takeIf { it.isNotBlank() }
-            ?: throw GradleException("Required: -Pdest=<path-to-new-app>")
+            ?: File(System.getProperty("user.dir"), name).absolutePath
         val dest = File(destPath).absoluteFile
         if (dest.exists()) throw GradleException("Destination already exists: ${dest.absolutePath}")
 
@@ -93,6 +94,12 @@ abstract class PlayNewAppTask : DefaultTask() {
                 frameworkPath.set(file("$fwPath"))
                 frameworkVersion.set("$fwVer")
                 httpPort.set(9000)
+                // playId is empty by default. Set to a value like "staging" to apply
+                // %staging.* conf overrides at runtime. -PplayId=foo overrides at task time.
+                // playId.set("staging")
+                // Docviewer powers the welcome page, /@documentation, and /@api browsers
+                // in dev mode. Remove if you want a slimmer setup.
+                modules("docviewer")
             }
         """.trimIndent() + "\n")
 
@@ -106,10 +113,66 @@ abstract class PlayNewAppTask : DefaultTask() {
             logger.warn("~ git init failed (${e.message}); playDist will require manual git setup")
         }
 
+        val frontend = withFrontend.getOrElse(false)
+        if (frontend) {
+            setupNuxtFrontend(dest, name)
+        }
+
         logger.lifecycle("~")
         logger.lifecycle("~ OK, the application is created.")
         logger.lifecycle("~ Start it with: cd ${dest.absolutePath} && gradle playRun")
+        if (frontend) {
+            logger.lifecycle("~ Start the frontend with: cd ${dest.absolutePath}/frontend && pnpm install && pnpm dev")
+        }
         logger.lifecycle("~")
+    }
+
+    private fun setupNuxtFrontend(dest: File, appName: String) {
+        val nuxtSkel = frameworkPath.get().dir("resources/nuxt-skel").asFile
+        if (!nuxtSkel.isDirectory) throw GradleException("nuxt-skel not found at ${nuxtSkel.absolutePath}")
+
+        val frontendDir = File(dest, "frontend")
+        logger.lifecycle("~")
+        logger.lifecycle("~ Setting up Nuxt 3 frontend...")
+
+        fileSystemOps.copy {
+            from(nuxtSkel)
+            into(frontendDir)
+        }
+
+        // Move ApiController.java from frontend/ to app/controllers/
+        val apiCtrlSrc = File(frontendDir, "ApiController.java")
+        val apiCtrlDst = File(dest, "app/controllers/ApiController.java")
+        if (apiCtrlSrc.exists()) {
+            apiCtrlSrc.renameTo(apiCtrlDst)
+        }
+
+        // Substitute %APPLICATION_NAME% in text files under frontend/
+        frontendDir.walkTopDown().filter { it.isFile }.forEach { f ->
+            try {
+                val content = f.readText()
+                if (content.contains("%APPLICATION_NAME%")) {
+                    f.writeText(content.replace("%APPLICATION_NAME%", appName))
+                }
+            } catch (_: Exception) {
+                // Binary file or unreadable; skip
+            }
+        }
+
+        // Patch conf/routes: insert /api/status route before "# Catch all"
+        val routesFile = File(dest, "conf/routes")
+        if (routesFile.exists()) {
+            val routes = routesFile.readText()
+            val apiRoutes = "# API endpoints for Nuxt frontend\nGET     /api/status                ApiController.status\n\n"
+            if (routes.contains("# Catch all\n")) {
+                routesFile.writeText(routes.replace("# Catch all\n", apiRoutes + "# Catch all\n"))
+            }
+        }
+
+        // Frontend gitignore
+        File(frontendDir, ".gitignore").writeText("node_modules\n.nuxt\n.output\ndist\n")
+
+        logger.lifecycle("~ Nuxt 3 frontend created in ${frontendDir.absolutePath}")
     }
 
     private fun generateSecret(): String {
@@ -123,9 +186,10 @@ abstract class PlayNewAppTask : DefaultTask() {
 
 tasks.register<PlayNewAppTask>("playNewApp") {
     group = "play1"
-    description = "Scaffold a new Play 1 application. Required: -Pname=<name> -Pdest=<path>"
+    description = "Scaffold a new Play 1 application. Required: -Pname=<name>. Optional: -Pdest=<path> (default: <cwd>/<name>), -Pfrontend (add Nuxt 3 frontend)"
     frameworkPath.set(layout.projectDirectory)
     frameworkVersion.set(version.toString())
     appName.set(providers.gradleProperty("name").orElse(""))
     destDir.set(providers.gradleProperty("dest").orElse(""))
+    withFrontend.set(providers.gradleProperty("frontend").map { true }.orElse(false))
 }
