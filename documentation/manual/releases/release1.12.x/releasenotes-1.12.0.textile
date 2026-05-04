@@ -210,6 +210,23 @@ h3. Micrometer metrics + Prometheus + OTLP (PF-13, PF-82)
 * Static @play.libs.Metrics@ facade for application code: @counter@, @timer@, @gauge@.
 * Optional OTLP push: set @metrics.otlp.endpoint@ and metrics also push to OTel Collector / Honeycomb / Datadog / etc. via a @CompositeMeterRegistry@. Prometheus scrape continues alongside. See "observability":observability.
 
+h4. Cache + connection-pool binders (PF-85, PF-86, PF-87 — added in 1.12.34/1.12.35/1.12.36)
+
+The base PF-13 surface emits JVM and HTTP metrics. PF-85 / PF-86 / PF-87 extend that to the cache and database layers so pool exhaustion, cache hit-rate degradation, and Hibernate L2 effectiveness all show up in the same scrape.
+
+* *HikariCP pool (PF-85)* — every @HikariDataSource@ created by @HikariDataSourceFactory@ attaches @MicrometerMetricsTrackerFactory@. Emits @hikaricp_connections@, @hikaricp_connections_active@, @hikaricp_connections_idle@, @hikaricp_connections_pending@ (the queue-depth signal under exhaustion), @hikaricp_connections_acquire_seconds@, @hikaricp_connections_creation_seconds@, @hikaricp_connections_usage_seconds@, @hikaricp_connections_timeout_total@. Multi-DB tagged with @pool=&lt;dbName&gt;@.
+* *Caffeine framework cache (PF-86)* — the in-process cache exposed via @play.cache.Cache@ binds @CaffeineCacheMetrics@ as @cache_size@, @cache_gets_total@ (with @result=hit|miss@), @cache_evictions_total@, @cache_load_duration_seconds@. Tagged with @cache=&quot;play_cache&quot;@.
+* *Hibernate aggregate (PF-86 follow-up)* — @HibernateMetrics@ binds per @SessionFactory@ at JPA startup, tagged @db=&lt;dbName&gt;@. Emits @hibernate_connections_obtained@, @hibernate_transactions@, @hibernate_flushes@, @hibernate_cache_requests@, and the dedicated @hibernate_second_level_cache_*@ series. *@hibernate.generate_statistics@ is now defaulted to true* via @putIfAbsent@ — apps that explicitly disable statistics in their config win, but the default-on path means the binder produces non-zero values out of the box.
+* *Hibernate L2 (JCache)* — when L2 is configured with @hibernate.cache.region.factory_class=org.hibernate.cache.jcache.JCacheRegionFactory@, every region the @SessionFactory@ uses is bound through @JCacheMetrics@, tagged @db=&lt;dbName&gt;@. Apps without L2 — or with a non-JCache region factory like Infinispan — silently skip this binding.
+* *PF-87 — javax.persistence opt-in for Hibernate metrics* — Micrometer 1.13.x..1.16.x ships @HibernateMetrics@ with a legacy overload that declares @throws javax.persistence.PersistenceException@. The JVM linker resolves that throws-clause type during class verification, so on this jakarta-only fork the class fails to load with @NoClassDefFoundError@ before any reflection runs. The framework probes for @javax.persistence.EntityManagerFactory@ at boot and, if absent (the expected state), logs an INFO line per data source and skips the bind. Operators who want the @hibernate_*@ aggregate metrics can opt in by adding @javax.persistence -&gt; javax.persistence-api 2.2@ (or any other source of the legacy package) to their app's @conf/dependencies.yml@. The HikariCP, Caffeine, and JCache binders are unaffected.
+
+h4. 1.12.37 — multi-DB pool tags + dev-reload Hikari rebind
+
+Two follow-up fixes shipped after a code-review audit of the PF-85/86/87 wiring:
+
+* *Multi-DB Hikari pool naming* — @HikariDataSourceFactory@ now calls @setPoolName(dbConfig.configName)@ before attaching the tracker. The @pool=@ tag on every @hikaricp_*@ meter is the human-readable DB name (@default@, @secondary@, @tenant_47@, ...) instead of Hikari's auto-generated @HikariPool-1@, @HikariPool-2@. Critical for multi-DB / multi-tenant deployments where the tag is the only way to attribute pool exhaustion to a specific data source.
+* *Dev-mode hot-reload tracker rebind* — @MetricsPlugin.onApplicationStart@ now re-attaches the @MicrometerMetricsTrackerFactory@ to every active @HikariDataSource@ against the freshly installed registry. Previously, a dev reload (where @DBPlugin.changed()@ returns false and the existing pool is reused) silently dropped @hikaricp_*@ from @/@metrics@ because the tracker still pointed at the closed @PrometheusMeterRegistry@ from the prior plugin lifecycle. No-op on cold start.
+
 h3. Build infrastructure
 
 * *@ant test@ as the single ordered verification entrypoint* (PF-80) — clean → jar → unittest → integration-test → cli-test, all in one invocation. Cold-start fixed (PF-79): @compile-tests@ now depends on @agent-jar@ so the test JVM can load the framework agent.

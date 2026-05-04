@@ -152,12 +152,12 @@ public class JPAPlugin extends PlayPlugin {
                 
                 JPA.emfs.put(dbName, newEntityManagerFactory(dbName, dbConfig));
                 bindHibernateMetrics(dbName);
+                bindJCacheMetrics(dbName);
             } finally {
                 thread.setContextClassLoader(contextClassLoader);
             }
         }
         JPQL.instance = new JPQL();
-        bindJCacheMetrics();
     }
 
     /**
@@ -221,34 +221,56 @@ public class JPAPlugin extends PlayPlugin {
     }
 
     /**
-     * PF-86 follow-up: bind {@link JCacheMetrics} (Micrometer) against every
-     * JSR-107 cache in the default {@link javax.cache.CacheManager} — this
-     * captures Hibernate's L2 cache regions when L2 is configured with
-     * {@code hibernate.cache.region.factory_class=org.hibernate.cache.jcache.JCacheRegionFactory},
-     * exposing per-region {@code cache.gets}, {@code cache.puts},
-     * {@code cache.evictions}, {@code cache.size}.
+     * PF-86 follow-up + M3: bind {@link JCacheMetrics} (Micrometer) against
+     * every JSR-107 cache region used by *this* {@link SessionFactory}, tagged
+     * with {@code db=<dbName>}. Per-EMF discovery (rather than a single global
+     * iteration of the default {@link javax.cache.Caching#getCachingProvider()})
+     * is required for multi-tenant SaaS and read-replica setups: when many DBs
+     * share entity classes, Hibernate generates the same L2 region names on
+     * every {@link SessionFactory}, and a global iteration would emit one
+     * collapsed {@code cache.*} series per region instead of one per DB.
      *
-     * <p>If no JCache provider is on the classpath (apps that don't enable L2,
-     * or use a non-JCache region factory), {@link javax.cache.Caching#getCachingProvider()}
-     * throws — caught and logged at debug level, not WARN, because it's the
-     * expected state for apps without L2.
+     * <p>Resolves the cache manager via
+     * {@code SessionFactoryImplementor.getServiceRegistry().getService(RegionFactory.class)}.
+     * If the region factory isn't a {@link org.hibernate.cache.jcache.internal.JCacheRegionFactory}
+     * — apps without L2, or those using Infinispan / a custom factory — this
+     * silently returns. The skip path is logged at debug level because absent
+     * L2 is the expected state for most apps.
+     *
+     * <p>Tagged meters: {@code cache_gets_total{db=<dbName>,cache=<region>,result=hit|miss}},
+     * {@code cache_puts_total}, {@code cache_evictions_total}, {@code cache_size}.
      */
-    private void bindJCacheMetrics() {
-        MeterRegistry registry = Metrics.registry();
+    private void bindJCacheMetrics(String dbName) {
+        EntityManagerFactory emf = JPA.emfs.get(dbName);
+        if (emf == null) return;
         try {
-            javax.cache.spi.CachingProvider provider = javax.cache.Caching.getCachingProvider();
-            javax.cache.CacheManager manager = provider.getCacheManager();
+            org.hibernate.engine.spi.SessionFactoryImplementor sfi =
+                    emf.unwrap(org.hibernate.engine.spi.SessionFactoryImplementor.class);
+            org.hibernate.cache.spi.RegionFactory rf =
+                    sfi.getServiceRegistry().getService(org.hibernate.cache.spi.RegionFactory.class);
+            if (!(rf instanceof org.hibernate.cache.jcache.internal.JCacheRegionFactory jcacheRf)) {
+                Logger.debug("JPA -> JCacheMetrics binding skipped for db=%s (region factory is %s, not JCacheRegionFactory)",
+                        dbName, rf == null ? "null" : rf.getClass().getName());
+                return;
+            }
+            javax.cache.CacheManager manager = jcacheRf.getCacheManager();
+            if (manager == null) {
+                Logger.debug("JPA -> JCacheMetrics binding skipped for db=%s (JCacheRegionFactory has no CacheManager yet)", dbName);
+                return;
+            }
+            MeterRegistry registry = Metrics.registry();
+            Tags dbTags = Tags.of("db", dbName);
             for (String cacheName : manager.getCacheNames()) {
                 javax.cache.Cache<?, ?> cache = manager.getCache(cacheName);
                 if (cache == null) continue;
                 try {
-                    JCacheMetrics.monitor(registry, cache, Tags.empty());
+                    JCacheMetrics.monitor(registry, cache, dbTags);
                 } catch (Throwable per) {
-                    Logger.warn(per, "JPA -> failed to bind JCacheMetrics for cache=%s", cacheName);
+                    Logger.warn(per, "JPA -> failed to bind JCacheMetrics for db=%s cache=%s", dbName, cacheName);
                 }
             }
         } catch (Throwable t) {
-            Logger.debug("JPA -> JCacheMetrics binding skipped (no JCache provider configured): %s", t.getMessage());
+            Logger.debug("JPA -> per-db JCache binding skipped for db=%s: %s", dbName, t.getMessage());
         }
     }
 
