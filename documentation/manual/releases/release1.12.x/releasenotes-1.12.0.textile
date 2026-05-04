@@ -220,6 +220,16 @@ The base PF-13 surface emits JVM and HTTP metrics. PF-85 / PF-86 / PF-87 extend 
 * *Hibernate L2 (JCache)* — when L2 is configured with @hibernate.cache.region.factory_class=org.hibernate.cache.jcache.JCacheRegionFactory@, every region the @SessionFactory@ uses is bound through @JCacheMetrics@, tagged @db=&lt;dbName&gt;@. Apps without L2 — or with a non-JCache region factory like Infinispan — silently skip this binding.
 * *PF-87 — javax.persistence opt-in for Hibernate metrics* — Micrometer 1.13.x..1.16.x ships @HibernateMetrics@ with a legacy overload that declares @throws javax.persistence.PersistenceException@. The JVM linker resolves that throws-clause type during class verification, so on this jakarta-only fork the class fails to load with @NoClassDefFoundError@ before any reflection runs. The framework probes for @javax.persistence.EntityManagerFactory@ at boot and, if absent (the expected state), logs an INFO line per data source and skips the bind. Operators who want the @hibernate_*@ aggregate metrics can opt in by adding @javax.persistence -&gt; javax.persistence-api 2.2@ (or any other source of the legacy package) to their app's @conf/dependencies.yml@. The HikariCP, Caffeine, and JCache binders are unaffected.
 
+h4. 1.12.40 — JUnit 6.0.x upgrade (PF-89)
+
+The framework moves from JUnit Jupiter 5.13.4 + Platform 1.13.4 to the unified JUnit 6.0.3 line. JUnit 6.0 keeps the Jupiter Extension API and Platform Launcher API surfaces stable; the framework's @play.test.{BaseTest, FunctionalTest, PlayJUnitExtension, TestEngine}@ classes recompile and run unchanged. See @documentation/assessments/PF-89-junit-6-upgrade.md@ for the full Phase A audit covering all six investigation items called out by the ticket.
+
+* *Six version-string changes* in @framework/dependencies.yml@: @junit-jupiter-api@, @junit-jupiter-engine@, @junit-jupiter-params@, @junit-platform-launcher@, @junit-platform-engine@, @junit-platform-commons@ → @6.0.3@. JUnit 6.0 unifies these onto a single shared version (no more 5.x-Jupiter / 1.x-Platform split).
+* *Java 17 baseline* — already met by the JDK 25 toolchain; no action.
+* *No app-side test code changes required.* The Jupiter Extension API (@BeforeAllCallback@, @BeforeEachCallback@, @TestExecutionExceptionHandler@, @ExtensionContext.getRequiredTestClass()@), Platform Launcher API (@Launcher@, @LauncherFactory@, @LauncherDiscoveryRequestBuilder@, @TestExecutionListener@, @TestIdentifier@, @TestExecutionResult@, @DiscoverySelectors.selectClass@), and @org.junit.jupiter.api.Assertions@ (parent of @BaseTest@) are all stable across 5.13 → 6.0.
+
+*Downstream alignment for consumers using @junit-vintage-engine@:* if your app's @conf/dependencies.yml@ pins @org.junit.vintage -> junit-vintage-engine 5.x@ to align with the framework's previous Platform 1.13.x (typically because a transitive dep drags JUnit 4 onto the runtime classpath), bump that pin to @6.0.3@. Your app's own @org.junit.jupiter.api.*@ tests need no changes.
+
 h4. 1.12.39 — typed Cache contract, memcached removal (PF-88)
 
 The 2009-era memcached-centric @play.cache@ is replaced with a typed, dependency-inverted contract. Framework code now depends only on abstractions; concrete implementations live in their own packages and are loaded via @ServiceLoader@.
