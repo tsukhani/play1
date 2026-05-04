@@ -1,263 +1,67 @@
 package play.cache;
 
-import java.io.NotSerializableException;
-import java.io.Serializable;
-import java.util.Map;
-
-import play.Logger;
-import play.Play;
-import play.exceptions.CacheException;
-import play.libs.Time;
+import java.util.function.Function;
 
 /**
- * The Cache. Mainly an interface to memcached or Caffeine.
+ * Typed runtime cache contract (PF-88). Replaces the legacy String/Object
+ * static facade with a generic, dependency-inverted interface — concrete
+ * implementations live in their own packages and are loaded via Java's
+ * {@link java.util.ServiceLoader} through {@link CacheProvider}.
  *
- * Note: When specifying expiration == "0s" (zero seconds) the actual expiration-time may vary between different cache implementations
+ * <p>Obtain instances via {@link Caches#named(String, CacheConfig)} — the
+ * registry guarantees one cache per name across the JVM. Direct
+ * construction is intentionally not part of the contract.
+ *
+ * <p>Implementations must be safe for concurrent access from many threads.
  */
-public abstract class Cache {
+public interface Cache<K, V> {
 
     /**
-     * The underlying cache implementation
+     * Returns the value cached under {@code key}, or {@code null} if absent
+     * or expired. Reads do not extend access-based expiration (see
+     * {@link CacheConfig#expireAfterAccess()} for that).
      */
-    public static CacheImpl cacheImpl;
-    
-    /**
-     * Sometime we REALLY need to change the implementation :)
-     */
-    public static CacheImpl forcedCacheImpl;
+    V getIfPresent(K key);
 
     /**
-     * Add an element only if it doesn't exist.
-     * @param key Element key
-     * @param value Element value
-     * @param expiration Ex: 10s, 3mn, 8h
+     * Returns the value cached under {@code key}, computing and storing it
+     * via {@code loader} on miss. The loader is invoked at most once per
+     * concurrent miss for the same key — equivalent to atomic
+     * {@code computeIfAbsent} on a {@link java.util.concurrent.ConcurrentMap}.
+     * If the loader returns {@code null}, no entry is stored and {@code null}
+     * is returned.
      */
-    public static void add(String key, Object value, String expiration) {
-        checkSerializable(value);
-        cacheImpl.add(key, value, Time.parseDuration(expiration));
-    }
+    V get(K key, Function<? super K, ? extends V> loader);
 
     /**
-     * Add an element only if it doesn't exist, and return only when 
-     * the element is effectively cached.
-     * @param key Element key
-     * @param value Element value
-     * @param expiration Ex: 10s, 3mn, 8h
-     * @return If the element an eventually been cached
+     * Associates {@code value} with {@code key}, replacing any existing
+     * entry. Resets the entry's TTL clock per the cache's
+     * {@link CacheConfig#expireAfterWrite()}.
      */
-    public static boolean safeAdd(String key, Object value, String expiration) {
-        checkSerializable(value);
-        return cacheImpl.safeAdd(key, value, Time.parseDuration(expiration));
-    }
+    void put(K key, V value);
 
     /**
-     * Add an element only if it doesn't exist and store it indefinitely.
-     * @param key Element key
-     * @param value Element value
+     * Removes the entry for {@code key} if present.
      */
-    public static void add(String key, Object value) {
-        checkSerializable(value);
-        cacheImpl.add(key, value, Time.parseDuration(null));
-    }
+    void invalidate(K key);
 
     /**
-     * Set an element.
-     * @param key Element key
-     * @param value Element value
-     * @param expiration Ex: 10s, 3mn, 8h
+     * Removes all entries. Implementations should release the underlying
+     * storage capacity opportunistically.
      */
-    public static void set(String key, Object value, String expiration) {
-        checkSerializable(value);
-        cacheImpl.set(key, value, Time.parseDuration(expiration));
-    }
+    void invalidateAll();
 
     /**
-     * Set an element and return only when the element is effectively cached.
-     * @param key Element key
-     * @param value Element value
-     * @param expiration Ex: 10s, 3mn, 8h
-     * @return If the element an eventually been cached
+     * Returns an estimate of the number of entries currently held. Reflects
+     * pending eviction work and may transiently overcount; intended for
+     * monitoring, not for control flow.
      */
-    public static boolean safeSet(String key, Object value, String expiration) {
-        checkSerializable(value);
-        return cacheImpl.safeSet(key, value, Time.parseDuration(expiration));
-    }
+    long estimatedSize();
 
     /**
-     * Set an element and store it indefinitely.
-     * @param key Element key
-     * @param value Element value
+     * Returns a snapshot of the cache's lifetime statistics. Returns a
+     * zero-valued snapshot if the cache was built with
+     * {@link CacheConfig.Builder#recordStats(boolean)} unset or false.
      */
-    public static void set(String key, Object value) {
-        checkSerializable(value);
-        cacheImpl.set(key, value, Time.parseDuration(null));
-    }
-
-    /**
-     * Replace an element only if it already exists.
-     * @param key Element key
-     * @param value Element value
-     * @param expiration Ex: 10s, 3mn, 8h
-     */
-    public static void replace(String key, Object value, String expiration) {
-        checkSerializable(value);
-        cacheImpl.replace(key, value, Time.parseDuration(expiration));
-    }
-
-    /**
-     * Replace an element only if it already exists and return only when the 
-     * element is effectively cached.
-     * @param key Element key
-     * @param value Element value
-     * @param expiration Ex: 10s, 3mn, 8h
-     * @return If the element an eventually been cached
-     */
-    public static boolean safeReplace(String key, Object value, String expiration) {
-        checkSerializable(value);
-        return cacheImpl.safeReplace(key, value, Time.parseDuration(expiration));
-    }
-
-    /**
-     * Replace an element only if it already exists and store it indefinitely.
-     * @param key Element key
-     * @param value Element value
-     */
-    public static void replace(String key, Object value) {
-        checkSerializable(value);
-        cacheImpl.replace(key, value, Time.parseDuration(null));
-    }
-
-    /**
-     * Increment the element value (must be a Number).
-     * @param key Element key 
-     * @param by The incr value
-     * @return The new value
-     */
-    public static long incr(String key, int by) {
-        return cacheImpl.incr(key, by);
-    }
-
-    /**
-     * Increment the element value (must be a Number) by 1.
-     * @param key Element key 
-     * @return The new value
-     */
-    public static long incr(String key) {
-        return cacheImpl.incr(key, 1);
-    }
-
-    /**
-     * Decrement the element value (must be a Number).
-     * @param key Element key 
-     * @param by The decr value
-     * @return The new value
-     */
-    public static long decr(String key, int by) {
-        return cacheImpl.decr(key, by);
-    }
-
-    /**
-     * Decrement the element value (must be a Number) by 1.
-     * @param key Element key 
-     * @return The new value
-     */
-    public static long decr(String key) {
-        return cacheImpl.decr(key, 1);
-    }
-
-    /**
-     * Retrieve an object.
-     * @param key The element key
-     * @return The element value or null
-     */
-    public static Object get(String key) {
-        return cacheImpl.get(key);
-    }
-
-    /**
-     * Bulk retrieve.
-     * @param key List of keys
-     * @return Map of keys &amp; values
-     */
-    public static Map<String, Object> get(String... key) {
-        return cacheImpl.get(key);
-    }
-
-    /**
-     * Delete an element from the cache.
-     * @param key The element key
-     */
-    public static void delete(String key) {
-        cacheImpl.delete(key);
-    }
-
-    /**
-     * Delete an element from the cache and return only when the 
-     * element is effectively removed.
-     * @param key The element key
-     * @return If the element an eventually been deleted
-     */
-    public static boolean safeDelete(String key) {
-        return cacheImpl.safeDelete(key);
-    }
-
-    /**
-     * Clear all data from cache.
-     */
-    public static void clear() {
-        if (cacheImpl != null) {
-            cacheImpl.clear();
-        }
-    }
-
-    /**
-     * Convenient clazz to get a value a class type;
-     * @param <T> The needed type
-     * @param key The element key
-     * @param clazz The type class
-     * @return The element value or null
-     */
-    @SuppressWarnings("unchecked")
-    public static <T> T get(String key, Class<T> clazz) {
-        return (T) cacheImpl.get(key);
-    }
-
-    /**
-     * Initialize the cache system.
-     */
-    public static void init() {
-        if(forcedCacheImpl != null) {
-            cacheImpl = forcedCacheImpl;
-            return;
-        }
-        if (Play.configuration.getProperty("memcached", "disabled").equals("enabled")) {
-            try {
-                cacheImpl = MemcachedImpl.getInstance(true);
-                Logger.info("Connected to memcached");
-            } catch (Exception e) {
-                Logger.error(e, "Error while connecting to memcached");
-                Logger.warn("Fallback to local cache");
-                cacheImpl = CaffeineImpl.newInstance();
-            }
-        } else {
-            cacheImpl = CaffeineImpl.newInstance();
-        }
-    }
-
-    /**
-     * Stop the cache system.
-     */
-    public static void stop() {
-        cacheImpl.stop();
-    }
-    
-    /**
-     * Utility that check that an object is serializable.
-     */
-    static void checkSerializable(Object value) {
-        if(value != null && !(value instanceof Serializable)) {
-            throw new CacheException("Cannot cache a non-serializable value of type " + value.getClass().getName(), new NotSerializableException(value.getClass().getName()));
-        }
-    }
+    CacheStats stats();
 }
-

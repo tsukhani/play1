@@ -9,7 +9,10 @@ import play.Invoker.Suspend;
 import play.Logger;
 import play.Play;
 import play.cache.Cache;
+import play.cache.CacheConfig;
 import play.cache.CacheFor;
+import play.cache.Caches;
+import play.libs.Time;
 import play.libs.Metrics;
 import play.classloading.enhancers.ControllersEnhancer;
 import play.classloading.enhancers.ControllersEnhancer.ControllerInstrumentation;
@@ -170,16 +173,19 @@ public class ActionInvoker {
 
                 // Action
 
-                // Check the cache (only for GET or HEAD)
+                // Check the cache (only for GET or HEAD).
+                // PF-88: backed by a typed Cache<String, Result> obtained via Caches.named.
+                // Each @CacheFor TTL value gets its own named cache so the per-cache
+                // expireAfterWrite matches the annotation's declared duration; that way
+                // dashboards can drill in with cache="play.actions.1h" tags.
                 if ((request.method.equals("GET") || request.method.equals("HEAD")) && actionMethod.isAnnotationPresent(CacheFor.class)) {
-                    CacheFor cacheFor = actionMethod.getAnnotation(CacheFor.class);;
+                    CacheFor cacheFor = actionMethod.getAnnotation(CacheFor.class);
                     cacheKey = cacheFor.id();
                     if ("".equals(cacheKey)) {
-                        // Generate a cache key for this request
                         cacheKey = cacheFor.generator().getDeclaredConstructor().newInstance().generate(request);
                     }
                     if(cacheKey != null && !cacheKey.isEmpty()) {
-                    	actionResult = (Result) Cache.get(cacheKey);
+                        actionResult = actionCache(cacheFor.value()).getIfPresent(cacheKey);
                     }
                 }
 
@@ -191,7 +197,8 @@ public class ActionInvoker {
                 actionResult = result;
                 // Cache it if needed
                 if (cacheKey != null && !cacheKey.isEmpty()) {
-                    Cache.set(cacheKey, actionResult, actionMethod.getAnnotation(CacheFor.class).value());
+                    String ttl = actionMethod.getAnnotation(CacheFor.class).value();
+                    actionCache(ttl).put(cacheKey, actionResult);
                 }
             } catch (JavaExecutionException e) {
                 invokeControllerCatchMethods(e.getCause());
@@ -282,6 +289,22 @@ public class ActionInvoker {
                 }
             }
         }
+    }
+
+    /**
+     * PF-88: per-TTL cache for {@code @CacheFor}-annotated action results.
+     * One named cache per distinct annotation value ({@code play.actions.1h},
+     * {@code play.actions.5m}, ...) so each cache's {@code expireAfterWrite}
+     * matches the declared TTL — Caffeine's eviction is per-cache, not per-
+     * entry, so collapsing all TTLs into one cache would force every entry
+     * to share the longest TTL.
+     */
+    private static Cache<String, Result> actionCache(String ttl) {
+        String name = "play.actions." + ttl;
+        return Caches.named(name, CacheConfig.newBuilder()
+                .expireAfterWrite(java.time.Duration.ofSeconds(Time.parseDuration(ttl)))
+                .recordStats(true)
+                .build());
     }
 
     private static boolean isActionMethod(Method method) {

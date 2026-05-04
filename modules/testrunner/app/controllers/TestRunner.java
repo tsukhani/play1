@@ -12,7 +12,6 @@ import org.objectweb.asm.Opcodes;
 
 import play.Logger;
 import play.Play;
-import play.cache.Cache;
 import play.classloading.ApplicationClasses;
 import play.jobs.Job;
 import play.libs.IO;
@@ -202,14 +201,6 @@ public class TestRunner extends Controller {
             notFound();
         }
         renderText(email);
-    }
-
-	public static void cacheEntry(String key){
-    	String value = Cache.get(key,String.class);
-    	if(value == null){
-    		notFound();
-    	}
-    	renderText(value);
     }
 
     /**

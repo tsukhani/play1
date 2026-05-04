@@ -807,32 +807,18 @@ bc. certificate.key.file=certs/host.key
 Default: @certs/host.key@
 
 
-h2(#memcachedconfig). Memcached
+h2(#cacheconfig). Cache (PF-88)
 
 
-h3(#memcached). memcached
+h3(#cacheprovider). cache.provider
 
-Enable "Memcached":http://www.danga.com/memcached/; if you don’t configure Memcached, Play will use a standalone cache that stores data in the JVM heap.
+Selects the @play.cache.CacheProvider@ implementation when more than one is registered via @META-INF/services/play.cache.CacheProvider@. The framework ships @caffeine@ as the default and only-bundled provider; this property is only consulted when an app brings additional providers (EhCache, Infinispan, a no-op for tests). Value must match a provider's @name()@.
 
-bc. memcached=enabled
+bc. cache.provider=caffeine
 
-Default: @disabled@
+Default: unset (single-provider classpath uses the only registered provider; multi-provider classpath without this key fails fast at boot)
 
-See also: "using a cache":cache.
-
-
-h3(#memcached.host). memcached.host
-
-Specify memcached host. For example:
-
-bc. memcached.host=127.0.0.1:11211
-
-Default: @127.0.0.1:11211@
-
-You can specify multiple hosts to build a distributed cache. For example:
-
-bc. memcached.1.host=127.0.0.1:11211
-memcached.2.host=127.0.0.1:11212
+The legacy @memcached=enabled@ / @memcached.host=...@ keys are gone — memcached support was removed in 1.12.39. See "using a cache":cache for the full SPI story.
 
 
 h2(#mimetype). Custom MIME types

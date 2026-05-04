@@ -18,6 +18,9 @@ import org.apache.commons.lang3.StringUtils;
 import org.codehaus.groovy.runtime.NullObject;
 
 import play.cache.Cache;
+import play.cache.CacheConfig;
+import play.cache.Caches;
+import play.libs.Time;
 import play.data.validation.Error;
 import play.data.validation.Validation;
 import play.exceptions.TagInternalException;
@@ -38,18 +41,26 @@ public class FastTags {
 
     public static void _cache(Map<?, ?> args, Closure body, PrintWriter out, ExecutableTemplate template, int fromLine) {
         String key = args.get("arg").toString();
-        String duration = null;
-        if (args.containsKey("for")) {
-            duration = args.get("for").toString();
-        }
-        Object cached = Cache.get(key);
+        String duration = args.containsKey("for") ? args.get("for").toString() : "1h";
+        // PF-88: backed by a typed Cache<String, String> obtained via Caches.named.
+        // One cache per distinct TTL — Caffeine's expireAfterWrite is per-cache,
+        // so {#cache for:'5m'} and {#cache for:'1h'} need separate registries.
+        Cache<String, String> cache = fragmentCache(duration);
+        String cached = cache.getIfPresent(key);
         if (cached != null) {
             out.print(cached);
             return;
         }
         String result = JavaExtensions.toString(body);
-        Cache.set(key, result, duration);
+        cache.put(key, result);
         out.print(result);
+    }
+
+    private static Cache<String, String> fragmentCache(String ttl) {
+        return Caches.named("play.fragments." + ttl, CacheConfig.newBuilder()
+                .expireAfterWrite(java.time.Duration.ofSeconds(Time.parseDuration(ttl)))
+                .recordStats(true)
+                .build());
     }
 
     public static void _verbatim(Map<?, ?> args, Closure body, PrintWriter out, ExecutableTemplate template, int fromLine) {

@@ -1,133 +1,143 @@
 h1. Use a cache
 
-To create high-performance systems, sometimes you need to cache data. Play has a cache library and will use "Memcached":http://www.danga.com/memcached/ when used in a distributed environment.
+For high-performance systems you sometimes need to keep computed values around between requests. Play ships a typed, dependency-inverted cache contract (PF-88) backed by "Caffeine":https://github.com/ben-manes/caffeine — a high-throughput in-process cache with W-TinyLFU eviction. The framework jar bundles the Caffeine provider; alternate backends (EhCache, a no-op for tests, a custom tiered store) plug in through the same SPI.
 
-If you don’t configure Memcached, Play will use a standalone cache that stores data in the JVM heap. Caching data in the JVM application breaks the ‘share nothing’ assumption made by Play: you can’t run your application on several servers, and expect the application to behave consistently. Each application instance will have a different copy of the data.
+The cache contract is intentionally minimal: a cache is fast, but values expire and the store is in memory only — a process restart drops everything. Code defensively. The pattern is always "look up; on miss, recompute and store":
 
-It is important to understand that the cache contract is clear: when you put data in a cache, you can’t expect that data to remain there forever. In fact you shouldn't. A cache is fast, but values expire, and the cache generally exists only in memory (without persistent backup). 
+bc. private static final Cache<String, List<Product>> productsCache =
+    Caches.named("products", CacheConfig.newBuilder()
+        .expireAfterWrite(Duration.ofMinutes(30))
+        .maximumSize(1000)
+        .recordStats(true)
+        .build());
 
-So the best way to use the cache is to repopulate it when it doesn't have what you expect:
-
-bc. public static void allProducts() {
-    List<Product> products = Cache.get("products", List.class);
-    if(products == null) {
-        products = Product.findAll();
-        Cache.set("products", products, "30mn");
-    }
+public static void allProducts() {
+    List<Product> products = productsCache.get("all", k -> Product.findAll());
     render(products);
 }
 
-p(note). **Modules might configure the cache for you**
- 
-For example, the "GAE module":https://www.playframework.com/modules/gae configures the cache to use "Google cache":https://developers.google.com/appengine/docs/java/memcache when deployed to the GAE servers.
+@Caches.named(name, config)@ is idempotent per name — the first call constructs the cache through the active provider; subsequent calls with the same name return the same instance regardless of the @config@ argument. Treat the @Caches.named(...)@ expression as a singleton lookup; cache it in a @static final@ field at the call site.
 
-h2. <a name="cacheFor">The cacheFor annotation</a>
-
-The @cacheFor@ annotation provides an easy way to cache the output (HTML, JSON, etc) of an action.
-
-bc.  import play.cache.*;
-public class Application extends Controller {
-        @CacheFor("5s")
-        public static void indexCachedInSeconds() {
-            Date date = new Date();
-	        renderText("Current time is: " + date);
-	    }
-        @CacheFor("1min")
-        public static void indexCachedInMinutes() {
-            Date date = new Date();
-	        renderText("Current time is: " + date);
-	    }
-}
-
-The annotation takes an optional @duration@ parameter to specify the expiration of the cached content. 
-The expiration can be specified in days, hours, minutes or seconds using respectively the following shorthands @d@, @h@, @min@ or @s@.
-
-The *default expiration* is @1h@.
-
-p(note). **Using expiration 0s**
- 
-When specifying expiration == "0s" (zero seconds) the actual expiration-time may vary between different cache implementations
 h2. <a name="api">The cache API</a>
 
-The cache API is provided by the @play.cache.Cache@ class. This class contains the set of methods to set, replace, and get data from the cache. Refer to the Memcached documentation to understand the exact behavior of each method.
+The contract lives in @play.cache.Cache<K, V>@ and is small on purpose:
 
-Some examples:
+bc. // Look up; null on miss.
+V getIfPresent(K key);
 
-bc. public static void showProduct(String id) {
-    Product product = Cache.get("product_" + id, Product.class);
-    if(product == null) {
-        product = Product.findById(id);
-        Cache.set("product_" + id, product, "30mn");
+// Look up; on miss, run loader and store its result. Atomic per key.
+V get(K key, Function<? super K, ? extends V> loader);
+
+// Store a value. Replaces any existing entry; resets the TTL clock.
+void put(K key, V value);
+
+// Drop one entry, or all entries.
+void invalidate(K key);
+void invalidateAll();
+
+// Approximate entry count, for monitoring.
+long estimatedSize();
+
+// Lifetime stats — zero snapshot if recordStats(false).
+CacheStats stats();
+
+The contract has no @add@/@replace@/@incr@/@decr@/@safeSet@/@safeDelete@ surface — those existed in the legacy memcached-era facade and are gone. For atomic increments, hold the counter in a @ConcurrentHashMap@ (caches are not the right primitive for shared state). For "set if absent" semantics, use @get(key, loader)@.
+
+h2. <a name="config">Configuring a cache</a>
+
+@CacheConfig@ is an immutable builder:
+
+bc. CacheConfig config = CacheConfig.newBuilder()
+    .expireAfterWrite(Duration.ofMinutes(30))   // TTL from the most recent write
+    .expireAfterAccess(Duration.ofMinutes(10))  // TTL from the most recent read or write
+    .maximumSize(10_000)                        // bound entry count; -1 = unbounded
+    .recordStats(true)                          // populate hit/miss/load/eviction counters
+    .build();
+
+All fields are optional. The default is an unbounded cache with no expiration and no stats — fine for short-lived process state, dangerous for unbounded inputs. *Set @maximumSize@ for any cache keyed by user-derived data.*
+
+h2. <a name="cacheFor">@@CacheFor for actions</a>
+
+The @@CacheFor@ annotation caches a controller action's @Result@ for a configurable TTL:
+
+bc. import play.cache.*;
+public class Application extends Controller {
+
+    @CacheFor("5s")
+    public static void indexCachedShort() {
+        renderText("Current time is: " + new Date());
     }
-    render(product);
-}
- 
-public static void addProduct(String name, int price) {
-    Product product = new Product(name, price);
-    product.save();
-    showProduct(product.id);
-}
- 
-public static void editProduct(String id, String name, int price) {
-    Product product = Product.findById(id);
-    product.name = name;
-    product.price = price;
-    Cache.set("product_" + id, product, "30mn");
-    showProduct(id);
-}
- 
-public static void deleteProduct(String id) {
-    Product product = Product.findById(id);
-    product.delete();
-    Cache.delete("product_" + id);
-    allProducts();
+
+    @CacheFor("1h")
+    public static void indexCachedLong() {
+        renderText("Current time is: " + new Date());
+    }
 }
 
-Some methods start with the @safe@ prefix - e.g. @safeDelete@, @safeSet@. The standard methods are non-blocking. That means that when you issue the call:
+The annotation accepts duration shorthands: @s@ (seconds), @min@ (minutes), @h@ (hours), @d@ (days). Default is @1h@. Each distinct TTL value gets its own backing cache (named @play.actions.5s@, @play.actions.1h@, ...) so per-cache @expireAfterWrite@ matches the declared TTL — Caffeine eviction is per-cache, not per-entry.
 
-bc. Cache.delete("product_" + id);
+@@CacheFor@ only caches @GET@ and @HEAD@ requests. The cache key defaults to the request URL + querystring; override with @id="my-key"@ on the annotation, or supply a custom @CacheKeyGenerator@ via @generator=MyGenerator.class@.
 
-The @delete@ method will return immediately and will not wait until the cached object is actually deleted. So if an error occurs - e.g. an IO error - the object may still be present.
+h2. <a name="fragments">@#{cache}@ template fragment cache</a>
 
-When you need to make sure that the object is deleted before continuing, you can use the @safeDelete@ method:
+For caching expensive template fragments (rendered HTML, JSON, etc.):
 
-bc. Cache.safeDelete("product_" + id);
+bc. #{cache 'top-products' for:'10min'}
+    #{list items:Product.topRated(), as:'p'}
+        <li>${p.name} — $${p.price}</li>
+    #{/list}
+#{/cache}
 
-This method is blocking and returns a boolean value indicating whether the object has been deleted or not. So the full pattern that ensures an item is deleted from the cache is:
+The first render computes the fragment and stores it; subsequent renders within the TTL serve the stored bytes. Each distinct @for:@ value gets its own backing cache (@play.fragments.10min@, ...) for the same reason as @@CacheFor@.
 
-bc. if(!Cache.safeDelete("product_" + id)) {
-    throw new Exception("Oops, the product has not been removed from the cache");
+h2. <a name="provider">Swapping the backend</a>
+
+Apps that need a different cache backend (an EhCache 3 tiered store, an Infinispan-distributed cache, a no-op for unit tests) implement @play.cache.CacheProvider@ and register it via @META-INF/services/play.cache.CacheProvider@. The framework discovers providers through @ServiceLoader@ at boot:
+
+* Zero providers on the classpath → @ConfigurationException@ at boot. Caffeine ships with the framework, so this only fires if you've actively stripped it.
+* One provider → it's used.
+* Multiple providers → set @cache.provider=<name>@ in @application.conf@; the value must match a provider's @name()@.
+
+bc. // application.conf
+cache.provider=ehcache
+
+h2. <a name="testing">Testing with a stub provider</a>
+
+@Caches.installProvider(provider)@ bypasses @ServiceLoader@ and installs a test provider for the current JVM. Useful when you want a deterministic in-memory store without booting Caffeine, or to assert eviction behavior without timing dependencies:
+
+bc. @BeforeEach
+void wireTestCache() {
+    Caches.installProvider(new MyMapBackedProvider());
 }
-...
 
-Note that those being blocking calls, @safe@ methods will slow down your application. So use them only when needed.
+@AfterEach
+void resetCache() {
+    Caches.stop();
+}
 
-Also note that when specifying @expiration == "0s"@ (zero seconds) the actual expiration-time may vary between different cache implementations.
+Production code should never call @installProvider@ — it bypasses the SPI selection rules.
 
-h2. <a name="session">Don’t use the Session as a cache!</a>
+h2. <a name="session">Don't use the Session as a cache</a>
 
-If you come from a framework that uses an in-memory Session implementation, you may be frustrated to see that Play allows only a small set of String data to be saved in the HTTP Session. But this is much better because a session is not the place to cache your application data! 
+If you come from a framework with an in-memory @HttpSession@, you may be surprised that Play allows only a small set of String data in its @Session@. The Session is for identity, not state. Cache server-side data in a @Cache@ instance, keyed by @session.getId()@:
 
-So if you have been accustomed to doing things similar to:
+bc. private static final Cache<String, List<Product>> userProducts =
+    Caches.named("user.products", CacheConfig.newBuilder()
+        .expireAfterAccess(Duration.ofMinutes(30))
+        .maximumSize(50_000)
+        .build());
 
-bc. httpServletRequest.getSession().put("userProducts", products);
-...
-// and then in subsequent requests
-products = (List<Product>)httpServletRequest.getSession().get("userProducts");
+public static void putProducts(List<Product> products) {
+    userProducts.put(session.getId(), products);
+}
 
-In Play you achieve the same effect a little differently. We think it’s a better approach:
+public static void getProducts() {
+    List<Product> products = userProducts.getIfPresent(session.getId());
+    ...
+}
 
-bc. Cache.set(session.getId(), products);
-...
-// and then in subsequent requests
-List<Product> products = Cache.get(session.getId(), List.class)
-
-Here we have used a unique UUID to keep unique information in the Cache for each user. Remember that, unlike a session object, the cache is not bound to any particular User!
-
-h2. <a name="memcached">Configure memcached</a>
-
-When you want to enable a real Memcached implementation, enable Memcached  with the "memcached configuration":configuration#memcached and define the daemon address in the "memcached.host configuration":configuration#memcached.host.
+The cache is not bound to any User and entries can vanish at any time — design accordingly.
 
 p(note). **Continuing the discussion**
- 
+
 Learn about %(next)"Sending emails":emails%.

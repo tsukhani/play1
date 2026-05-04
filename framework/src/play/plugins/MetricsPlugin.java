@@ -96,7 +96,7 @@ public class MetricsPlugin extends PlayPlugin {
 
         Metrics.install(installed);
         bindJvmMetrics(installed);
-        bindFrameworkCacheMetrics(installed);
+        bindCacheMetrics(installed);
         rebindHikariTrackers(installed);
 
         Logger.info("MetricsPlugin enabled at %s", basePath);
@@ -119,22 +119,21 @@ public class MetricsPlugin extends PlayPlugin {
     }
 
     /**
-     * PF-86: bind the framework's Caffeine in-process cache to the meter
-     * registry. Cache.init() runs in Play.start() before the plugin lifecycle,
-     * so {@code CaffeineImpl}'s constructor cannot bind itself — by the time
-     * this plugin runs, the singleton already exists, and the registry has
-     * just been installed via {@code Metrics.install} above. Guard with an
-     * instanceof check so users running an alternate {@code CacheImpl}
-     * (Memcached, custom) don't fail.
+     * PF-88: ask the active {@link play.cache.CacheProvider} to bind metrics
+     * for every named cache it has created against {@code registry}.
+     * Provider-specific binding lives in the provider implementation
+     * (e.g. {@code CaffeineCacheProvider} attaches Micrometer's
+     * {@code CaffeineCacheMetrics} per cache); this plugin just dispatches.
+     *
+     * <p>Idempotent / re-entrant: same dev-mode hot-reload story as the
+     * Hikari tracker rebind below — caches created before the registry was
+     * swapped get re-attached to the fresh one here.
      */
-    private void bindFrameworkCacheMetrics(MeterRegistry registry) {
-        play.cache.CacheImpl impl = play.cache.Cache.cacheImpl;
-        if (impl instanceof play.cache.CaffeineImpl caffeine) {
-            try {
-                caffeine.bindMetrics(registry);
-            } catch (Throwable t) {
-                Logger.warn(t, "Failed to bind Caffeine cache metrics — /@metrics will be missing cache_*");
-            }
+    private void bindCacheMetrics(MeterRegistry registry) {
+        try {
+            play.cache.Caches.bindMetricsToRegistry(registry);
+        } catch (Throwable t) {
+            Logger.warn(t, "Failed to bind cache metrics — /@metrics may be missing cache_*");
         }
     }
 

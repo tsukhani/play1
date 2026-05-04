@@ -22,7 +22,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import play.cache.Cache;
+import play.cache.Caches;
 import play.classloading.ApplicationClasses;
 import play.classloading.ApplicationClassloader;
 import play.deps.DependenciesManager;
@@ -721,8 +721,8 @@ public class Play {
             // Routes
             Router.detectChanges(ctxPath);
 
-            // Cache
-            Cache.init();
+            // Cache (PF-88: typed Caches contract; provider resolved via ServiceLoader)
+            Caches.init();
 
             // Invoker
             Invoker.init();
@@ -755,14 +755,14 @@ public class Play {
         } catch (PlayException e) {
             started = false;
             try {
-                Cache.stop();
+                Caches.stop();
             } catch (Exception ignored) {
             }
             throw e;
         } catch (Exception e) {
             started = false;
             try {
-                Cache.stop();
+                Caches.stop();
             } catch (Exception ignored) {
             }
             throw new UnexpectedException(e);
@@ -777,7 +777,7 @@ public class Play {
             Logger.trace("Stopping the play application");
             pluginCollection.onApplicationStop();
             started = false;
-            Cache.stop();
+            Caches.stop();
             Router.lastLoading = 0L;
             Invoker.resetClassloaders();
             Invoker.stop();

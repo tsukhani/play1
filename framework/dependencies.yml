@@ -139,7 +139,6 @@ require:    &allDependencies
     - org.slf4j -> slf4j-api 2.0.17
     - org.apache.logging.log4j -> log4j-slf4j2-impl 2.25.3
     - org.yaml -> snakeyaml 2.4
-    - net.spy -> spymemcached 2.12.3
     # PF-26: Jackson XML replaces XStream for renderXml(Object). Jackson 2.12+
     # requires a non-default Stax provider, so woodstox-core + stax2-api are
     # mandatory companions, not optional. jackson-annotations versions are

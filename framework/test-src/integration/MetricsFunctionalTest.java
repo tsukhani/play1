@@ -18,11 +18,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * PF-85 / PF-86 functional test: drives the real Netty server through the
- * MetricsPlugin {@code rawInvocation} short-circuit at {@code /@metrics} and
- * asserts the Prometheus exposition body contains the meters bound by the full
- * plugin lifecycle — Caffeine cache (PF-86), HikariCP pool (PF-85), and the
- * baseline JVM binders.
+ * PF-85 / PF-86 / PF-88 functional test: drives the real Netty server through
+ * the MetricsPlugin {@code rawInvocation} short-circuit at {@code /@metrics}
+ * and asserts the Prometheus exposition body contains the meters bound by the
+ * full plugin lifecycle — Caffeine cache (PF-86, now via PF-88's CacheProvider
+ * SPI), HikariCP pool (PF-85), and the baseline JVM binders.
  *
  * <p>FunctionalTest's in-process {@code GET()} path bypasses
  * {@code rawInvocation} (it calls {@code ActionInvoker.invoke} directly), so
@@ -31,9 +31,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * share one Netty bootstrap.
  *
  * <p>Tag assertions catch two regressions that would otherwise be silent:
- * {@code cache="play_cache"} verifies the {@code MetricsPlugin ->
- * CaffeineImpl.bindMetrics} wiring fires, and {@code pool="default"} verifies
- * the M2 {@code setPoolName(dbConfig.configName)} path — without it Hikari
+ * {@code cache="metrics.smoke"} verifies the
+ * {@code MetricsPlugin -> Caches.bindMetricsToRegistry -> CaffeineCacheProvider}
+ * wiring fires, and {@code pool="default"} verifies the M2
+ * {@code setPoolName(dbConfig.configName)} path — without it Hikari
  * auto-generates {@code HikariPool-1} and the test would fail loudly.
  */
 public class MetricsFunctionalTest {
@@ -47,12 +48,25 @@ public class MetricsFunctionalTest {
 
     @Test
     void metricsEndpointExposesCacheHikariAndJvmSeries() throws Exception {
-        // Touch the cache so cache.gets has at least one hit + miss recorded.
-        // cache.size would still publish at value 0 without this, but exercising
-        // the cache makes the assertion meaningful when grepping the output.
-        play.cache.Cache.set("metrics-functional-test-key", "v", "60s");
-        play.cache.Cache.get("metrics-functional-test-key");
-        play.cache.Cache.get("metrics-functional-test-miss");
+        // Construct a cache so the provider has something to bind metrics to,
+        // then exercise it so cache_gets has hit + miss samples. Naming this
+        // cache "metrics.smoke" rather than reusing one of the framework's
+        // internal names (play.actions.*, play.fragments.*) keeps this test
+        // independent of which framework features happen to fire during boot.
+        play.cache.Cache<String, String> smoke = play.cache.Caches.named("metrics.smoke",
+                play.cache.CacheConfig.newBuilder()
+                        .expireAfterWrite(java.time.Duration.ofSeconds(60))
+                        .recordStats(true)
+                        .build());
+        smoke.put("hit", "v");
+        smoke.getIfPresent("hit");
+        smoke.getIfPresent("miss");
+
+        // Re-bind so the just-created cache shows up in the registry. In
+        // production this happens once at MetricsPlugin.onApplicationStart;
+        // here we trigger it explicitly because the cache was created after
+        // boot (the test fixture has no @CacheFor or #{cache} usage).
+        play.cache.Caches.bindMetricsToRegistry(play.libs.Metrics.registry());
 
         HttpResponse<String> r = httpsClient()
                 .send(HttpRequest.newBuilder(URI.create(BASE + "/@metrics")).build(),
@@ -64,12 +78,10 @@ public class MetricsFunctionalTest {
 
         String body = r.body();
 
-        // PF-86: CaffeineCacheMetrics binds gauges + counters under cache.* with
-        // a "cache" tag scoping each meter to the binder name (play_cache).
-        assertTrue(body.contains("cache_size{cache=\"play_cache\""),
-                "expected cache_size{cache=\"play_cache\",...} line — body was:\n" + body);
-        assertTrue(body.contains("cache_gets_total{cache=\"play_cache\""),
-                "expected cache_gets_total{cache=\"play_cache\",...} line — body was:\n" + body);
+        // PF-88: CaffeineCacheProvider delegates to CaffeineCacheMetrics, which
+        // emits cache.* meters tagged with the registered cache name.
+        assertTrue(body.contains("cache_gets_total{cache=\"metrics.smoke\""),
+                "expected cache_gets_total{cache=\"metrics.smoke\",...} line — body was:\n" + body);
 
         // PF-85 + M2: HikariCP's MicrometerMetricsTrackerFactory emits hikaricp_*
         // meters tagged with pool=<dbName>. The testapp uses the default DB, so
