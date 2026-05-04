@@ -29,6 +29,10 @@ bitbucket.log
 .mcp.json
 framework/tailwindcss
 
+# Gradle
+.gradle/
+framework/gradle-plugin/build/
+
 # IDE and editors
 *~
 .idea
