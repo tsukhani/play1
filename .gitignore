@@ -31,7 +31,7 @@ framework/tailwindcss
 
 # Gradle
 .gradle/
-framework/gradle-plugin/build/
+build/
 
 # IDE and editors
 *~
