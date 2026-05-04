@@ -1,6 +1,7 @@
 package play.gradle
 
 import org.gradle.api.DefaultTask
+import org.gradle.api.GradleException
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.file.ArchiveOperations
@@ -11,9 +12,11 @@ import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.plugins.JavaPluginExtension
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Delete
+import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.Internal
 import org.gradle.api.tasks.InputFiles
 import org.gradle.api.tasks.JavaExec
+import org.gradle.api.tasks.Optional
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.TaskAction
@@ -22,6 +25,10 @@ import org.gradle.kotlin.dsl.getByType
 import org.gradle.kotlin.dsl.register
 import org.gradle.process.ExecOperations
 import java.io.ByteArrayOutputStream
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.URI
+import java.util.concurrent.TimeUnit
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import javax.inject.Inject
@@ -95,6 +102,38 @@ class Play1Plugin : Plugin<Project> {
             description = "Package the application as a ZIP distribution"
             projectDir.set(project.layout.projectDirectory)
             outputFile.set(project.layout.projectDirectory.dir("dist").file("${project.name}.zip"))
+            outputs.upToDateWhen { false }
+        }
+
+        project.tasks.register<PlayAutotestTask>("playAutotest") {
+            group = "play1"
+            description = "Run all application tests headlessly via FirePhoque"
+            dependsOn("extractPlayModules")
+
+            frameworkPath.set(ext.frameworkPath)
+            frameworkVersion.set(ext.frameworkVersion)
+            httpPort.set(ext.httpPort)
+            applicationPath.set(project.layout.projectDirectory)
+
+            val frameworkJar = ext.frameworkPath.file(ext.frameworkVersion.map { "framework/play-$it.jar" })
+            val frameworkLibDir = ext.frameworkPath.dir("framework/lib")
+            playClasspath.from(
+                project.layout.projectDirectory.dir("conf"),
+                frameworkJar,
+                project.configurations.named("playFramework"),
+                project.fileTree("lib") { include("**/*.jar") },
+                project.fileTree("modules") { include("*/lib/*.jar") },
+                project.provider { project.fileTree(frameworkLibDir.get().asFile) { include("**/*.jar") } },
+                project.provider {
+                    project.fileTree(ext.frameworkPath.dir("modules/testrunner/lib").get().asFile) { include("**/*.jar") }
+                }
+            )
+
+            runUnit.set(project.findProperty("runUnit")?.toString().toBoolean())
+            runFunctional.set(project.findProperty("runFunctional")?.toString().toBoolean())
+            runSelenium.set(project.findProperty("runSelenium")?.toString().toBoolean())
+            project.findProperty("webclientTimeout")?.toString()?.let { webclientTimeout.set(it) }
+
             outputs.upToDateWhen { false }
         }
     }
@@ -265,5 +304,150 @@ abstract class PlayDistTask : DefaultTask() {
             }
         }
         logger.lifecycle("Distribution created at ${outFile.absolutePath}")
+    }
+}
+
+abstract class PlayAutotestTask : DefaultTask() {
+    @get:Internal abstract val frameworkPath: DirectoryProperty
+    @get:Internal abstract val frameworkVersion: Property<String>
+    @get:Internal abstract val httpPort: Property<Int>
+    @get:Internal abstract val applicationPath: DirectoryProperty
+    @get:Internal abstract val playClasspath: ConfigurableFileCollection
+
+    @get:Input @get:Optional abstract val runUnit: Property<Boolean>
+    @get:Input @get:Optional abstract val runFunctional: Property<Boolean>
+    @get:Input @get:Optional abstract val runSelenium: Property<Boolean>
+    @get:Input @get:Optional abstract val webclientTimeout: Property<String>
+
+    @get:Inject abstract val fileSystemOps: FileSystemOperations
+
+    @TaskAction
+    fun runAutotest() {
+        val appDir = applicationPath.get().asFile
+        val fwPath = frameworkPath.get().asFile
+        val port = httpPort.get()
+        val version = frameworkVersion.get()
+
+        killExistingInstance(port, timeoutMs = 200)
+
+        fileSystemOps.delete {
+            delete(File(appDir, "tmp"), File(appDir, "test-result"))
+        }
+
+        val extraSysprops = buildList {
+            if (runUnit.getOrElse(false)) add("-DrunUnitTests")
+            if (runFunctional.getOrElse(false)) add("-DrunFunctionalTests")
+            if (runSelenium.getOrElse(false)) add("-DrunSeleniumTests")
+            webclientTimeout.orNull?.let { add("-DwebclientTimeout=$it") }
+        }
+
+        val logsDir = File(appDir, "logs").apply { mkdirs() }
+        val systemOut = File(logsDir, "system.out").apply { writeText("") }
+        val playJar = File(fwPath, "framework/play-$version.jar")
+
+        val playCmd = buildList {
+            add(javaExecutable())
+            add("--enable-native-access=ALL-UNNAMED")
+            add("-javaagent:${playJar.absolutePath}")
+            add("-Dfile.encoding=utf-8")
+            add("-Dapplication.path=${appDir.absolutePath}")
+            add("-Dplay.id=test")
+            add("-Dplay.version=$version")
+            addAll(extraSysprops)
+            add("-classpath")
+            add(playClasspath.asPath)
+            add("play.server.Server")
+            add("--http.port=$port")
+        }
+
+        logger.lifecycle("~ Starting Play in test mode...")
+        val playProcess = ProcessBuilder(playCmd)
+            .directory(appDir)
+            .redirectOutput(systemOut)
+            .redirectErrorStream(true)
+            .start()
+
+        try {
+            waitForReady(systemOut, playProcess)
+            logger.lifecycle("~ Server is up and running")
+            logger.lifecycle("~ Starting FirePhoque...")
+
+            val fpCp = buildList {
+                add(File(fwPath, "modules/testrunner/conf").absolutePath)
+                add(File(fwPath, "modules/testrunner/lib/play-testrunner.jar").absolutePath)
+                File(fwPath, "modules/testrunner/firephoque").listFiles()
+                    ?.filter { it.name.endsWith(".jar") }
+                    ?.forEach { add(it.absolutePath) }
+            }
+
+            val fpCmd = buildList {
+                add(javaExecutable())
+                add("--enable-native-access=ALL-UNNAMED")
+                addAll(extraSysprops)
+                add("-Djava.util.logging.config.file=logging.properties")
+                add("-classpath")
+                add(fpCp.joinToString(File.pathSeparator))
+                add("-Dapplication.url=http://localhost:$port")
+                add("-DheadlessBrowser=")
+                add("play.modules.testrunner.FirePhoque")
+            }
+
+            val fpExit = ProcessBuilder(fpCmd)
+                .directory(appDir)
+                .inheritIO()
+                .start()
+                .waitFor()
+
+            val testResultDir = File(appDir, "test-result")
+            val passed = File(testResultDir, "result.passed").exists()
+            val failed = File(testResultDir, "result.failed").exists()
+
+            if (passed) logger.lifecycle("~ All tests passed")
+            if (failed) logger.lifecycle("~ Some tests failed. See ${testResultDir.absolutePath} for results")
+
+            killExistingInstance(port, timeoutMs = 500)
+
+            when {
+                failed -> throw GradleException("Tests failed (FirePhoque exit=$fpExit)")
+                !passed -> throw GradleException("Tests did not successfully complete (FirePhoque exit=$fpExit)")
+            }
+        } finally {
+            if (playProcess.isAlive) {
+                playProcess.destroy()
+                if (!playProcess.waitFor(5, TimeUnit.SECONDS)) {
+                    playProcess.destroyForcibly()
+                }
+            }
+        }
+    }
+
+    private fun killExistingInstance(port: Int, timeoutMs: Int) {
+        try {
+            val conn = URI("http://localhost:$port/@kill").toURL().openConnection() as HttpURLConnection
+            conn.connectTimeout = 100
+            conn.readTimeout = timeoutMs
+            try { conn.inputStream.close() } catch (_: Exception) {}
+        } catch (_: Exception) {
+            // No existing server, or it killed itself before responding — both fine
+        }
+    }
+
+    private fun waitForReady(systemOut: File, process: Process, timeoutSeconds: Int = 60) {
+        val deadline = System.currentTimeMillis() + timeoutSeconds * 1000L
+        while (System.currentTimeMillis() < deadline) {
+            if (!process.isAlive) {
+                throw GradleException("Play process died before becoming ready. See ${systemOut.absolutePath}")
+            }
+            if (systemOut.exists() && systemOut.readText().contains("Server is up and running")) {
+                return
+            }
+            Thread.sleep(200)
+        }
+        throw GradleException("Play did not become ready within ${timeoutSeconds}s")
+    }
+
+    private fun javaExecutable(): String {
+        val javaHome = System.getProperty("java.home")
+        return "$javaHome/bin/java"
     }
 }
