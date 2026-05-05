@@ -356,8 +356,8 @@
             <ul class="list-none mb-10 pl-5">
                 #{list items:unitTests, as:'test'}
                 <li class="p-[2px] mb-1">
-                    <div class="test" id="${test.name}.class">
-                        <span class="touch text-gray-300 py-[2px] pr-[10px] pl-[5px] cursor-default font-mono text-[110%] font-bold">+</span><a href="@{TestRunner.run(test.name+'.class')}" class="bg-gray-50 px-1.5 py-[3px] text-gray-500 font-bold no-underline cursor-pointer select-none">${test.name.replace('.','/').replace('$','.')}</a>
+                    <div class="test" id="${test.getName()}.class">
+                        <span class="touch text-gray-300 py-[2px] pr-[10px] pl-[5px] cursor-default font-mono text-[110%] font-bold">+</span><a href="@{TestRunner.run(test.getName()+'.class')}" class="bg-gray-50 px-1.5 py-[3px] text-gray-500 font-bold no-underline cursor-pointer select-none">${test.getName().replace('.','/').replace('$','.')}</a>
                         <div class="testResult hidden bg-white ml-6 mt-1.5 mb-2.5 p-2 text-[80%] border-l-[6px] border-gray-300 select-text"></div>
                     </div>
                 </li>
@@ -371,8 +371,8 @@
             <ul class="list-none mb-10 pl-5">
                 #{list items:functionalTests, as:'test'}
                 <li class="p-[2px] mb-1">
-                    <div class="test" id="${test.name}.class">
-                        <span class="touch text-gray-300 py-[2px] pr-[10px] pl-[5px] cursor-default font-mono text-[110%] font-bold">+</span><a href="@{TestRunner.run(test.name+'.class')}" class="bg-gray-50 px-1.5 py-[3px] text-gray-500 font-bold no-underline cursor-pointer select-none">${test.name.replace('.','/').replace('$','.')}</a>
+                    <div class="test" id="${test.getName()}.class">
+                        <span class="touch text-gray-300 py-[2px] pr-[10px] pl-[5px] cursor-default font-mono text-[110%] font-bold">+</span><a href="@{TestRunner.run(test.getName()+'.class')}" class="bg-gray-50 px-1.5 py-[3px] text-gray-500 font-bold no-underline cursor-pointer select-none">${test.getName().replace('.','/').replace('$','.')}</a>
                         <div class="testResult hidden bg-white ml-6 mt-1.5 mb-2.5 p-2 text-[80%] border-l-[6px] border-gray-300 select-text"></div>
                     </div>
                 </li>
