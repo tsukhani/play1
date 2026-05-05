@@ -34,8 +34,8 @@ abstract class PlayNewAppTask : DefaultTask() {
             // be explicit by *not* setting any excludes. .gitignore is included.
         }
         File(dest, "app/models").mkdirs()
-        File(dest, "lib").mkdirs()
-        // Python-era artifact; the Gradle plugin uses play1 { modules(...) } instead.
+        // Python-era artifacts removed: lib/ (Gradle uses ~/.gradle/caches/, never writes
+        // to the app's lib/) and conf/dependencies.yml (replaced by build.gradle.kts).
         File(dest, "conf/dependencies.yml").delete()
 
         // Substitute %APPLICATION_NAME% in conf/application.conf
