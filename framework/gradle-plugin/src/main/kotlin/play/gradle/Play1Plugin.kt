@@ -83,6 +83,13 @@ class Play1Plugin : Plugin<Project> {
 
         configureSourceSets(project, ext)
 
+        // compileJava/compileTestJava read modules/*/lib/*.jar via the source set
+        // compileClasspath we configured above. They need extractPlayModules to have
+        // populated modules/ before they run, otherwise Gradle 9+ flags an
+        // implicit-dependency error.
+        project.tasks.matching { it.name == "compileJava" || it.name == "compileTestJava" }
+            .configureEach { dependsOn("extractPlayModules") }
+
         project.tasks.register<ExtractPlayModulesTask>("extractPlayModules") {
             group = "play1"
             description = "Populate modules/<name>/ from framework-bundled and Ivy-resolved sources"
@@ -133,6 +140,26 @@ class Play1Plugin : Plugin<Project> {
                     project.layout.projectDirectory.file(customOutput)
                 } else {
                     project.layout.projectDirectory.dir("dist").file("${project.name}.zip")
+                }
+            )
+            outputs.upToDateWhen { false }
+        }
+
+        project.tasks.register<PlayBundleTask>("playBundle") {
+            group = "play1"
+            description = "Self-contained deployment ZIP (precompiled, framework, deps, .classpath, bin/start.sh). Optional: -Poutput=<path>"
+            dependsOn("extractPlayModules", "playPrecompile")
+            projectDir.set(project.layout.projectDirectory)
+            projectName.set(project.name)
+            frameworkPath.set(ext.frameworkPath)
+            frameworkVersion.set(ext.frameworkVersion)
+            playClasspath.from(playClasspathFor(project, ext, includeTestrunner = false))
+            val customOutput = project.providers.gradleProperty("output").orNull
+            outputFile.set(
+                if (customOutput != null && customOutput.isNotBlank()) {
+                    project.layout.projectDirectory.file(customOutput)
+                } else {
+                    project.layout.projectDirectory.dir("dist").file("${project.name}-bundle.zip")
                 }
             )
             outputs.upToDateWhen { false }
@@ -1217,6 +1244,163 @@ abstract class PlayJavadocTask : DefaultTask() {
         val home = System.getProperty("java.home")
         val candidate = File(home, "bin/javadoc")
         return if (candidate.exists()) candidate.absolutePath else "javadoc"
+    }
+}
+
+abstract class PlayBundleTask : DefaultTask() {
+    @get:Internal abstract val projectDir: DirectoryProperty
+    @get:Internal abstract val projectName: Property<String>
+    @get:Internal abstract val frameworkPath: DirectoryProperty
+    @get:Internal abstract val frameworkVersion: Property<String>
+    @get:Internal abstract val playClasspath: ConfigurableFileCollection
+    @get:OutputFile abstract val outputFile: RegularFileProperty
+
+    @TaskAction
+    fun bundle() {
+        val projDir = projectDir.get().asFile
+        val name = projectName.get()
+        val fwDir = frameworkPath.get().asFile
+        val fwVersion = frameworkVersion.get()
+        val outFile = outputFile.get().asFile
+
+        outFile.parentFile.mkdirs()
+        if (outFile.exists()) outFile.delete()
+
+        // Resolve framework jar + framework lib (these are AT frameworkPath, not in
+        // the consumer's runtimeClasspath).
+        val frameworkJar = File(fwDir, "framework/play-$fwVersion.jar")
+        if (!frameworkJar.isFile) {
+            throw GradleException("Framework jar not found at ${frameworkJar.absolutePath}. Did you run `ant jar` in the framework?")
+        }
+        val frameworkLibDir = File(fwDir, "framework/lib")
+
+        // Filter playClasspath into the deps that are NOT framework/conf/app's own lib/modules
+        // (those get bundled differently).
+        val gradleResolvedDeps = playClasspath.files.filter { f ->
+            f.isFile && f.name.endsWith(".jar") &&
+                !f.absolutePath.startsWith(fwDir.absolutePath) &&
+                !f.absolutePath.startsWith(File(projDir, "lib").absolutePath) &&
+                !f.absolutePath.startsWith(File(projDir, "modules").absolutePath)
+        }.distinctBy { it.name }
+
+        // Local app lib jars (manually placed; should be empty for clean Gradle apps).
+        // Skip any whose name already appears in gradleResolvedDeps to avoid zip duplicates.
+        val gradleResolvedNames = gradleResolvedDeps.map { it.name }.toSet()
+        val appLibJars = File(projDir, "lib").let { dir ->
+            if (dir.isDirectory) {
+                dir.walkTopDown().filter { it.isFile && it.name.endsWith(".jar") }
+                    .filter { it.name !in gradleResolvedNames }
+                    .distinctBy { it.name }
+                    .toList()
+            } else emptyList()
+        }
+
+        // Module lib jars
+        val moduleLibJars = mutableListOf<Pair<File, String>>() // (file, relative path inside zip)
+        File(projDir, "modules").let { modulesDir ->
+            if (modulesDir.isDirectory) {
+                modulesDir.listFiles()?.filter { it.isDirectory }?.forEach { moduleDir ->
+                    File(moduleDir, "lib").let { libDir ->
+                        if (libDir.isDirectory) {
+                            libDir.walkTopDown().filter { it.isFile && it.name.endsWith(".jar") }.forEach { jar ->
+                                val rel = "modules/${moduleDir.name}/lib/${jar.name}"
+                                moduleLibJars.add(jar to rel)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Compute classpath entries (relative paths inside the zip).
+        val classpathEntries = mutableListOf<String>()
+        classpathEntries += "conf"
+        classpathEntries += "framework/play-$fwVersion.jar"
+        if (frameworkLibDir.isDirectory) {
+            frameworkLibDir.listFiles()?.filter { it.isFile && it.name.endsWith(".jar") }?.sortedBy { it.name }?.forEach {
+                classpathEntries += "framework/lib/${it.name}"
+            }
+        }
+        appLibJars.sortedBy { it.name }.forEach { jar ->
+            val rel = jar.relativeTo(projDir).path
+            classpathEntries += rel
+        }
+        gradleResolvedDeps.sortedBy { it.name }.forEach {
+            classpathEntries += "lib/${it.name}"
+        }
+        moduleLibJars.sortedBy { it.second }.forEach { (_, rel) ->
+            classpathEntries += rel
+        }
+
+        // Bundle uses an INCLUDE list — only directories Play needs at runtime.
+        // Specifically excludes: app/ (replaced by precompiled), test/, documentation/,
+        // and any user-specific top-level dirs (workspace/, data/, frontend/, etc.)
+        // that aren't standard Play layout.
+        val includeTopLevel = setOf("conf", "public", "modules", "precompiled", "certs")
+
+        java.util.zip.ZipOutputStream(outFile.outputStream()).use { zip ->
+            // 1. Add only the runtime-relevant Play directories from projDir.
+            includeTopLevel.forEach { dirName ->
+                val dir = File(projDir, dirName)
+                if (!dir.isDirectory) return@forEach
+                dir.walkTopDown()
+                    .filter { it.isFile }
+                    .forEach { f ->
+                        val rel = f.relativeTo(projDir).path
+                        addFileToZip(zip, f, "$name/$rel")
+                    }
+            }
+            // 2. Add framework jar.
+            addFileToZip(zip, frameworkJar, "$name/framework/play-$fwVersion.jar")
+            // 3. Add framework lib jars.
+            if (frameworkLibDir.isDirectory) {
+                frameworkLibDir.listFiles()?.filter { it.isFile && it.name.endsWith(".jar") }?.sortedBy { it.name }?.forEach { jar ->
+                    addFileToZip(zip, jar, "$name/framework/lib/${jar.name}")
+                }
+            }
+            // 4. Add Gradle-resolved deps + manually-placed app lib jars under lib/.
+            gradleResolvedDeps.sortedBy { it.name }.forEach { jar ->
+                addFileToZip(zip, jar, "$name/lib/${jar.name}")
+            }
+            appLibJars.sortedBy { it.name }.forEach { jar ->
+                addFileToZip(zip, jar, "$name/lib/${jar.name}")
+            }
+            // 5. Write .classpath (relative paths from bundle root, one per line).
+            zip.putNextEntry(java.util.zip.ZipEntry("$name/.classpath"))
+            zip.write(classpathEntries.joinToString("\n").toByteArray(Charsets.UTF_8))
+            zip.write("\n".toByteArray(Charsets.UTF_8))
+            zip.closeEntry()
+            // 6. Write bin/play-start.sh (renamed to avoid collision with user bin/ scripts).
+            val startScript = """
+                #!/bin/bash
+                set -e
+                cd "${'$'}(dirname "${'$'}0")/.."
+                CP=${'$'}(/usr/bin/tr '\n' ':' < .classpath | /usr/bin/sed 's/:${'$'}//')
+                exec java \
+                  --enable-native-access=ALL-UNNAMED \
+                  -javaagent:framework/play-$fwVersion.jar \
+                  -Dapplication.path="${'$'}PWD" \
+                  -Dplay.id=${'$'}{PLAY_ID:-prod} \
+                  -Dplay.version=$fwVersion \
+                  -Dprecompiled=true \
+                  -Dfile.encoding=utf-8 \
+                  -classpath "${'$'}CP" \
+                  play.server.Server
+            """.trimIndent() + "\n"
+            // ZipEntry can't set unix mode; runtime needs `chmod +x bin/play-start.sh`
+            // after unzip, or invoke via `bash bin/play-start.sh`.
+            zip.putNextEntry(java.util.zip.ZipEntry("$name/bin/play-start.sh"))
+            zip.write(startScript.toByteArray(Charsets.UTF_8))
+            zip.closeEntry()
+        }
+        logger.lifecycle("Bundle created at ${outFile.absolutePath} (${outFile.length() / 1024 / 1024} MB)")
+        logger.lifecycle("Unzip + run: cd $name && bash bin/play-start.sh   (PLAY_ID env overrides default 'prod')")
+    }
+
+    private fun addFileToZip(zip: java.util.zip.ZipOutputStream, src: File, entryName: String) {
+        zip.putNextEntry(java.util.zip.ZipEntry(entryName))
+        src.inputStream().use { it.copyTo(zip) }
+        zip.closeEntry()
     }
 }
 
