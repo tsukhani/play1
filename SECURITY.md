@@ -2,7 +2,7 @@
 
 ## Reporting a Vulnerability
 
-If you've found a security vulnerability in this Play 1.12 fork — anything that an attacker could exploit to compromise an application built on it, the framework's runtime, or its build/release pipeline — please report it **privately** rather than opening a public GitHub issue.
+If you've found a security vulnerability in this Play 1.13 fork — anything that an attacker could exploit to compromise an application built on it, the framework's runtime, or its build/release pipeline — please report it **privately** rather than opening a public GitHub issue.
 
 ### Preferred: GitHub private vulnerability reporting
 
@@ -13,7 +13,7 @@ Use the **"Report a vulnerability"** button on the [Security tab](https://github
 If GitHub's private reporting isn't an option for you, email **tarun@abundent.com** with:
 
 - A short title describing the vulnerability class (e.g., "XSS via Groovy template render", "SSRF in `WS.url`", "Path traversal in `staticFile:` route")
-- The affected version(s) of Play 1.12.x — best effort; we'll narrow it down on triage
+- The affected version(s) of Play 1.13.x — best effort; we'll narrow it down on triage
 - Reproduction steps, ideally a minimal Play app that demonstrates the issue
 - The impact you observed and any further consequences you suspect
 - Whether you've already shared the finding with anyone else, and whether you have a preferred coordinated-disclosure timeline
@@ -24,19 +24,19 @@ We aim to acknowledge security reports within **3 business days** and to triage 
 
 ## Supported Versions
 
-Security fixes are issued for the **active 1.12.x line only**. The most recent release is at the top of the [Releases page](https://github.com/tsukhani/play1/releases). Older 1.x lines (1.11.x and earlier) are not maintained on this fork and won't receive security backports — apps still on those lines should plan a migration to 1.12.x or, if they can't move, vendor patches independently.
+Security fixes are issued for the **active 1.13.x line only**. The most recent release is at the top of the [Releases page](https://github.com/tsukhani/play1/releases). Older 1.x lines (1.12.x and earlier) are not maintained on this fork and won't receive security backports — apps still on those lines should plan a migration to 1.13.x or, if they can't move, vendor patches independently.
 
 | Version line | Status | Notes |
 |---|---|---|
-| 1.12.x | ✅ Supported | Current release line — security fixes shipped as patch releases. |
-| 1.11.x and earlier | ❌ Not supported | Last upstream Play 1 line before the fork's modernization phase. Stay on Play 1.11.x if you can't move to Java 25 yet, but be aware that no security backports are provided here. |
+| 1.13.x | ✅ Supported | Current release line — security fixes shipped as patch releases. |
+| 1.12.x and earlier | ❌ Not supported | Pre-Gradle-migration lines. 1.12.x was the last Java 25 + virtual-threads release before apps moved to the Gradle plugin; 1.11.x and earlier predate Java 25. No security backports are provided here. |
 
 ## Scope
 
 In scope for this policy:
 
 - The framework code under `framework/src/` (request handling, security headers, session/cookie machinery, template engine, etc.)
-- The bundled modules under `modules/` (`crud`, `secure`, `testrunner`, `docviewer`, `console`)
+- The bundled modules under `modules/` (`crud`, `secure`, `testrunner`, `docviewer`)
 - The Gradle plugin under `framework/gradle-plugin/` and the `play` shell wrapper at the repo root (`play new`, `play run`, `play test`, `play autotest`, etc.)
 - The application skeleton under `resources/application-skel/` and the Nuxt skeleton under `resources/nuxt-skel/`
 - The build/release pipeline (`/deploy` slash command flow, GitHub Actions workflows under `.github/workflows/`)
@@ -57,5 +57,5 @@ We acknowledge reporters in the published advisory unless you ask us not to. We 
 1. Acknowledge receipt within 3 business days.
 2. Triage: confirm the issue, determine affected versions, assess severity (CVSS-style — exploitability + impact + scope).
 3. Develop a fix in a private fork or branch. Coordinate with the reporter on timing.
-4. Ship the fix as a patch release on the 1.12.x line. Publish a GitHub Security Advisory crediting the reporter and assign a CVE if the impact warrants it.
+4. Ship the fix as a patch release on the 1.13.x line. Publish a GitHub Security Advisory crediting the reporter and assign a CVE if the impact warrants it.
 5. Document the issue in the affected release's notes after the disclosure window closes.

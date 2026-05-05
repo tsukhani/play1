@@ -4,7 +4,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 ## Project Overview
 
-Play Framework 1 — a Java web framework (v1.12.x, requires Java 25+). Uses Apache Ant for builds and JUnit 5 for testing. Framework source is Java; CLI tooling is Python 3.
+Play Framework 1 — a Java web framework (v1.13.x, requires Java 25+). The framework source is Java built by Apache Ant + Ivy. End-user applications consume the framework through a Gradle plugin (`framework/gradle-plugin/`) and a thin shell wrapper (`/opt/play1/play`) that translates 1.12-era CLI ergonomics to Gradle.
 
 ## Build & Test Commands
 
@@ -19,7 +19,7 @@ ant compile                      # Compile only (no clean)
 
 # Tests
 ant unittest                     # Framework unit tests only
-ant test                         # Full suite: unit tests + sample app functional tests
+ant test                         # Full verification: clean + jar + unittest + integration-test
 ant test-single -Dtestclass=play.mvc.RouterTest  # Single test class (no package prefix in path, use dots)
 ant compile-tests                # Compile tests without running
 

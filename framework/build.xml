@@ -50,10 +50,7 @@
 
     <target name="compile" description="compile without cleaning">
         <mkdir dir="classes"/>
-        <!-- includeantruntime=true: framework src includes play.ant.* tasks that import
-             org.apache.tools.ant.*, so the Ant runtime jars must be on the compile classpath.
-             Setting it explicitly silences Ant's "wasn't set" warning while keeping behavior. -->
-        <javac encoding="utf-8" srcdir="src" destdir="classes" debug="true" release="${build-release}" includeantruntime="true">
+        <javac encoding="utf-8" srcdir="src" destdir="classes" debug="true" release="${build-release}" includeantruntime="false">
             <classpath refid="project.classpath" />
         </javac>
         <copy todir="classes">

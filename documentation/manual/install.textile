@@ -7,7 +7,7 @@ To run the Play framework, you need "Java 25 or later":https://adoptium.net/temu
 
 Be sure to have Java in the current path (enter @java -version@ to check). Play will use the default Java or the one available at the @$JAVA_HOME@ path if defined.
 
-The *play* command line utility uses Python. So it should work out of the box on any UNIX system (however it requires at least Python 3.x).
+The *play* command line utility is a thin shell wrapper around Gradle. It works on macOS and Linux out of the box; the wrapper locates the project's @gradlew@ (or a system @gradle@ on PATH) and translates classic Play 1 CLI flags to Gradle properties.
 
 
 h2. <a name="install">Installation from the binary package</a>
@@ -40,7 +40,7 @@ To install Java, make sure to use either the Sun-JDK or OpenJDK (and not gcj whi
 
 h3. Windows
 
-To install Java, just download and install the latest JDK package. You do not need to install Python separately, because a Python runtime is bundled with the framework.
+To install Java, just download and install the latest JDK package.
 
 
 h2. <a name="build">Build from the latest sources</a>
@@ -49,9 +49,9 @@ To benefit from the latest improvements and bug fixes, you may want to compile P
 
 From the command line:
 
-bc. # git clone git://github.com/playframework/play.git
-# cd play/framework
-# ant
+bc. # git clone https://github.com/tsukhani/play1.git
+# cd play1/framework
+# ant jar
 
 The Play framework is ready to use.
 
