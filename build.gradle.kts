@@ -97,16 +97,6 @@ abstract class PlayNewAppTask : DefaultTask() {
                 // Docviewer powers the welcome page, /@documentation, and /@api browsers
                 // in dev mode. Remove if you want a slimmer setup.
                 modules("docviewer")
-
-                // Note: http.port, https.port, application.secret, db config, and
-                // most runtime settings live in conf/application.conf — that's the
-                // source of truth at JVM boot. The DSL properties below are escape
-                // hatches for build-time overrides (e.g., running tests on a
-                // different port without editing conf):
-                //   httpPort.set(8080)        // overrides conf's http.port for play* tasks
-                //   playId.set("staging")     // applies %staging.* conf overrides
-                // Or pass at task time without editing this file:
-                //   gradle playRun -PhttpPort=8080 -PplayId=staging
             }
         """.trimIndent() + "\n")
 

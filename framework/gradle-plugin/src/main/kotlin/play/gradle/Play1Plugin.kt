@@ -39,8 +39,6 @@ import javax.inject.Inject
 abstract class Play1Extension {
     abstract val frameworkPath: DirectoryProperty
     abstract val frameworkVersion: Property<String>
-    abstract val playId: Property<String>
-    abstract val httpPort: Property<Int>
     abstract val modules: ListProperty<String>
 
     fun modules(vararg names: String) {
@@ -54,20 +52,12 @@ class Play1Plugin : Plugin<Project> {
 
         val ext = project.extensions.create<Play1Extension>("play1").apply {
             frameworkVersion.convention("1.13.0-SNAPSHOT")
-            playId.convention("")
-            // httpPort intentionally has NO convention. Conf/application.conf is the
-            // source of truth; the plugin only passes --http.port when explicitly set
-            // via DSL or -PhttpPort, in which case it overrides conf at JVM startup.
             modules.convention(emptyList())
         }
-        // -PplayId / -PhttpPort override DSL set. afterEvaluate runs after the user's
-        // play1 { ... } block in build.gradle.kts has applied, so this set wins over
-        // anything the DSL set. Without -P, DSL set or convention default applies.
-        project.afterEvaluate {
-            project.providers.gradleProperty("playId").orNull?.let { ext.playId.set(it) }
-            project.providers.gradleProperty("httpPort").orNull?.toIntOrNull()
-                ?.let { ext.httpPort.set(it) }
-        }
+        // play.id and http.port are NOT exposed as DSL properties. Configure them in
+        // conf/application.conf (or %prefix.* overrides). Override at task time via
+        // -PplayId=staging or -PhttpPort=8080. The plugin reads these gradle
+        // properties directly inside each task that needs them.
 
         project.configurations.create("playFramework").apply {
             isCanBeConsumed = false
@@ -172,7 +162,7 @@ class Play1Plugin : Plugin<Project> {
 
             frameworkPath.set(ext.frameworkPath)
             frameworkVersion.set(ext.frameworkVersion)
-            httpPort.set(ext.httpPort)
+            httpPort.set(project.providers.gradleProperty("httpPort").map { it.toInt() })
             applicationPath.set(project.layout.projectDirectory)
             playClasspath.from(playClasspathFor(project, ext, includeTestrunner = true))
 
@@ -247,8 +237,10 @@ class Play1Plugin : Plugin<Project> {
             applicationPath.set(project.layout.projectDirectory)
             frameworkPath.set(ext.frameworkPath)
             frameworkVersion.set(ext.frameworkVersion)
-            playId.set(ext.playId)
-            httpPort.set(ext.httpPort)
+            // -PplayId is the only override channel; absent means "" (no %prefix override).
+            // -PhttpPort absent means "let conf decide" (Property stays not-present).
+            playId.set(project.providers.gradleProperty("playId").orElse(""))
+            httpPort.set(project.providers.gradleProperty("httpPort").map { it.toInt() })
             playClasspath.from(playClasspathFor(project, ext, includeTestrunner = false))
             outputs.upToDateWhen { false }
         }
@@ -267,8 +259,8 @@ class Play1Plugin : Plugin<Project> {
             applicationPath.set(project.layout.projectDirectory)
             frameworkPath.set(ext.frameworkPath)
             frameworkVersion.set(ext.frameworkVersion)
-            playId.set(ext.playId)
-            httpPort.set(ext.httpPort)
+            playId.set(project.providers.gradleProperty("playId").orElse(""))
+            httpPort.set(project.providers.gradleProperty("httpPort").map { it.toInt() })
             playClasspath.from(playClasspathFor(project, ext, includeTestrunner = false))
             outputs.upToDateWhen { false }
         }
@@ -292,7 +284,7 @@ class Play1Plugin : Plugin<Project> {
             description = "List the modules that would be loaded for this app"
             applicationPath.set(project.layout.projectDirectory)
             frameworkPath.set(ext.frameworkPath)
-            playId.set(ext.playId)
+            playId.set(project.providers.gradleProperty("playId").orElse(""))
             outputs.upToDateWhen { false }
         }
 
@@ -398,7 +390,13 @@ class Play1Plugin : Plugin<Project> {
                 "-Dfile.encoding=utf-8",
                 "-Dapplication.path=${project.projectDir.absolutePath}"
             )
-            val effectivePlayId = playIdOverride ?: ext.playId.get()
+            // Built-in tasks (playTest, playPrecompile, playAutotest) hardcode
+            // playIdOverride = "test". For playRun and other "no override" tasks,
+            // honor -PplayId from the command line; else default to empty (no
+            // %prefix override applied).
+            val effectivePlayId = playIdOverride
+                ?: project.providers.gradleProperty("playId").orNull
+                ?: ""
             jvmArgs("-Dplay.id=$effectivePlayId")
             jvmArgs(ext.frameworkVersion.map { "-Dplay.version=$it" }.get())
             jvmArgs("-javaagent:${frameworkJar.get().asFile.absolutePath}")
@@ -408,8 +406,12 @@ class Play1Plugin : Plugin<Project> {
                 environment(k, v)
             }
 
-            if (includeHttpPort && ext.httpPort.isPresent) {
-                args(ext.httpPort.map { "--http.port=$it" }.get())
+            // Only pass --http.port when -PhttpPort was supplied; otherwise let
+            // conf/application.conf decide.
+            if (includeHttpPort) {
+                project.providers.gradleProperty("httpPort").orNull?.let {
+                    args("--http.port=$it")
+                }
             }
 
             standardInput = System.`in`
