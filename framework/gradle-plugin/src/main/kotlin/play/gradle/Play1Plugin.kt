@@ -1021,15 +1021,29 @@ private fun confValue(config: String, key: String, playId: String): String? {
 }
 
 // PF-92: lift conf entries that are JVM-level flags (not in-process config)
-// onto the spawned JVM's command line. Mirrors the 1.12 Python launcher's
-// java_cmd handling of javaagent.path and agentlib, with %<playId>. prefix
-// priority. Without this, `%test.javaagent.path=bin/jacocoagent.jar` is
-// silently dropped under 1.13.x and tools like JaCoCo produce no coverage.
+// onto the spawned JVM's command line, mirroring the 1.12 Python launcher's
+// java_cmd. Without this, conf-declared agents/memory/JMX are silently
+// dropped under 1.13.x — e.g. `%test.javaagent.path=bin/jacocoagent.jar`
+// fails to attach JaCoCo, producing no coverage data.
 //
-// Resolution happens here rather than in Play.bootstrap because -javaagent /
-// -agentlib are JVM startup flags — by the time the framework parses
-// application.conf in-process, the agent ship has sailed. Returns an empty
-// list when conf is missing or specifies no agent keys.
+// Resolution happens here rather than in Play.bootstrap because all four
+// shapes are JVM startup flags: by the time the framework parses
+// application.conf in-process, the JVM is already up and any agent /
+// memory / JMX wiring is locked in.
+//
+// %<playId>. prefix priority matches Play's runtime config resolution.
+// Returns an empty list when conf is missing or no relevant keys are set.
+//
+// Keys handled (parity with 1.12):
+//   - javaagent.path   -> -javaagent:<path>
+//   - agentlib         -> -agentlib:<spec>
+//   - jvm.memory       -> whitespace-split into discrete JVM args
+//   - jmx.port + jmx.hostname (both required) -> JMX agent flags
+//
+// JMX defaults (ssl=false, authenticate=false, local.only=false) match the
+// 1.12 launcher verbatim. They are insecure-by-default but only fire when
+// an operator explicitly sets both jmx.port and jmx.hostname; harden the
+// agent with -D overrides via -PjvmArgs if exposing JMX off-host.
 private fun confJvmArgs(appDir: File, playId: String): List<String> {
     val confFile = File(appDir, "conf/application.conf")
     if (!confFile.isFile) return emptyList()
@@ -1040,6 +1054,24 @@ private fun confJvmArgs(appDir: File, playId: String): List<String> {
         }
         confValue(confText, "agentlib", playId)?.takeIf { it.isNotBlank() }?.let {
             add("-agentlib:$it")
+        }
+        // jvm.memory is a whitespace-separated bag of JVM flags
+        // (e.g. "-Xms256M -Xmx2G"); split and add each as a discrete arg.
+        // JVM `-Xm*` semantics are last-wins, so a user's -PjvmArgs="-Xmx4G"
+        // appended after this naturally overrides the conf value.
+        confValue(confText, "jvm.memory", playId)?.takeIf { it.isNotBlank() }?.let { mem ->
+            mem.split(Regex("\\s+")).filter { it.isNotEmpty() }.forEach { add(it) }
+        }
+        val jmxPort = confValue(confText, "jmx.port", playId)?.takeIf { it.isNotBlank() }
+        val jmxHost = confValue(confText, "jmx.hostname", playId)?.takeIf { it.isNotBlank() }
+        if (jmxPort != null && jmxHost != null) {
+            add("-Dcom.sun.management.jmxremote")
+            add("-Dcom.sun.management.jmxremote.port=$jmxPort")
+            add("-Dcom.sun.management.jmxremote.ssl=false")
+            add("-Dcom.sun.management.jmxremote.authenticate=false")
+            add("-Dcom.sun.management.jmxremote.local.only=false")
+            add("-Dcom.sun.management.jmxremote.host=$jmxHost")
+            add("-Djava.rmi.server.hostname=$jmxHost")
         }
     }
 }
@@ -1318,6 +1350,11 @@ private fun spawnPlay(
         add("-Dapplication.path=${appDir.absolutePath}")
         add("-Dplay.id=$playId")
         add("-Dplay.version=$frameworkVersion")
+        // PF-92: conf-driven JVM flags (javaagent.path, agentlib, jvm.memory,
+        // jmx.{port,hostname}) lifted from application.conf with %<playId>.
+        // priority. Comes before extraJvmArgs so a user's -PjvmArgs overrides
+        // a conf value under JVM last-wins semantics.
+        addAll(confJvmArgs(appDir, playId))
         // 1.12-style JVM tuning flags (forwarded by the play wrapper via
         // -PjvmArgs); inserted before -classpath so a user-supplied
         // -classpath would override ours, matching `java`'s last-wins.
