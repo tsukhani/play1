@@ -421,6 +421,7 @@ class Play1Plugin : Plugin<Project> {
             jvmArgs("-Dplay.id=$effectivePlayId")
             jvmArgs(ext.frameworkVersion.map { "-Dplay.version=$it" }.get())
             jvmArgs("-javaagent:${frameworkJar.get().asFile.absolutePath}")
+            confJvmArgs(project.projectDir, effectivePlayId).forEach { jvmArgs(it) }
             extraSysprops.forEach { jvmArgs(it) }
 
             // -PjvmArgs="..." carries 1.12-style JVM tuning flags that the
@@ -625,6 +626,7 @@ abstract class PlayAutotestTask : DefaultTask() {
             add(javaExecutable())
             add("--enable-native-access=ALL-UNNAMED")
             add("-javaagent:${playJar.absolutePath}")
+            addAll(confJvmArgs(appDir, "test"))
             add("-Dfile.encoding=utf-8")
             add("-Dapplication.path=${appDir.absolutePath}")
             add("-Dplay.id=test")
@@ -1016,6 +1018,30 @@ private fun confValue(config: String, key: String, playId: String): String? {
         activeValue(config, "%$playId.$key")?.let { return it }
     }
     return activeValue(config, key)
+}
+
+// PF-92: lift conf entries that are JVM-level flags (not in-process config)
+// onto the spawned JVM's command line. Mirrors the 1.12 Python launcher's
+// java_cmd handling of javaagent.path and agentlib, with %<playId>. prefix
+// priority. Without this, `%test.javaagent.path=bin/jacocoagent.jar` is
+// silently dropped under 1.13.x and tools like JaCoCo produce no coverage.
+//
+// Resolution happens here rather than in Play.bootstrap because -javaagent /
+// -agentlib are JVM startup flags — by the time the framework parses
+// application.conf in-process, the agent ship has sailed. Returns an empty
+// list when conf is missing or specifies no agent keys.
+private fun confJvmArgs(appDir: File, playId: String): List<String> {
+    val confFile = File(appDir, "conf/application.conf")
+    if (!confFile.isFile) return emptyList()
+    val confText = confFile.readText()
+    return buildList {
+        confValue(confText, "javaagent.path", playId)?.takeIf { it.isNotBlank() }?.let {
+            add("-javaagent:$it")
+        }
+        confValue(confText, "agentlib", playId)?.takeIf { it.isNotBlank() }?.let {
+            add("-agentlib:$it")
+        }
+    }
 }
 
 // Read the env-var name from `application.secret=${VARNAME}`. Returns
