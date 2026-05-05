@@ -13,6 +13,12 @@
 /db/
 /lib/
 /modules/
+
+# Gradle
+/.gradle/
+/build/
+
+# IDE
 *.iml
 .idea/
 .vscode/
