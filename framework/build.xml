@@ -408,7 +408,7 @@
         <mkdir dir="dist" />
         <mkdir dir="dist/play-${version}" />
         <copy todir="dist/play-${version}">
-            <fileset dir=".." excludes=".github,**/cobertura.ser,**/*.pyc,**/*.log,hs_err*,.*,.*/*,framework/dist/**,framework/test-src/**,id,nbproject/**,**/.bzr/**,**/.git/**,*.bzrignore,framework/classes/**,framework/tests-results/**,modules/**,openspec/**,.claude/**,CLAUDE.md,sync-fork.sh,_bmad/**,_bmad-output/**,.agents/**,AGENTS.md" />
+            <fileset dir=".." excludes=".github/**,**/cobertura.ser,**/*.pyc,**/*.log,hs_err*,.*,.*/*,build/**,framework/gradle-plugin/build/**,**/.gradle/**,**/.kotlin/**,framework/dist/**,framework/test-src/**,id,nbproject/**,**/.bzr/**,**/.git/**,*.bzrignore,framework/classes/**,framework/tests-results/**,modules/**,openspec/**,.claude/**,CLAUDE.md,sync-fork.sh,_bmad/**,_bmad-output/**,.agents/**,AGENTS.md" />
             <fileset dir=".." includes="modules/crud/**,modules/secure/**,modules/docviewer/**,modules/testrunner/**" excludes="**/*.pyc" />
         </copy>
     </target>
