@@ -145,6 +145,16 @@ class Play1Plugin : Plugin<Project> {
             outputs.upToDateWhen { false }
         }
 
+        project.tasks.register<PlayDepsTask>("playDeps") {
+            group = "play1"
+            description = "Resolve Gradle deps and copy to lib/. Optional: -Psync (also delete stale lib/ jars)"
+            applicationPath.set(project.layout.projectDirectory)
+            frameworkPath.set(ext.frameworkPath)
+            playClasspath.from(playClasspathFor(project, ext, includeTestrunner = false))
+            sync.set(project.providers.gradleProperty("sync").map { true }.orElse(false))
+            outputs.upToDateWhen { false }
+        }
+
         project.tasks.register<PlayBundleTask>("playBundle") {
             group = "play1"
             description = "Self-contained deployment ZIP (precompiled, framework, deps, .classpath, bin/start.sh). Optional: -Poutput=<path>"
@@ -1401,6 +1411,56 @@ abstract class PlayBundleTask : DefaultTask() {
         zip.putNextEntry(java.util.zip.ZipEntry(entryName))
         src.inputStream().use { it.copyTo(zip) }
         zip.closeEntry()
+    }
+}
+
+abstract class PlayDepsTask : DefaultTask() {
+    @get:Internal abstract val applicationPath: DirectoryProperty
+    @get:Internal abstract val frameworkPath: DirectoryProperty
+    @get:Internal abstract val playClasspath: ConfigurableFileCollection
+    @get:Internal abstract val sync: Property<Boolean>
+
+    @TaskAction
+    fun resolveDeps() {
+        val appDir = applicationPath.get().asFile
+        val fwDir = frameworkPath.get().asFile
+        val libDir = File(appDir, "lib").apply { mkdirs() }
+
+        // Filter to Gradle-resolved deps only — not framework jars, not modules' lib jars,
+        // not whatever's already in app's lib/ (avoid copying onto self).
+        val resolvedDeps = playClasspath.files.filter { f ->
+            f.isFile && f.name.endsWith(".jar") &&
+                !f.absolutePath.startsWith(fwDir.absolutePath) &&
+                !f.absolutePath.startsWith(libDir.absolutePath) &&
+                !f.absolutePath.startsWith(File(appDir, "modules").absolutePath)
+        }.distinctBy { it.name }
+
+        val targetNames = resolvedDeps.map { it.name }.toSet()
+
+        if (sync.getOrElse(false)) {
+            // Delete jars in lib/ that aren't in the new resolution.
+            val staleJars = libDir.listFiles { f -> f.isFile && f.name.endsWith(".jar") }
+                ?.filter { it.name !in targetNames }
+                ?: emptyList()
+            staleJars.forEach { it.delete() }
+            if (staleJars.isNotEmpty()) {
+                logger.lifecycle("~ Removed ${staleJars.size} stale jar(s) from lib/ (--sync)")
+            }
+        }
+
+        var copied = 0
+        var skipped = 0
+        resolvedDeps.forEach { src ->
+            val dest = File(libDir, src.name)
+            if (dest.exists() && dest.length() == src.length()) {
+                skipped++
+            } else {
+                src.copyTo(dest, overwrite = true)
+                copied++
+            }
+        }
+        logger.lifecycle("~ Resolved ${resolvedDeps.size} dependencies → ${libDir.absolutePath}")
+        logger.lifecycle("~ Copied $copied, unchanged $skipped${if (sync.getOrElse(false)) " (--sync)" else ""}")
     }
 }
 
