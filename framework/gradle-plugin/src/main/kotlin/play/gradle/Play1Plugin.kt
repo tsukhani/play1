@@ -232,7 +232,7 @@ class Play1Plugin : Plugin<Project> {
 
         project.tasks.register<PlayStartTask>("playStart") {
             group = "play1"
-            description = "Start the application in the background"
+            description = "Start the application in the background. Optional: -Ppid-file=<name>"
             dependsOn("extractPlayModules")
             applicationPath.set(project.layout.projectDirectory)
             frameworkPath.set(ext.frameworkPath)
@@ -241,41 +241,50 @@ class Play1Plugin : Plugin<Project> {
             // -PhttpPort absent means "let conf decide" (Property stays not-present).
             playId.set(project.providers.gradleProperty("playId").orElse(""))
             httpPort.set(project.providers.gradleProperty("httpPort").map { it.toInt() })
+            pidFileOverride.set(project.providers.gradleProperty("pid-file").orElse(""))
+            // -PjvmArgs="..." carries 1.12-style JVM tuning forwarded by the
+            // play wrapper from the user's command line.
+            extraJvmArgs.set(project.providers.gradleProperty("jvmArgs").orElse(""))
             playClasspath.from(playClasspathFor(project, ext, includeTestrunner = false))
             outputs.upToDateWhen { false }
         }
 
         project.tasks.register<PlayStopTask>("playStop") {
             group = "play1"
-            description = "Stop the running application"
+            description = "Stop the running application. Optional: -Ppid-file=<name>"
             applicationPath.set(project.layout.projectDirectory)
+            pidFileOverride.set(project.providers.gradleProperty("pid-file").orElse(""))
             outputs.upToDateWhen { false }
         }
 
         project.tasks.register<PlayRestartTask>("playRestart") {
             group = "play1"
-            description = "Restart the running application"
+            description = "Restart the running application. Optional: -Ppid-file=<name>"
             dependsOn("extractPlayModules")
             applicationPath.set(project.layout.projectDirectory)
             frameworkPath.set(ext.frameworkPath)
             frameworkVersion.set(ext.frameworkVersion)
             playId.set(project.providers.gradleProperty("playId").orElse(""))
             httpPort.set(project.providers.gradleProperty("httpPort").map { it.toInt() })
+            pidFileOverride.set(project.providers.gradleProperty("pid-file").orElse(""))
+            extraJvmArgs.set(project.providers.gradleProperty("jvmArgs").orElse(""))
             playClasspath.from(playClasspathFor(project, ext, includeTestrunner = false))
             outputs.upToDateWhen { false }
         }
 
         project.tasks.register<PlayPidTask>("playPid") {
             group = "play1"
-            description = "Show the PID of the running application"
+            description = "Show the PID of the running application. Optional: -Ppid-file=<name>"
             applicationPath.set(project.layout.projectDirectory)
+            pidFileOverride.set(project.providers.gradleProperty("pid-file").orElse(""))
             outputs.upToDateWhen { false }
         }
 
         project.tasks.register<PlayOutTask>("playOut") {
             group = "play1"
-            description = "Tail the logs/system.out file"
+            description = "Tail the logs/system.out file. Optional: -Ppid-file=<name>"
             applicationPath.set(project.layout.projectDirectory)
+            pidFileOverride.set(project.providers.gradleProperty("pid-file").orElse(""))
             outputs.upToDateWhen { false }
         }
 
@@ -290,7 +299,7 @@ class Play1Plugin : Plugin<Project> {
 
         project.tasks.register<PlayJavadocTask>("playJavadoc") {
             group = "play1"
-            description = "Generate Javadoc for the application + declared modules. Optional: -Plinks (add external API doc links)"
+            description = "Generate Javadoc for the application. Optional: -Pinclude-modules (include declared module sources), -Plinks (add external API doc links)"
             dependsOn("extractPlayModules")
             applicationPath.set(project.layout.projectDirectory)
             frameworkPath.set(ext.frameworkPath)
@@ -298,15 +307,17 @@ class Play1Plugin : Plugin<Project> {
             modules.set(ext.modules)
             playClasspath.from(playClasspathFor(project, ext, includeTestrunner = false))
             withLinks.set(project.providers.gradleProperty("links").map { true }.orElse(false))
+            includeModules.set(project.providers.gradleProperty("include-modules").map { true }.orElse(false))
             outputs.upToDateWhen { false }
         }
 
         project.tasks.register<PlayStatusTask>("playStatus") {
             group = "play1"
-            description = "Display the running application's status. Optional: -Purl=<url>, -Psecret=<key>"
+            description = "Display the running application's status. Optional: -Purl=<url>, -Psecret=<key>, -Ppid-file=<name>"
             applicationPath.set(project.layout.projectDirectory)
             urlOverride.set(project.providers.gradleProperty("url").orElse(""))
             secretOverride.set(project.providers.gradleProperty("secret").orElse(""))
+            pidFileOverride.set(project.providers.gradleProperty("pid-file").orElse(""))
             outputs.upToDateWhen { false }
         }
     }
@@ -401,6 +412,15 @@ class Play1Plugin : Plugin<Project> {
             jvmArgs(ext.frameworkVersion.map { "-Dplay.version=$it" }.get())
             jvmArgs("-javaagent:${frameworkJar.get().asFile.absolutePath}")
             extraSysprops.forEach { jvmArgs(it) }
+
+            // -PjvmArgs="..." carries 1.12-style JVM tuning flags that the
+            // `play` wrapper accumulated from the user's command line
+            // (-Xms, -Xmx, -XX:*, -D*, -javaagent:*, -agentlib:*).
+            // Split on whitespace and forward each as a separate jvmArg so
+            // the JVM sees them as discrete argv slots, not one giant string.
+            project.providers.gradleProperty("jvmArgs").orNull?.let { extra ->
+                extra.split(Regex("\\s+")).filter { it.isNotEmpty() }.forEach { jvmArgs(it) }
+            }
 
             loadDotEnv(File(project.projectDir, "certs/.env")).forEach { (k, v) ->
                 environment(k, v)
@@ -954,6 +974,22 @@ private fun activeValue(config: String, key: String): String? {
     return m?.groupValues?.get(1)?.trim()
 }
 
+/**
+ * Resolution order: -Ppid-file=<value>, then application.pidFile in
+ * conf/application.conf, then "server.pid". Absolute paths are used as-is;
+ * relative paths resolve against the app directory.
+ */
+private fun resolvePidFile(appDir: File, override: String?): File {
+    val name = override?.takeIf { it.isNotBlank() }
+        ?: run {
+            val configFile = File(appDir, "conf/application.conf")
+            if (configFile.isFile) activeValue(configFile.readText(), "application.pidFile") else null
+        }
+        ?: "server.pid"
+    val f = File(name)
+    return if (f.isAbsolute) f else File(appDir, name)
+}
+
 private fun setOrUncomment(config: String, key: String, value: String): String {
     val active = Regex("""^${Regex.escape(key)}\s*=.*$""", RegexOption.MULTILINE)
     if (active.containsMatchIn(config)) {
@@ -974,11 +1010,13 @@ abstract class PlayStartTask : DefaultTask() {
     @get:Internal abstract val playId: Property<String>
     @get:Internal abstract val httpPort: Property<Int>
     @get:Internal abstract val playClasspath: ConfigurableFileCollection
+    @get:Internal abstract val pidFileOverride: Property<String>
+    @get:Internal abstract val extraJvmArgs: Property<String>
 
     @TaskAction
     fun start() {
         val appDir = applicationPath.get().asFile
-        val pidFile = File(appDir, "server.pid")
+        val pidFile = resolvePidFile(appDir, pidFileOverride.orNull)
         if (pidFile.exists()) {
             val existing = pidFile.readText().trim().toLongOrNull()
             if (existing != null && ProcessHandle.of(existing).isPresent) {
@@ -988,8 +1026,11 @@ abstract class PlayStartTask : DefaultTask() {
             pidFile.delete()
         }
 
+        val jvmArgsList = extraJvmArgs.orNull
+            ?.split(Regex("\\s+"))?.filter { it.isNotEmpty() }
+            ?: emptyList()
         val process = spawnPlay(appDir, frameworkPath.get().asFile, frameworkVersion.get(),
-            playId.get(), httpPort.orNull, playClasspath.asPath)
+            playId.get(), httpPort.orNull, playClasspath.asPath, jvmArgsList)
         pidFile.writeText(process.pid().toString())
         val sysOut = File(appDir, "logs/system.out")
         logger.lifecycle("~ OK, ${appDir.absolutePath} is started")
@@ -1000,13 +1041,14 @@ abstract class PlayStartTask : DefaultTask() {
 
 abstract class PlayStopTask : DefaultTask() {
     @get:Internal abstract val applicationPath: DirectoryProperty
+    @get:Internal abstract val pidFileOverride: Property<String>
 
     @TaskAction
     fun stop() {
         val appDir = applicationPath.get().asFile
-        val pidFile = File(appDir, "server.pid")
+        val pidFile = resolvePidFile(appDir, pidFileOverride.orNull)
         if (!pidFile.exists()) {
-            throw GradleException("Oops! ${appDir.absolutePath} is not started (server.pid not found)")
+            throw GradleException("Oops! ${appDir.absolutePath} is not started (${pidFile.name} not found)")
         }
         val pid = pidFile.readText().trim().toLong()
         val handle = ProcessHandle.of(pid).orElse(null)
@@ -1028,11 +1070,13 @@ abstract class PlayRestartTask : DefaultTask() {
     @get:Internal abstract val playId: Property<String>
     @get:Internal abstract val httpPort: Property<Int>
     @get:Internal abstract val playClasspath: ConfigurableFileCollection
+    @get:Internal abstract val pidFileOverride: Property<String>
+    @get:Internal abstract val extraJvmArgs: Property<String>
 
     @TaskAction
     fun restart() {
         val appDir = applicationPath.get().asFile
-        val pidFile = File(appDir, "server.pid")
+        val pidFile = resolvePidFile(appDir, pidFileOverride.orNull)
         if (pidFile.exists()) {
             val pid = pidFile.readText().trim().toLongOrNull()
             pidFile.delete()
@@ -1043,11 +1087,14 @@ abstract class PlayRestartTask : DefaultTask() {
                 }
             }
         } else {
-            logger.lifecycle("~ ${appDir.absolutePath} was not started (server.pid not found); starting fresh")
+            logger.lifecycle("~ ${appDir.absolutePath} was not started (${pidFile.name} not found); starting fresh")
         }
 
+        val jvmArgsList = extraJvmArgs.orNull
+            ?.split(Regex("\\s+"))?.filter { it.isNotEmpty() }
+            ?: emptyList()
         val process = spawnPlay(appDir, frameworkPath.get().asFile, frameworkVersion.get(),
-            playId.get(), httpPort.orNull, playClasspath.asPath)
+            playId.get(), httpPort.orNull, playClasspath.asPath, jvmArgsList)
         pidFile.writeText(process.pid().toString())
         val sysOut = File(appDir, "logs/system.out")
         logger.lifecycle("~ OK, ${appDir.absolutePath} is restarted")
@@ -1058,12 +1105,14 @@ abstract class PlayRestartTask : DefaultTask() {
 
 abstract class PlayPidTask : DefaultTask() {
     @get:Internal abstract val applicationPath: DirectoryProperty
+    @get:Internal abstract val pidFileOverride: Property<String>
 
     @TaskAction
     fun showPid() {
-        val pidFile = File(applicationPath.get().asFile, "server.pid")
+        val pidFile = resolvePidFile(applicationPath.get().asFile, pidFileOverride.orNull)
         if (!pidFile.exists()) {
-            throw GradleException("Oops! ${applicationPath.get().asFile.absolutePath} is not started (server.pid not found)")
+            logger.lifecycle("~ The application is not running")
+            return
         }
         val pid = pidFile.readText().trim()
         logger.lifecycle("~ PID of the running application is $pid")
@@ -1072,13 +1121,20 @@ abstract class PlayPidTask : DefaultTask() {
 
 abstract class PlayOutTask : DefaultTask() {
     @get:Internal abstract val applicationPath: DirectoryProperty
+    @get:Internal abstract val pidFileOverride: Property<String>
     @get:Inject abstract val execOps: ExecOperations
 
     @TaskAction
     fun out() {
-        val sysOut = File(applicationPath.get().asFile, "logs/system.out")
+        val appDir = applicationPath.get().asFile
+        if (!resolvePidFile(appDir, pidFileOverride.orNull).exists()) {
+            logger.lifecycle("~ The application is not running")
+            return
+        }
+        val sysOut = File(appDir, "logs/system.out")
         if (!sysOut.exists()) {
-            throw GradleException("Oops! ${sysOut.absolutePath} not found")
+            logger.lifecycle("~ ${sysOut.absolutePath} not found")
+            return
         }
         execOps.exec {
             commandLine("tail", "-f", sysOut.absolutePath)
@@ -1091,10 +1147,15 @@ abstract class PlayStatusTask : DefaultTask() {
     @get:Internal abstract val applicationPath: DirectoryProperty
     @get:Internal abstract val urlOverride: Property<String>
     @get:Internal abstract val secretOverride: Property<String>
+    @get:Internal abstract val pidFileOverride: Property<String>
 
     @TaskAction
     fun status() {
         val appDir = applicationPath.get().asFile
+        if (!resolvePidFile(appDir, pidFileOverride.orNull).exists()) {
+            logger.lifecycle("~ The application is not running")
+            return
+        }
         val configFile = File(appDir, "conf/application.conf")
         val config = if (configFile.isFile) configFile.readText() else ""
 
@@ -1129,6 +1190,7 @@ private fun spawnPlay(
     playId: String,
     httpPort: Int?,
     classpath: String,
+    extraJvmArgs: List<String> = emptyList(),
 ): Process {
     val playJar = File(frameworkPath, "framework/play-$frameworkVersion.jar")
     val cmd = buildList {
@@ -1139,6 +1201,10 @@ private fun spawnPlay(
         add("-Dapplication.path=${appDir.absolutePath}")
         add("-Dplay.id=$playId")
         add("-Dplay.version=$frameworkVersion")
+        // 1.12-style JVM tuning flags (forwarded by the play wrapper via
+        // -PjvmArgs); inserted before -classpath so a user-supplied
+        // -classpath would override ours, matching `java`'s last-wins.
+        addAll(extraJvmArgs)
         add("-classpath")
         add(classpath)
         add("play.server.Server")
@@ -1163,6 +1229,7 @@ abstract class PlayJavadocTask : DefaultTask() {
     @get:Internal abstract val modules: ListProperty<String>
     @get:Internal abstract val playClasspath: ConfigurableFileCollection
     @get:Internal abstract val withLinks: Property<Boolean>
+    @get:Internal abstract val includeModules: Property<Boolean>
 
     @get:Inject abstract val execOps: ExecOperations
     @get:Inject abstract val fileSystemOps: FileSystemOperations
@@ -1183,12 +1250,14 @@ abstract class PlayJavadocTask : DefaultTask() {
         listOf(File(appDir, "app"), File(appDir, "src")).forEach { dir ->
             if (dir.isDirectory) collectJavaFiles(dir, sources)
         }
-        val frameworkModulesDir = File(frameworkPath.get().asFile, "modules")
-        modules.get().forEach { moduleName ->
-            val moduleDir = File(frameworkModulesDir, moduleName)
-            if (moduleDir.isDirectory) {
-                listOf(File(moduleDir, "app"), File(moduleDir, "src")).forEach { dir ->
-                    if (dir.isDirectory) collectJavaFiles(dir, sources)
+        if (includeModules.getOrElse(false)) {
+            val frameworkModulesDir = File(frameworkPath.get().asFile, "modules")
+            modules.get().forEach { moduleName ->
+                val moduleDir = File(frameworkModulesDir, moduleName)
+                if (moduleDir.isDirectory) {
+                    listOf(File(moduleDir, "app"), File(moduleDir, "src")).forEach { dir ->
+                        if (dir.isDirectory) collectJavaFiles(dir, sources)
+                    }
                 }
             }
         }

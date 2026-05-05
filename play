@@ -1,194 +1,291 @@
-#!/usr/bin/env python3
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-# Play command line script www.playframework.com/
+#!/bin/sh
+# Play 1 — thin wrapper around Gradle.
+#
+# This script lives at the root of the play1 framework distribution. Add this
+# directory to your PATH so you can run `play <command>` from anywhere.
+#
+# `play new <name>` runs the framework's gradlew (since playNewApp is registered
+# only in the framework's build.gradle.kts). All other commands run the local
+# ./gradlew from the current working directory (the application's gradlew).
 
-from __future__ import print_function
-import sys
-import os
-import os.path
-import re
+set -e
 
-sys.path.append(os.path.join(os.path.dirname(os.path.realpath(sys.argv[0])), 'framework', 'pym'))
+# --- Resolve PLAY_HOME from this script's location, following symlinks ----
+SCRIPT="$0"
+while [ -h "$SCRIPT" ]; do
+    LINK=$(readlink "$SCRIPT")
+    case "$LINK" in
+        /*) SCRIPT="$LINK" ;;
+        *)  SCRIPT="$(dirname "$SCRIPT")/$LINK" ;;
+    esac
+done
+PLAY_HOME="$(cd "$(dirname "$SCRIPT")" && pwd)"
 
-from play.cmdloader import CommandLoader
-from play.application import PlayApplication
-from play.utils import *
+# --- Banner ---------------------------------------------------------------
+# Mirrors the logo printed by the pre-1.13 Python CLI. Suppressed by --silent.
+print_logo() {
+    cat <<'EOF'
+~  _   _       _ _       _     _
+~ | | | |_   _| | | __ _| |__ | |
+~ | |_| | | | | | |/ _' | '_ \| |
+~ |  _  | |_| | | | (_| | | | |_|
+~ |_| |_|\__,_|_|_|\__,_|_| |_(_)
+~
+EOF
+    if [ -f "$PLAY_HOME/framework/src/play/version" ]; then
+        VERSION=$(cat "$PLAY_HOME/framework/src/play/version")
+        printf '~ play! %s, https://www.playframework.com\n~\n' "$VERSION"
+    fi
+}
 
+# --- Help / usage ---------------------------------------------------------
+print_usage() {
+    cat <<'EOF'
+Play 1 — Gradle-backed CLI wrapper.
 
-# ~~~~~~~~~
-# Little utility to get command line arguments
-def get_opt(args, arg, env):
-    s = "--%s=" % arg
-    for a in args:
-        if a.find(s) == 0:
-            env[arg] = a[len(s):]
-            args.remove(a)
-            # print "~ get_opt: '%s' -> '%s'" % (arg, env[arg])
-            break
-    
+Usage: play <command> [args...]
 
-# ~~~~~~~~~
-# Main
+Application lifecycle:
+  run                  Run the application in the foreground (dev mode)
+  start                Start the application in the background
+  stop                 Stop the running application
+  restart              Restart the running application
+  status               Print application status
+  pid                  Print the running application's PID
+  out                  Tail the running application's log
+                       The above background commands accept --pid-file=<name>
+                       to target a specific instance (default: server.pid;
+                       fallback: application.pidFile in conf/application.conf).
 
-try:
+Build / test / package:
+  clean                Remove generated files
+  precompile           Precompile sources and templates for production
+  test                 Run the application's tests interactively
+  auto-test            Run all tests headlessly and exit
+  dist                 Build a distributable archive
+  bundle               Build a self-contained deployment zip
 
-    play_env = dict()
+Project setup:
+  new <name>           Scaffold a new application in <cwd>/<name>
+                       Optional: --frontend (Nuxt 3 frontend)
+                                 --dest=<path> (override destination directory)
+  secret               Generate a new application secret
+  enable-https         Enable HTTPS in conf/application.conf
+  disable-https        Disable HTTPS in conf/application.conf
 
-    # ~~~~~~~~~~~~~~~~~~~~~~ Where is the framework?
-    play_env["basedir"] = os.path.normpath(os.path.dirname(os.path.realpath(sys.argv[0])))
+Information:
+  classpath            Print the resolved runtime classpath
+  modules              List installed modules
+  evolutions           Apply database evolutions
+  javadoc              Generate Javadoc for the application
+                       Optional: --include-modules (include declared module sources)
+                                 --links (add external API doc links)
+  version              Print the framework version
+  help                 Show this help
 
-    # ~~~~~~~~~~~~~~~~~~~~~~ What is the framework id?
-    play_env["id_file"] = os.path.join(play_env['basedir'], 'id')
-    if os.path.exists(play_env["id_file"]):
-        play_env["id"] = open(play_env["id_file"]).readline().strip()
-    else:
-        play_env["id"] = ''
+Argument forwarding:
+  --key=value          Pass a property override to the build
+  --key                Pass a boolean property flag
+EOF
+}
 
-    showLogo = sys.argv.count("--silent") == 0
+# --- Subcommand → Gradle task lookup --------------------------------------
+task_for() {
+    case "$1" in
+        run)             echo playRun ;;
+        start)           echo playStart ;;
+        stop)            echo playStop ;;
+        restart)         echo playRestart ;;
+        status)          echo playStatus ;;
+        pid)             echo playPid ;;
+        out)             echo playOut ;;
+        test)            echo playTest ;;
+        auto-test)       echo playAutotest ;;
+        clean)           echo playClean ;;
+        precompile)      echo playPrecompile ;;
+        evolutions)      echo playEvolutions ;;
+        classpath)       echo playClasspath ;;
+        modules)         echo playModulesInfo ;;
+        secret)          echo playSecret ;;
+        enable-https)    echo playEnableHttps ;;
+        disable-https)   echo playDisableHttps ;;
+        javadoc)         echo playJavadoc ;;
+        dist)            echo playBundle ;;
+        bundle)          echo playBundle ;;
+        version)         echo playVersion ;;
+        *)               return 1 ;;
+    esac
+}
 
-    if showLogo:
-        # ~~~~~~~~~~~~~~~~~~~~~~ Display logo
-        print(r"~  _   _       _ _       _     _ ")
-        print(r"~ | | | |_   _| | | __ _| |__ | |")
-        print(r"~ | |_| | | | | | |/ _' | '_ \| |")
-        print(r"~ |  _  | |_| | | | (_| | | | |_|")
-        print(r"~ |_| |_|\__,_|_|_|\__,_|_| |_(_)")
-        print(r"~")
-    else:
-        sys.argv.remove("--silent")
+# --- Locate a gradlew/gradle to invoke ------------------------------------
+# Order: ./gradlew (CWD) → $PLAY_HOME/gradlew (when in framework dir) →
+# system `gradle` on PATH → install-instructions error.
+find_gradle() {
+    if [ -x "./gradlew" ]; then
+        echo "./gradlew"
+        return 0
+    fi
+    if [ "$PWD" = "$PLAY_HOME" ] && [ -x "$PLAY_HOME/gradlew" ]; then
+        echo "$PLAY_HOME/gradlew"
+        return 0
+    fi
+    if command -v gradle >/dev/null 2>&1; then
+        echo "gradle"
+        return 0
+    fi
+    cat >&2 <<EOF
+play: no Gradle wrapper found in this directory and 'gradle' is not on PATH.
 
-    play_version_file = os.path.join(play_env["basedir"], 'framework', 'src', 'play', 'version')
-    if not os.path.exists(play_version_file):
-        print("~ Oops. %s file not found" % os.path.normpath(os.path.join(play_env["basedir"], 'framework', 'src', 'play', 'version')))
-        print("~ Is the framework compiled? ")
-        print("~")
-        sys.exit(-1)
+Most play commands run from inside an application directory (one containing a
+./gradlew script). Either:
+  - cd into your Play 1 application, or
+  - run \`play new <name>\` to scaffold a new one.
 
-    play_env["version"] = open(play_version_file).readline().strip()
+If you intend to run Gradle directly without a wrapper, install Gradle:
+  macOS:    brew install gradle
+  Linux:    sdk install gradle             (or your distro's package manager)
+  Windows:  winget install Gradle.Gradle
+  Manual:   https://gradle.org/install/
+EOF
+    return 1
+}
 
-    if showLogo:
-        print("~ play! %s, https://www.playframework.com" % (play_env["version"]))
+# --- Forward CLI flags as Gradle -P properties ----------------------------
+# Translates 1.12 Python-CLI argument shapes into the Gradle wire format
+# the plugin understands. Outputs one arg per line; the caller reads with
+# IFS=newline + `set --` to preserve spaces in -PjvmArgs values.
+#
+#   --info, --debug, --stacktrace, ...   →   pass through (Gradle's own flags)
+#   --%<id>                              →   -PplayId=<id>          (1.12 mode prefix)
+#   --http.port=X                        →   -PhttpPort=X           (camelCase plugin prop)
+#   --https.port=X                       →   -PhttpsPort=X          (same)
+#   -Xms..., -Xmx..., -XX:..., -D...,    →   accumulated into a single
+#   -Xlog:..., -javaagent:..., -agentlib:    -PjvmArgs="..." line emitted at end
+#   --foo=bar, --foo                     →   -Pfoo=bar / -Pfoo      (generic)
+#   anything else                        →   pass through unchanged
+forward_args() {
+    JVM_ARGS=""
+    for arg in "$@"; do
+        case "$arg" in
+            --info|--debug|--warn|--quiet|--stacktrace|--scan|--no-daemon|--no-build-cache|--no-configuration-cache|--rerun-tasks|--refresh-dependencies|--offline|--continue|--dry-run)
+                printf '%s\n' "$arg" ;;
+            --%*)
+                printf '%s\n' "-PplayId=${arg#--%}" ;;
+            --http.port=*)
+                printf '%s\n' "-PhttpPort=${arg#--http.port=}" ;;
+            --https.port=*)
+                printf '%s\n' "-PhttpsPort=${arg#--https.port=}" ;;
+            -X*|-D*|-XX:*|-Xlog:*|-javaagent:*|-agentlib:*)
+                JVM_ARGS="${JVM_ARGS:+$JVM_ARGS }$arg" ;;
+            --*=*)
+                printf '%s\n' "-P${arg#--}" ;;
+            --*)
+                printf '%s\n' "-P${arg#--}" ;;
+            *)
+                printf '%s\n' "$arg" ;;
+        esac
+    done
+    [ -n "$JVM_ARGS" ] && printf '%s\n' "-PjvmArgs=$JVM_ARGS"
+}
 
-    # PF-64: pre-flight Java version check before any command dispatch or
-    # Java fork. Catches `play new` and other pre-app-init commands that
-    # don't reach application.py's check.
-    enforce_supported_java_version()
+# --- Strip --silent from args (controls banner only; never reaches Gradle) -
+SILENT=0
+NARGS=$#
+i=0
+while [ $i -lt $NARGS ]; do
+    arg="$1"
+    shift
+    if [ "$arg" = "--silent" ]; then
+        SILENT=1
+    else
+        set -- "$@" "$arg"
+    fi
+    i=$((i + 1))
+done
+[ "$SILENT" -eq 0 ] && print_logo
 
-    # ~~~~~~~~~~~~~~~~~~~~~~ Where is the application?
-    application_path = None
-    remaining_args = []
-    if len(sys.argv) == 1:
-        application_path = os.getcwd()
-    if len(sys.argv) == 2:
-        application_path = os.getcwd()
-        remaining_args = sys.argv[2:]
-    if len(sys.argv) > 2:
-        if sys.argv[2].startswith('-'):
-            application_path = os.getcwd()
-            remaining_args = sys.argv[2:]
-        else:
-            if sys.argv[1].lower() == 'help':
-                application_path = os.path.normpath(os.path.abspath(sys.argv[2]))
-                exists = os.path.exists(application_path)
-                if exists:
-                    remaining_args = sys.argv[3:]
-                else:
-                    remaining_args = sys.argv[2:]
-            else:
-                application_path = os.path.normpath(os.path.abspath(sys.argv[2]))
-                remaining_args = sys.argv[3:]
+# --- Dispatch -------------------------------------------------------------
+CMD="${1:-help}"
+[ $# -gt 0 ] && shift
 
-    ignoreMissing = False
-    if remaining_args.count('--force') == 1:
-        remaining_args.remove('--force')
-        ignoreMissing = True
+case "$CMD" in
+    help|--help|-h|"")
+        print_usage
+        exit 0
+        ;;
+    new)
+        APP_NAME="${1:-}"
+        if [ -z "$APP_NAME" ]; then
+            echo "play new: missing application name." >&2
+            echo "Usage: play new <name> [--frontend] [--dest=<path>]" >&2
+            exit 1
+        fi
+        shift
+        # Default destination: $PWD/$APP_NAME (the user's current working dir).
+        # --dest=<path> overrides this. The user's CWD is captured *before* we
+        # cd to PLAY_HOME so relative dest paths resolve correctly.
+        ORIG_CWD="$PWD"
+        DEST="$ORIG_CWD/$APP_NAME"
+        EXTRA=""
+        for arg in "$@"; do
+            case "$arg" in
+                --frontend)   EXTRA="$EXTRA -Pfrontend" ;;
+                --dest=*)     DEST="${arg#--dest=}" ;;
+                --*=*)        EXTRA="$EXTRA -P${arg#--}" ;;
+                --*)          EXTRA="$EXTRA -P${arg#--}" ;;
+                *)            echo "play new: unrecognized argument '$arg'" >&2; exit 1 ;;
+            esac
+        done
+        # Resolve DEST to absolute path so it doesn't depend on PLAY_HOME
+        case "$DEST" in
+            /*) ;;
+            *)  DEST="$ORIG_CWD/$DEST" ;;
+        esac
+        cd "$PLAY_HOME"
+        # shellcheck disable=SC2086  # word-splitting EXTRA is intentional
+        exec ./gradlew playNewApp -Pname="$APP_NAME" -Pdest="$DEST" $EXTRA
+        ;;
+    deps|check|ant|install|list-modules|build-module|new-module|id)
+        cat >&2 <<EOF
+play $CMD: removed in 1.13.x.
 
-    # ~~~~~~~~~~~~~~~~~~~~~~ What is the command?
-    if len(sys.argv) > 1:
-        play_command = sys.argv[1]
-    else:
-        play_command = 'none'
+Gradle handles dependency resolution and build orchestration natively. There is
+no longer a lib/ directory or modules registry to manage.
 
-    # ~~~~~~~~~~~~~~~~~ Override pid_file
-    get_opt(remaining_args, "pid_file", play_env)
+  - To inspect dependencies:  ./gradlew dependencies
+  - To add a dependency:      edit build.gradle.kts
+  - To list bundled modules:  play modules
+EOF
+        exit 1
+        ;;
+    idea|intellij|eclipse|netbeans)
+        cat >&2 <<EOF
+play $CMD: not needed in 1.13.x.
 
-    # ~~~~~~~~~~~~~~~~~ Override jvm_version
-    get_opt(remaining_args, "jvm_version", play_env)
-
-    # ~~~~~~~~~~~~~~~~~ Override port
-    get_opt(remaining_args, "http.port", play_env)
-    get_opt(remaining_args, "https.port", play_env)
-    get_opt(remaining_args, "jpda.port", play_env)
-
-    # ~~~~~~~~~~~~~~~~~ Override id
-    for a in remaining_args:
-        if a.find('--%') == 0:
-            play_env["id"] = a[3:]
-    if remaining_args.count('--%%%s' % play_env["id"]) == 1:
-        remaining_args.remove('--%%%s' % play_env["id"])
-
-    if play_command in ['test', 'auto-test', 'autotest'] :
-        # If framework-id is not a valid test-id, force it to 'test'
-        if not isTestFrameworkId( play_env["id"] ): 
-            play_env["id"] = 'test'
-
-    if showLogo:
-        if play_env["id"] != '':
-            print("~ framework ID is %s" % play_env["id"])
-        print("~")
-
-    # ~~~~~~~~~~~~~~~~~ Checking for disable_random_jpda
-    disable_random_jpda = False
-    if remaining_args.count('-f') == 1:
-        disable_random_jpda = True
-        remaining_args.remove('-f')
-    play_env["disable_random_jpda"] = disable_random_jpda
-
-    play_app = PlayApplication(application_path, play_env, ignoreMissing)
-
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    # ~~~~~~~~~~~~~~~~~~~~~~ The commands ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-    cmdloader = CommandLoader(play_env["basedir"])
-
-    # ~~~~~~~~~~~~~~~~~ Resolve dependencies if needed
-    if remaining_args.count('--deps') == 1:
-        cmdloader.commands['dependencies'].execute(command='dependencies', app=play_app, args=['--sync'], env=play_env, cmdloader=cmdloader)
-        remaining_args.remove('--deps')
-
-    # Load module commands
-    if play_app:
-        for module in play_app.modules():
-            cmdloader.load_play_module(module)
-
-    for module in getWithModules(remaining_args, play_env):
-        cmdloader.load_play_module(module)
-
-    if play_command in cmdloader.commands:
-        for name in cmdloader.modules:
-            module = cmdloader.modules[name]
-            if 'before' in dir(module):
-                module.before(command=play_command, app=play_app, args=remaining_args, env=play_env)
-        status = cmdloader.commands[play_command].execute(command=play_command, app=play_app, args=remaining_args, env=play_env, cmdloader=cmdloader)
-        for name in cmdloader.modules:
-            module = cmdloader.modules[name]
-            if 'after' in dir(module):
-                module.after(command=play_command, app=play_app, args=remaining_args, env=play_env)
-        sys.exit(status)
-
-    # ~~~~~~~~~~~~~~~~~~~~~~ Invalid command
-    print("~ Usage: play cmd [app_path] [--options]")
-    print("~ ")
-    print("~ with,  new      Create a new application")
-    print("~        run      Run the application in the current shell")
-    print("~        help     Show play help")
-    print("~")
-    if len(sys.argv) > 1:
-        print("~ Invalid command: %s" % sys.argv[1])
-        print("~")
-    sys.exit(-1)
-
-except KeyboardInterrupt:
-    print('~ ...')
-    sys.exit(0)
+Open your IDE (IntelliJ IDEA, VS Code with the Gradle extension, Eclipse with
+Buildship, etc.) and point it at build.gradle.kts in your application directory.
+Modern IDEs auto-import Gradle projects without generated project files.
+EOF
+        exit 0
+        ;;
+    *)
+        if TASK=$(task_for "$CMD"); then
+            GRADLEW=$(find_gradle) || exit 1
+            # Read forward_args output line-by-line into positional params so
+            # the -PjvmArgs="-Xms... -Xmx... ..." accumulator (which contains
+            # spaces) survives intact through to gradle. Capture before
+            # `set --` so $@ is still the original args when forward_args runs.
+            TRANSLATED=$(forward_args "$@")
+            set --
+            while IFS= read -r line; do
+                [ -n "$line" ] && set -- "$@" "$line"
+            done <<EOF
+$TRANSLATED
+EOF
+            exec "$GRADLEW" "$TASK" "$@"
+        else
+            echo "play: unknown command '$CMD'. Run 'play help' for usage." >&2
+            exit 1
+        fi
+        ;;
+esac
