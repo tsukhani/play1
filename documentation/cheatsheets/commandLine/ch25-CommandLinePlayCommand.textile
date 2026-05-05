@@ -19,7 +19,7 @@ Print the modules that will be loaded for this app
 *javadoc*
 Generate the application's Javadoc
 
-*auto-test*
+*autotest*
 Run all application tests headlessly
 
 *clean*

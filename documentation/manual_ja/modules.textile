@@ -48,7 +48,7 @@ h2. <a name="bundled">同梱モジュール</a>
 
 * @crud@ — JPA エンティティの自動生成管理 UI
 * @secure@ — ログインフォームとアクセス制御ヘルパー
-* @testrunner@ — @play test@ と @play auto-test@ で使用される @/@tests@ Web UI
+* @testrunner@ — @play test@ と @play autotest@ で使用される @/@tests@ Web UI
 * @docviewer@ — ローカルの @/@documentation@ ブラウザ; 開発モードで自動ロード
 
 アプリケーションが必要とするモジュールを @build.gradle.kts@ に追加します:

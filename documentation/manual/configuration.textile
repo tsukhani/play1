@@ -518,7 +518,7 @@ h2(#test). Test runner
 
 h3(#headlessBrowser). headlessBrowser
 
-Specifies the web browser compatibility mode for the HtmlUnit headless web browser used when running @play auto-test@.
+Specifies the web browser compatibility mode for the HtmlUnit headless web browser used when running @play autotest@.
 
 bc. headlessBrowser=FIREFOX_38
 
@@ -540,7 +540,7 @@ Note: The timeout is used twice. The first is for making the socket connection, 
 
 bc. webclient.timeout=60
 
-This value can be set directly in the command @play auto-test@ by adding @--timeout=60@
+This value can be set directly in the command @play autotest@ by adding @--timeout=60@
 
 
 h2(#hibernate). Hibernate

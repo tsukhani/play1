@@ -143,7 +143,7 @@ Built-in modules in `modules/`: `testrunner`, `docviewer`, `crud`, `secure`. Eac
 
 **End-user app testing** (run by app developers against THEIR apps, not the framework):
 - `play test myapp` — backed by the `playTest` Gradle task. Starts the app in test mode (foreground, `play.id=test`). Apps put their tests under `app/` annotated with `@RunWith(PlayJUnitRunner.class)`; visit `http://host:port/@tests` to invoke them via the testrunner module's web UI.
-- `play auto-test myapp` — backed by the `playAutotest` Gradle task. Headless: boots the app, runs FirePhoque against `/@tests`, exits with the test result. Used for CI of end-user apps. Auto-synthesizes an ephemeral `${PLAY_SECRET}` for hermetic runs when neither `certs/.env` nor the host env supplies one.
+- `play autotest myapp` — backed by the `playAutotest` Gradle task. Headless: boots the app, runs FirePhoque against `/@tests`, exits with the test result. Used for CI of end-user apps. Auto-synthesizes an ephemeral `${PLAY_SECRET}` for hermetic runs when neither `certs/.env` nor the host env supplies one.
 
 These commands depend on `modules/testrunner/lib/play-testrunner.jar` (built by the testrunner module) — they are NOT exercised by `ant test`.
 

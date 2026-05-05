@@ -1,14 +1,10 @@
 ~ Name:
 ~ ~~~~~
-~ auto-test -- Automatically run all application tests
-~
-~ Alias:
-~ ~~~~~
-~ autotest
+~ autotest -- Automatically run all application tests
 ~
 ~ Synopsis:
 ~ ~~~~~~~~~
-~ play auto-test [app_path] [--deps] [--unit] [--functional] [--timeout=xxx]
+~ play autotest [app_path] [--deps] [--unit] [--functional] [--timeout=xxx]
 ~
 ~ Description:
 ~ ~~~~~~~~~~~~

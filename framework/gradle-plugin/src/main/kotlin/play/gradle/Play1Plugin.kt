@@ -439,7 +439,7 @@ class Play1Plugin : Plugin<Project> {
             }
             // Hermetic test runs (playTest, playPrecompile, playAutotest) — if
             // certs/.env and the host env both lack the application.secret env
-            // var, synthesize an ephemeral one so `play auto-test` works on a
+            // var, synthesize an ephemeral one so `play autotest` works on a
             // fresh checkout without first running `play secret`. The framework
             // rejects literal secrets and demands a `${VAR}` placeholder.
             if (isTestMode) {

@@ -177,9 +177,9 @@ bc. %test.db=mem
 
 h2. <a name="continuous">Continuous integration, and running the tests automatically</a>
 
-The @auto-test@ command does the same as the @test@ command, but it automatically launches a headless browser via Firephoque, runs all the tests, and stops:
+The @autotest@ command does the same as the @test@ command, but it automatically launches a headless browser via Firephoque, runs all the tests, and stops:
 
-bc. play auto-test myapp
+bc. play autotest myapp
 
 This is a useful command if you want to set up a continuous integration system.
 
@@ -188,7 +188,7 @@ After the run, all results are saved to the @/test-result@ directory. Moreover, 
 So setting up a continuous integration system to test your application could be:
 
 * Checkout the latest version of your application
-* Run @play auto-test myapp@
+* Run @play autotest myapp@
 * Wait for the end of the process
 * Check for the marker file @result.passed@ or @result.failed@ in the @/test-result@ directory
 

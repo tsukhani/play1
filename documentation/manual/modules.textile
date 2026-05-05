@@ -54,7 +54,7 @@ This fork ships four built-in modules:
 
 * @crud@ — auto-generated administration UI for JPA entities
 * @secure@ — login form and access control helpers
-* @testrunner@ — @/@tests@ web UI used by @play test@ and @play auto-test@
+* @testrunner@ — @/@tests@ web UI used by @play test@ and @play autotest@
 * @docviewer@ — local @/@documentation@ browser; auto-loaded in dev mode
 
 Add the modules your application needs to @build.gradle.kts@:

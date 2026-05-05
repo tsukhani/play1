@@ -31,7 +31,7 @@ ant resolve                      # Resolve framework/dependencies.yml via Ivy an
 
 To run an end-user app's tests headlessly (from the app directory):
 ```bash
-play auto-test
+play autotest
 ```
 
 ## Architecture

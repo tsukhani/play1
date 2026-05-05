@@ -61,7 +61,7 @@ Build / test / package:
   clean                Remove generated files
   precompile           Precompile sources and templates for production
   test                 Run the application's tests interactively
-  auto-test            Run all tests headlessly and exit
+  autotest             Run all tests headlessly and exit
   bundle               Build a self-contained deployment zip (alias: dist)
 
 Project setup:
@@ -99,7 +99,7 @@ task_for() {
         pid)             echo playPid ;;
         out)             echo playOut ;;
         test)            echo playTest ;;
-        auto-test)       echo playAutotest ;;
+        autotest)        echo playAutotest ;;
         clean)           echo playClean ;;
         precompile)      echo playPrecompile ;;
         evolutions)      echo playEvolutions ;;

@@ -365,7 +365,7 @@ h2(#test). テストランナー
 
 h3(#headlessBrowser). headlessBrowser
 
-@play auto-test@ 実行時に使用される、 HtmlUnit ヘッドレス web ブラウザの互換モードを指定します。
+@play autotest@ 実行時に使用される、 HtmlUnit ヘッドレス web ブラウザの互換モードを指定します。
 
 bc. headlessBrowser=INTERNET_EXPLORER_7
 
