@@ -15,9 +15,9 @@ import play.mvc.Router;
  *
  * <p>Exposes three endpoints under {@code openapi.basePath} (default {@code /@api}):
  * <ul>
- *   <li>{@code /@api/openapi.json} — pretty-printed JSON spec</li>
- *   <li>{@code /@api/openapi.yaml} — pretty-printed YAML spec</li>
- *   <li>{@code /@api/docs} — Swagger UI loaded from the unpkg CDN (DEV mode only)</li>
+ *   <li>{@code /@api/openapi.json} — pretty-printed JSON spec (DEV mode by default; PROD opt-in via {@code openapi.publicSpec=true})</li>
+ *   <li>{@code /@api/openapi.yaml} — pretty-printed YAML spec (same gating as JSON)</li>
+ *   <li>{@code /@api/docs} — Swagger UI loaded from the unpkg CDN (DEV mode only, always)</li>
  * </ul>
  *
  * <p>The spec is generated on-demand from {@link Router#routes} and reflection on
@@ -28,18 +28,30 @@ import play.mvc.Router;
  * <pre>
  * openapi.enabled=true        # master switch (default: true)
  * openapi.basePath=/@api      # path prefix; must start with /
+ * openapi.publicSpec=false    # serve /openapi.{json,yaml} in non-DEV modes (default: false)
  * </pre>
+ *
+ * <p>Why {@code publicSpec} defaults to false: the spec describes every route + parameter
+ * shape the app exposes. Publishing it in production is a deliberate API-contract decision,
+ * not the default — most apps don't want their full API surface inventoried by anonymous
+ * callers. Teams who do want a public spec set the flag explicitly.
  */
 public class OpenApiPlugin extends PlayPlugin {
 
     static final String DEFAULT_BASE_PATH = "/@api";
 
     private boolean enabled = true;
+    private boolean publicSpec = false;
     private String basePath = DEFAULT_BASE_PATH;
 
     @Override
     public void onConfigurationRead() {
         enabled = Boolean.parseBoolean(Play.configuration.getProperty("openapi.enabled", "true"));
+        if (!enabled) {
+            Logger.info("OpenApiPlugin: disabled via openapi.enabled=false; /@api endpoints will not be served.");
+            return;
+        }
+        publicSpec = Boolean.parseBoolean(Play.configuration.getProperty("openapi.publicSpec", "false"));
         String configured = Play.configuration.getProperty("openapi.basePath", DEFAULT_BASE_PATH).trim();
         if (configured.isEmpty() || !configured.startsWith("/")) {
             Logger.warn("OpenApiPlugin: ignoring openapi.basePath=%s (must start with /). Falling back to %s.",
@@ -74,7 +86,15 @@ public class OpenApiPlugin extends PlayPlugin {
         return false;
     }
 
+    /** True when /@api/openapi.{json,yaml} should be served. DEV mode always, PROD only when opted in. */
+    private boolean specEnabled() {
+        return Play.mode == Play.Mode.DEV || publicSpec;
+    }
+
     private boolean serveJson(Response response) {
+        if (!specEnabled()) {
+            return notFound(response);
+        }
         OpenAPI spec = buildSpec();
         response.status = 200;
         response.contentType = "application/json";
@@ -83,6 +103,9 @@ public class OpenApiPlugin extends PlayPlugin {
     }
 
     private boolean serveYaml(Response response) {
+        if (!specEnabled()) {
+            return notFound(response);
+        }
         OpenAPI spec = buildSpec();
         response.status = 200;
         response.contentType = "application/yaml";
@@ -98,12 +121,16 @@ public class OpenApiPlugin extends PlayPlugin {
         return true;
     }
 
+    private boolean notFound(Response response) {
+        response.status = 404;
+        response.contentType = "text/plain";
+        response.print("Not Found");
+        return true;
+    }
+
     private boolean serveDocs(Response response) {
         if (Play.mode != Play.Mode.DEV) {
-            response.status = 404;
-            response.contentType = "text/plain";
-            response.print("Not Found");
-            return true;
+            return notFound(response);
         }
         response.status = 200;
         response.contentType = "text/html; charset=utf-8";
