@@ -1333,10 +1333,15 @@ abstract class PlayBundleTask : DefaultTask() {
         }
 
         // Bundle uses an INCLUDE list — only directories Play needs at runtime.
-        // Specifically excludes: app/ (replaced by precompiled), test/, documentation/,
-        // and any user-specific top-level dirs (workspace/, data/, frontend/, etc.)
-        // that aren't standard Play layout.
-        val includeTopLevel = setOf("conf", "public", "modules", "precompiled", "certs")
+        // Specifically excludes:
+        // - app/ (replaced by precompiled)
+        // - test/, documentation/ (not needed at runtime)
+        // - certs/ (TLS material + .env secrets — never bake secrets into deployment
+        //   artifacts; runtime should mount a volume / use Docker secrets / k8s Secrets
+        //   to provide host.cert, host.key, and PLAY_SECRET)
+        // - user-specific top-level dirs (workspace/, data/, frontend/, etc.) that
+        //   aren't standard Play layout
+        val includeTopLevel = setOf("conf", "public", "modules", "precompiled")
 
         java.util.zip.ZipOutputStream(outFile.outputStream()).use { zip ->
             // 1. Add only the runtime-relevant Play directories from projDir.
@@ -1394,6 +1399,7 @@ abstract class PlayBundleTask : DefaultTask() {
             zip.closeEntry()
         }
         logger.lifecycle("Bundle created at ${outFile.absolutePath} (${outFile.length() / 1024 / 1024} MB)")
+        logger.lifecycle("Runtime requires: PLAY_SECRET env var, plus certs/ dir (mount a volume or generate at boot) if HTTPS is enabled in application.conf.")
         logger.lifecycle("Unzip + run: cd $name && bash bin/play-start.sh   (PLAY_ID env overrides default 'prod')")
     }
 
