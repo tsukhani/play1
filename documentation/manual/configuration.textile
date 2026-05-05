@@ -596,7 +596,7 @@ Default: @true@
 
 h3(#http.path). http.path
 
-The URL path where the application runs on the server: use this if you do not host your Play application at the root of the domain you’re serving it from. This parameter has no effect when deployed as a WAR, because the path will be handled by the application server. For example:
+The URL path where the application runs on the server: use this if you do not host your Play application at the root of the domain you’re serving it from. For example:
 
 bc. http.path=/myapp/
 

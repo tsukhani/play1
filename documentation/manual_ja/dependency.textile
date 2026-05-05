@@ -20,14 +20,14 @@ bc. repositories {
 
 h2. <a name="modules">Play モジュールをロードする</a>
 
-Play の組み込みモジュール (@crud@、@secure@、@testrunner@、@docviewer@) は Maven 座標としてではなく、Play 1 プラグインの DSL で宣言します:
+Play の組み込みモジュール (@testrunner@、@docviewer@) は Play 1 プラグインによって自動的に読み込まれるため、明示的な宣言は不要です。サードパーティモジュールはプラグインの DSL で追加できます:
 
 bc. plugins {
     id("org.playframework.play1")
 }
 
 play1 {
-    modules("crud", "secure")
+    modules("third-party-module")
 }
 
 プラグインは、宣言された各モジュールをビルド時にアプリケーションの @modules/@ ディレクトリに展開します。モジュールオーバーレイ (レガシーの @override(f, t)@ 機構) は、モジュールがディスク上の実ディレクトリであるため透過的に動作します。

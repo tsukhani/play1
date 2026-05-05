@@ -27,12 +27,9 @@ h2. <a name="guide">チュートリアル － リアルな Play アプリケー�
 # "コメント投稿ページ":guide4
 # "キャプチャの設定":guide5
 # "タグ機能のサポート":guide6
-# "CRUD モジュールによる基本的な管理機能":guide7
-# "認証機能の追加":guide8
 # "カスタムエディタの作成":guide9
 # "テストの完了":guide10
 # "本番環境への準備":guide11
-# "国際化と地域化":guide12
 
 h2. <a name="manual">重要なドキュメンテーション</a>
 
@@ -175,13 +172,6 @@ h2. <a name="references">リファレンス</a>
 ## "Java エクステンション":javaextensions
 ## "バリデーション":validation-builtin
 # <a class="navigation" href="configuration">設定リファレンス</a>
-
-h2. <a name="modules">配布モジュール</a>
-
-これらのオプションモジュールは標準の配布物に含まれています。"その他のモジュールはこちら":/modules 。
-
-# "CRUD":crud
-# "Secure":secure
 
 h2. <a name="versionnotes">リリースノート</a>
 

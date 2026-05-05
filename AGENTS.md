@@ -64,7 +64,7 @@ This fork runs on virtual threads exclusively. Request invocation (`Invoker`), b
 
 ### Module System
 
-Built-in modules in `modules/`: `testrunner`, `docviewer`, `crud`, `secure`. Each has its own `build.xml`, `app/`, and `conf/` directories. Apps opt in via `play1 { modules(...) }` in their `build.gradle.kts`; the Gradle plugin extracts each declared module under `modules/<name>/` before launch.
+Built-in modules in `modules/`: `testrunner` and `docviewer`. Each has its own `build.xml`, `app/`, and `conf/` directories. Both are auto-loaded — `testrunner` under `play.id=test`, `docviewer` in dev mode. Third-party modules use `play1 { modules(...) }` in `build.gradle.kts`; the plugin extracts each declared module under `modules/<name>/` before launch.
 
 ### Testing Patterns
 

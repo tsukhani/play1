@@ -166,12 +166,6 @@ public class YamlParser extends AbstractModuleDescriptorParser {
                         if(depName.matches("play\\s+->\\s+play") || depName.equals("play")) {
                             depName = "play -> play " + System.getProperty("play.version");
                         }
-                        if(depName.matches("play\\s+->\\s+crud") || depName.equals("crud")) {
-                            depName = "play -> crud " + System.getProperty("play.version");
-                        }
-                        if(depName.matches("play\\s+->\\s+secure") || depName.equals("secure")) {
-                            depName = "play -> secure " + System.getProperty("play.version");
-                        }
                         if(depName.matches("play\\s+->\\s+docviewer") || depName.equals("docviewer")) {
                             depName = "play -> docviewer " + System.getProperty("play.version");
                         }

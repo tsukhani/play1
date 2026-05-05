@@ -9,4 +9,4 @@ require:
     - commons-lang -> commons-lang 2.5
     - commons-codec 1.7
     - net.sf.json-lib -> json-lib 2.4 jdk15
-    - crud
+    - docviewer

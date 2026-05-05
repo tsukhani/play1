@@ -226,25 +226,13 @@ repositories:
                 # resolver looks up the classifier-suffixed jar on disk; classifier-less entries
                 # like "io.netty -> netty-codec-http 4.2.12.Final" continue to resolve to plain
                 # name-revision.jar. YamlParser already populates the classifier extra-attribute
-                # via the regex at YamlParser.java:172-187.
+                # via the regex at YamlParser.java:173-181.
                 artifact:   "${play.path}/framework/lib/[artifact]-[revision](-[classifier]).jar"
             - playCoreDependenciesCentral:
                 type:       iBiblio
                 m2compatible: true
         contains:   *allDependencies
         
-    - playCoreCrud:
-        type:       local
-        artifact:   "${play.path}/modules/crud"
-        contains:
-            - play -> crud $version
-
-    - playCoreSecure:
-        type:       local
-        artifact:   "${play.path}/modules/secure"
-        contains:
-            - play -> secure $version
-            
     - playCoreDocviewer:
         type:       local
         artifact:   "${play.path}/modules/docviewer"

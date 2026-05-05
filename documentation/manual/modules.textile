@@ -19,24 +19,26 @@ directory.
 
 h2. <a name="loading">How to load a module from an application</a>
 
-Modules ship with the framework. Declare them in the application's
-@build.gradle.kts@:
+Modules ship with the framework. The built-in modules @testrunner@ and
+@docviewer@ are auto-loaded — @testrunner@ when running under
+@play.id=test@, @docviewer@ in dev mode — so applications do not need to
+declare them.
+
+To add a third-party module, declare it in the application's @build.gradle.kts@:
 
 bc. play1 {
-    modules("crud", "secure", "docviewer")
+    modules("third-party-module")
 }
 
-The built-in modules are @crud@, @secure@, @testrunner@, and @docviewer@.
 The Gradle plugin extracts each declared module into the application's
-@modules/@ directory before launch; @testrunner@ is auto-loaded when running
-under @play.id=test@.
+@modules/@ directory before launch.
 
 h2. <a name="routes">Load default routes from modules</a>
 
 A module can provide a default @routes@ file. You can load it in the main application @routes@ file, using a special route declaration:
 
-bc. # Import the default CRUD routes
-GET     /admin	     module:crud
+bc. # Import the default docviewer routes
+GET     /docs	     module:docviewer
 
 You can even load routes from all available modules:
 
@@ -50,18 +52,12 @@ If you are running a Play application that uses one or more modules with documen
 
 h2. <a name="bundled">Bundled modules</a>
 
-This fork ships four built-in modules:
+This fork ships two built-in modules:
 
-* @crud@ — auto-generated administration UI for JPA entities
-* @secure@ — login form and access control helpers
-* @testrunner@ — @/@tests@ web UI used by @play test@ and @play autotest@
+* @testrunner@ — @/@tests@ web UI used by @play test@ and @play autotest@; auto-loaded under @play.id=test@
 * @docviewer@ — local @/@documentation@ browser; auto-loaded in dev mode
 
-Add the modules your application needs to @build.gradle.kts@:
-
-bc. play1 {
-    modules("crud", "secure")
-}
+Both modules are auto-loaded — explicit declaration is not required.
 
 
 p(note). **Continuing the discussion**

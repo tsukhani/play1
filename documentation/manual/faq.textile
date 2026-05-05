@@ -14,12 +14,6 @@ h2. <a>Why don’t you rename the ‘play’ package to ‘org.playframework’?
 
 You are missing the point. Play is not another library that you add to your Servlet container. It’s really a full stack Java framework that runs your application stand-alone. The Java package naming conventions exist to avoid name clashes when you use several different libraries from several vendors. But believe us, you will never put the @play.jar@ library in your own project. This is not the way Play works. Play **is the platform**. Don’t worry about that.
 
-h2. <a>Why do I need Python (I would prefer Maven)?</a>
-
-We need a lot of scripts to manage Play applications, for creating a new application, running it, launching a browser, etc… Of course we could write these in Java directly. But running a Java VM for simple tasks like project creation is very slow. And Java itself is very limited when it comes to OS interaction.
-
-Python allowed us to write these scripts in a completely portable way. It’s fast to run, easy to write and available out of the box on most systems. It’s not on Windows, that’s why we bundle a Windows Python binary with the framework.
-
 h2. <a>Is Play a Groovy framework?</a>
 
 No. Even though we use Groovy as the base technology for the Play templating system, it’s totally transparent. Also, you can’t directly write any other part of the application (such as controllers, models or other utilities) in Groovy. If you’re looking for a Groovy based framework you should have a look at Grails.
@@ -44,7 +38,7 @@ Sure, "a lot of people":https://www.playframework.com/community/testimonials alr
 
 h2. <a>Is library X supported?</a>
 
-Play is standard Java, so any standard Java library can easily be used. However keep in mind that Play does not use the Servlet API (although you can get it work in a standard Servlet container using the WAR export feature). So unless the library you want to use relies on the Servlet API, there won’t be any problem.
+Play is standard Java, so any standard Java library can easily be used. However keep in mind that Play does not use the Servlet API. So unless the library you want to use relies on the Servlet API, there won’t be any problem.
 
 h2. <a>How can I help/contribute?</a>
 

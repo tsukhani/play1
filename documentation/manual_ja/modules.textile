@@ -17,20 +17,22 @@ h2. <a name="what">モジュールとは?</a>
 
 h2. <a name="loading">アプリケーションからモジュールをロードするには</a>
 
-モジュールはフレームワークに同梱されています。アプリケーションの @build.gradle.kts@ で宣言します:
+モジュールはフレームワークに同梱されています。組み込みモジュールの @testrunner@ と @docviewer@ は自動的に読み込まれます (@testrunner@ は @play.id=test@ で実行する際、@docviewer@ は開発モードで)。アプリケーションでこれらを明示的に宣言する必要はありません。
+
+サードパーティモジュールを追加するには、アプリケーションの @build.gradle.kts@ で宣言します:
 
 bc. play1 {
-    modules("crud", "secure", "docviewer")
+    modules("third-party-module")
 }
 
-組み込みモジュールは @crud@、@secure@、@testrunner@、@docviewer@ です。Gradle プラグインは、各モジュールをビルド時にアプリケーションの @modules/@ ディレクトリに展開します。@testrunner@ は @play.id=test@ で実行する際に自動的に読み込まれます。
+Gradle プラグインは、各モジュールをビルド時にアプリケーションの @modules/@ ディレクトリに展開します。
 
 h2. <a name="routes">モジュールからデフォルトルートをロードする</a>
 
 モジュールはデフォルト @ルート@ ファイルを提供することができます。特別なルート宣言を使用することで、メインアプリケーションの @routes@ ファイルにこれをロードすることができます:
 
-bc. # Import the default CRUD routes
-GET     /admin	     module:crud
+bc. # Import the default docviewer routes
+GET     /docs	     module:docviewer
 
 すべての利用可能なモジュールからルートをロードすることもできます:
 
@@ -44,18 +46,12 @@ h2. <a name="documentation">モジュールにドキュメントを追加する<
 
 h2. <a name="bundled">同梱モジュール</a>
 
-このフォークには 4 つの組み込みモジュールが同梱されています:
+このフォークには 2 つの組み込みモジュールが同梱されています:
 
-* @crud@ — JPA エンティティの自動生成管理 UI
-* @secure@ — ログインフォームとアクセス制御ヘルパー
-* @testrunner@ — @play test@ と @play autotest@ で使用される @/@tests@ Web UI
+* @testrunner@ — @play test@ と @play autotest@ で使用される @/@tests@ Web UI; @play.id=test@ で実行する際に自動ロード
 * @docviewer@ — ローカルの @/@documentation@ ブラウザ; 開発モードで自動ロード
 
-アプリケーションが必要とするモジュールを @build.gradle.kts@ に追加します:
-
-bc. play1 {
-    modules("crud", "secure")
-}
+両モジュールとも自動的に読み込まれるため、明示的な宣言は不要です。
 
 
 p(note). **考察を続けます**

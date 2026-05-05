@@ -36,7 +36,7 @@ Security fixes are issued for the **active 1.13.x line only**. The most recent r
 In scope for this policy:
 
 - The framework code under `framework/src/` (request handling, security headers, session/cookie machinery, template engine, etc.)
-- The bundled modules under `modules/` (`crud`, `secure`, `testrunner`, `docviewer`)
+- The bundled modules under `modules/` (`testrunner`, `docviewer`)
 - The Gradle plugin under `framework/gradle-plugin/` and the `play` shell wrapper at the repo root (`play new`, `play run`, `play test`, `play autotest`, etc.)
 - The application skeleton under `resources/application-skel/` and the Nuxt skeleton under `resources/nuxt-skel/`
 - The build/release pipeline (`/deploy` slash command flow, GitHub Actions workflows under `.github/workflows/`)

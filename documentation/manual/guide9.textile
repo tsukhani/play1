@@ -2,7 +2,7 @@ h1. Creating a custom editor area
 
 In the previous part we have created an administration area for yabe and prepared the ‘My posts’ section. This page will give each author a list of his own posts, and the ability to edit them or create a new one as well.
 
-We could easily reuse the CRUD module as a basis for this page but here we will create something from scratch. We need a lot of personalization on these screens.
+We will create this page from scratch, since we need a lot of personalization on these screens.
 
 h2. <a>Start with the user posts list</a>
 

@@ -22,15 +22,16 @@ bc. repositories {
 
 h2. <a name="modules">Loading Play modules</a>
 
-Play's built-in modules (@crud@, @secure@, @testrunner@, @docviewer@) are
-declared via the Play 1 plugin's DSL — not as Maven coordinates:
+Play's built-in modules (@testrunner@, @docviewer@) are auto-loaded by the
+Play 1 plugin and require no explicit declaration. Third-party modules can
+be added via the plugin's DSL:
 
 bc. plugins {
     id("org.playframework.play1")
 }
 
 play1 {
-    modules("crud", "secure")
+    modules("third-party-module")
 }
 
 The plugin extracts each declared module into the application's @modules/@

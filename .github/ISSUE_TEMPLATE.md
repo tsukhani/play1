@@ -2,14 +2,14 @@
 
 This is an issue tracker, used to manage and track the development of Play. It is not a support system and so it is not a place to ask questions or get help. If you're not sure if you have found a bug, or if you have a feature request, the best place to start is with either the [Discuss Play Forum](https://discuss.playframework.com) or [Stack Overflow](http://stackoverflow.com/questions/ask?tags=playframework).
 
-### Play Version (1.5.x / etc)
+### Play Version (1.13.x / etc)
 
 
 ### Operating System (Ubuntu 15.10 / MacOS 10.10 / Windows 10)
 
 Use `uname -a` if on Linux.
 
-### JDK (Oracle 1.8.0_72, OpenJDK 1.8.x, Azul Zing)
+### JDK (e.g. Temurin 25, OpenJDK 25, Azul Zulu 25)
 
 Paste the output from `java -version` at the command line.
 

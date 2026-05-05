@@ -54,8 +54,6 @@ atlassian-ide-plugin.xml
 modules/*
 build.classes
 !modules/docviewer
-!modules/crud
-!modules/secure
 !modules/testrunner
 !framework/src/play/db
 !framework/test-src/play/db

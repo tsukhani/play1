@@ -27,7 +27,7 @@ import static org.mockito.Mockito.when;
 
 class YamlParserTest {
 
-    private static final List<String> DEPENDENCIES = List.of("crud", "deadbolt-1.5.4", "pdf-1.5");
+    private static final List<String> DEPENDENCIES = List.of("docviewer", "deadbolt-1.5.4", "pdf-1.5");
     private static final List<String> REVERSED_DEPENDENCIES;
     static {
         var reversed = new ArrayList<>(DEPENDENCIES);

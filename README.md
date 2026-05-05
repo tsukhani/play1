@@ -50,10 +50,7 @@ cd ~/projects/myFirstApp && play run
 
 6. Start developing your new application:
 
-* [Your first application — the ‘Hello World’ tutorial](https://www.playframework.com/documentation/1.5.x/firstapp)
-* [Tutorial — Play guide, a real world app step-by-step](https://www.playframework.com/documentation/1.5.x/guide1)
-* [The essential documentation](https://www.playframework.com/documentation/1.5.x/home)
-* [Java API](https://www.playframework.com/documentation/1.5.x/api/index.html)
+* [Documentation](documentation/manual/home.textile) — also browseable at `/@documentation` while a dev-mode app is running (served by the bundled docviewer module).
 
 ## TLS, HTTP/2, and HTTP/3
 
@@ -240,11 +237,11 @@ Please report bugs on [our tracker](https://github.com/tsukhani/play1/issues).
 
 * [www.playframework.com](https://www.playframework.com)
 * [Download](https://www.playframework.com/download)
-* [Install](https://www.playframework.com/documentation/1.5.x/install)
-* [Create a new application](https://www.playframework.com/documentation/1.5.x/guide1)
-* [Build from source](https://www.playframework.com/documentation/1.5.x/install#build)
+* [Install](documentation/manual/install.textile)
+* [Create a new application](documentation/manual/guide1.textile)
+* [Build from source](documentation/manual/install.textile#build)
 * [Modules](https://www.playframework.com/modules)
-* [Search or create issues](http://play.lighthouseapp.com/projects/57987-play-framework)
+* [Search or create issues](https://github.com/tsukhani/play1/issues)
 * [Get help](http://stackoverflow.com/questions/tagged/playframework)
 * [Code of Conduct](https://www.playframework.com/conduct)
 * [Contribute](https://github.com/playframework/play1/wiki/Contributor-guide)

@@ -158,12 +158,10 @@ h3. 変数とスクリプト
 テンプレートと同様、 @routes@ ファイルにおいても変数に @${ … }@ 構文を、式に @%{ … }@ 構文を使うことができます。例えば:
 
 bc. %{ context = play.configuration.getProperty('context', '') }%
- 
-# Home page
-GET    ${context}         Secure.login
-GET    ${context}/        Secure.login
 
-別の例として、すべての型についてコントローラルート定義を生成するために @crud.types@ タグを使ってモデルの型全体をループする CRUD モジュールの @routes@ ファイルがあります。
+# Home page
+GET    ${context}         Application.index
+GET    ${context}/        Application.index
 
 
 h2. <a name="priority">ルーティングの優先順位</a>
