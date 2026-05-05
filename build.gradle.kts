@@ -16,17 +16,28 @@ abstract class PlayNewAppTask : DefaultTask() {
 
     @org.gradle.api.tasks.TaskAction
     fun scaffold() {
-        val name = appName.orNull?.takeIf { it.isNotBlank() }
+        // Two derived names from -Pname:
+        //   displayName: as-given (preserves spaces/case). Used for application.name
+        //                in conf/application.conf — Play renders this in welcome page,
+        //                logs, error pages.
+        //   identifier:  lowercased + alphanumeric-only slug. Used for rootProject.name
+        //                in settings.gradle.kts (Gradle wants a single token), the
+        //                default dest dir name, and any other Gradle/filesystem id.
+        val displayName = appName.orNull?.takeIf { it.isNotBlank() }
             ?: throw GradleException("Required: -Pname=<app-name>")
+        val identifier = displayName.lowercase().filter { it.isLetterOrDigit() }
+        if (identifier.isEmpty()) {
+            throw GradleException("-Pname must contain at least one letter or digit (got '$displayName')")
+        }
         val destPath = destDir.orNull?.takeIf { it.isNotBlank() }
-            ?: File(System.getProperty("user.dir"), name).absolutePath
+            ?: File(System.getProperty("user.dir"), identifier).absolutePath
         val dest = File(destPath).absoluteFile
         if (dest.exists()) throw GradleException("Destination already exists: ${dest.absolutePath}")
 
         val skel = frameworkPath.get().dir("resources/application-skel").asFile
         if (!skel.isDirectory) throw GradleException("application-skel not found at ${skel.absolutePath}")
 
-        logger.lifecycle("~ Scaffolding $name at ${dest.absolutePath}")
+        logger.lifecycle("~ Scaffolding \"$displayName\" (identifier: $identifier) at ${dest.absolutePath}")
         fileSystemOps.copy {
             from(skel)
             into(dest)
@@ -38,9 +49,10 @@ abstract class PlayNewAppTask : DefaultTask() {
         // to the app's lib/) and conf/dependencies.yml (replaced by build.gradle.kts).
         File(dest, "conf/dependencies.yml").delete()
 
-        // Substitute %APPLICATION_NAME% in conf/application.conf
+        // Substitute %APPLICATION_NAME% with the displayName (Play wants the
+        // human-readable form, not the slug).
         val appConf = File(dest, "conf/application.conf")
-        appConf.writeText(appConf.readText().replace("%APPLICATION_NAME%", name))
+        appConf.writeText(appConf.readText().replace("%APPLICATION_NAME%", displayName))
 
         // Generate a 64-char secret and write to certs/.env (chmod 0600) +
         // certs/.env.example template. Mirrors framework/pym/play/utils.py:secretKey/
@@ -83,7 +95,7 @@ abstract class PlayNewAppTask : DefaultTask() {
             pluginManagement {
                 includeBuild("$fwPath")
             }
-            rootProject.name = "$name"
+            rootProject.name = "$identifier"
         """.trimIndent() + "\n")
         File(dest, "build.gradle.kts").writeText("""
             plugins {
@@ -112,7 +124,7 @@ abstract class PlayNewAppTask : DefaultTask() {
 
         val frontend = withFrontend.getOrElse(false)
         if (frontend) {
-            setupNuxtFrontend(dest, name)
+            setupNuxtFrontend(dest, displayName, identifier)
         }
 
         logger.lifecycle("~")
@@ -124,7 +136,7 @@ abstract class PlayNewAppTask : DefaultTask() {
         logger.lifecycle("~")
     }
 
-    private fun setupNuxtFrontend(dest: File, appName: String) {
+    private fun setupNuxtFrontend(dest: File, displayName: String, identifier: String) {
         val nuxtSkel = frameworkPath.get().dir("resources/nuxt-skel").asFile
         if (!nuxtSkel.isDirectory) throw GradleException("nuxt-skel not found at ${nuxtSkel.absolutePath}")
 
@@ -144,13 +156,17 @@ abstract class PlayNewAppTask : DefaultTask() {
             apiCtrlSrc.renameTo(apiCtrlDst)
         }
 
-        // Substitute %APPLICATION_NAME% in text files under frontend/
+        // Substitute placeholders in text files under frontend/.
+        // %APPLICATION_NAME%       → human-readable form (page titles, banners)
+        // %APPLICATION_IDENTIFIER% → npm-package-style slug (package.json's "name"
+        //                            field rejects spaces and uppercase)
         frontendDir.walkTopDown().filter { it.isFile }.forEach { f ->
             try {
-                val content = f.readText()
-                if (content.contains("%APPLICATION_NAME%")) {
-                    f.writeText(content.replace("%APPLICATION_NAME%", appName))
-                }
+                val original = f.readText()
+                val updated = original
+                    .replace("%APPLICATION_NAME%", displayName)
+                    .replace("%APPLICATION_IDENTIFIER%", identifier)
+                if (updated != original) f.writeText(updated)
             } catch (_: Exception) {
                 // Binary file or unreadable; skip
             }
