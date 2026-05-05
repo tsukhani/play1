@@ -97,6 +97,11 @@ abstract class PlayNewAppTask : DefaultTask() {
             }
             rootProject.name = "$identifier"
         """.trimIndent() + "\n")
+        // Enable Gradle's configuration cache by default. The play-gradle-plugin is
+        // designed to be config-cache safe (every task uses @Inject services + Property
+        // inputs, no Task.project at execution time), so the speedup is free.
+        // Becomes the only mode in Gradle 10.
+        File(dest, "gradle.properties").writeText("org.gradle.configuration-cache=true\n")
         File(dest, "build.gradle.kts").writeText("""
             plugins {
                 id("org.playframework.play1")
