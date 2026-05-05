@@ -4,7 +4,9 @@
   //
   // Renovate is the sole dependency-update bot for this repo. It covers:
   //   - GitHub Actions in .github/workflows/*.yml (auto-detected)
-  //   - npm in resources/nuxt-skel/package.json (auto-detected)
+  //   - npm in resources/nuxt-skel/package.json (auto-detected). This is the
+  //     skeleton shipped to new apps via `gradle playNewApp -Pfrontend` —
+  //     keeping it current means fresh scaffolds get a recent Nuxt baseline.
   //   - Java/Ivy in framework/dependencies.yml (custom regex manager below)
   //
   // .github/dependabot.yml was retired when this config was introduced —
@@ -148,9 +150,13 @@
       labels: ["dependencies"]
     },
     {
-      // npm deps in nuxt-skel: Renovate handles end-to-end (no manual
-      // step needed). Auto-merge non-major bumps here is safe — the
-      // tests gating /deploy will catch regressions.
+      // npm deps in nuxt-skel/package.json: Renovate handles end-to-end (no
+      // manual step needed). Auto-merge non-major bumps is acceptable here
+      // because the blast radius is scaffold-only — already-scaffolded apps
+      // pin their own resolved versions in pnpm-lock.yaml and aren't
+      // affected by a skel bump. Worst case is a fresh `playNewApp -Pfrontend`
+      // resolves a regressed Nuxt patch; user fixes in their own app's lockfile.
+      // (CI doesn't run pnpm install on the skel, so no test gates this path.)
       matchManagers: ["npm"],
       matchUpdateTypes: ["minor", "patch"],
       automerge: true,
