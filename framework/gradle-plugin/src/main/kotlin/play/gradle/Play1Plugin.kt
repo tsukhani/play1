@@ -169,7 +169,6 @@ class Play1Plugin : Plugin<Project> {
 
             runUnit.set(project.findProperty("runUnit")?.toString().toBoolean())
             runFunctional.set(project.findProperty("runFunctional")?.toString().toBoolean())
-            runSelenium.set(project.findProperty("runSelenium")?.toString().toBoolean())
             project.findProperty("webclientTimeout")?.toString()?.let { webclientTimeout.set(it) }
 
             outputs.upToDateWhen { false }
@@ -572,7 +571,6 @@ abstract class PlayAutotestTask : DefaultTask() {
 
     @get:Input @get:Optional abstract val runUnit: Property<Boolean>
     @get:Input @get:Optional abstract val runFunctional: Property<Boolean>
-    @get:Input @get:Optional abstract val runSelenium: Property<Boolean>
     @get:Input @get:Optional abstract val webclientTimeout: Property<String>
 
     @get:Inject abstract val fileSystemOps: FileSystemOperations
@@ -616,7 +614,6 @@ abstract class PlayAutotestTask : DefaultTask() {
         val extraSysprops = buildList {
             if (runUnit.getOrElse(false)) add("-DrunUnitTests")
             if (runFunctional.getOrElse(false)) add("-DrunFunctionalTests")
-            if (runSelenium.getOrElse(false)) add("-DrunSeleniumTests")
             effectiveTimeout?.let { add("-DwebclientTimeout=$it") }
         }
 
