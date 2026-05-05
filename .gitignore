@@ -73,7 +73,6 @@ modules/*
 build.classes
 !modules/docviewer
 !modules/crud
-!modules/console
 !modules/secure
 !modules/testrunner
 !framework/src/play/db
