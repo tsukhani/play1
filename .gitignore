@@ -3,8 +3,6 @@ bin
 framework/classes
 framework/test-classes
 framework/out
-framework/.idea
-framework/play.jar
 .DS_Store
 .claude/worktrees/
 
@@ -12,17 +10,9 @@ framework/play.jar
 _bmad/config.user.toml
 _bmad/custom/config.user.toml
 _bmad-output/
-nbproject/genfiles.properties
-nbproject/jdk.xml
-nbproject/nbjdk.properties
-nbproject/nbjdk.xml
-nbproject/private
 framework/tests-results
-framework/src/version
 framework/src/play/version
-framework/tests/test-application/db
 framework/play-*.jar
-framework/docs
 
 bitbucket.log
 .mcp.json
@@ -35,7 +25,6 @@ build/
 # IDE and editors
 *~
 .idea
-nbproject
 eclipse
 .amateras
 
@@ -45,19 +34,13 @@ eclipse
 id
 framework/tests-tmp
 dist
-resources/catalog.xml
-resources/nbproject/private
-catalog.xml
 play-*.jar
 tmp
 test-result
 logs
 db
-*.pyc
-__pycache__/
 .git
 ./.settings
-framework/ecClasses
 documentation/api
 *.ser
 help
