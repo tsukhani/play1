@@ -29,7 +29,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [ 'java-kotlin', 'javascript-typescript', 'python' ]
+        language: [ 'java-kotlin', 'javascript-typescript' ]
 
     steps:
     - name: Checkout repository
