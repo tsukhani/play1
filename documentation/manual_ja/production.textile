@@ -216,24 +216,6 @@ keystore.file=certificate.jks
 
 上記の値はデフォルト値です。
 
-h2. <a name="nopython">Python を使わないデプロイ</a>
-
-ほとんどの Unix マシンにはデフォルトで Python がインストールされており、Windows 版の Play には Python が同梱されています。しかしながら、Python を一切実行することなしにアプリケーションをデプロイしなければならないケースがあるかもしれません。
-
-このため、機能を制限した build.xml が Play アプリケーションと共に提供されています。
-
-アプリケーションフォルダから、以下のようにしてサーバを開始することができます:
-
-bc. ant start -Dplay.path=/path/to/playdirectory
-
-警告: @play@ コマンドを使用した場合、出力は @System.out@ にリダイレクトされます; 一方で、ant を使用した場合は標準出力にアクセスすることができません。追記されるファイルを指定する log4j プロパティを提供する必要があります。
-
-サーバを停止するには、以下のようにします:
-
-bc. ant stop -Dplay.path=/path/to/playdirectory
-
-Play フレームワークへのパスを、環境変数、またはアプリケーションの @build.xml@ に直接指定することができることも覚えておいてください。
-
 p(note). **考察を続けます**
  
 次: %(next)"デプロイオプション":deployment%
