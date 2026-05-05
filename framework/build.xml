@@ -142,12 +142,6 @@
         </java>
     </target>
 
-    <target name="support">
-        <zip destfile="../support/textmate.zip" comment="Textmate bundle for Play! - ${version}" update="false">
-            <zipfileset dir="../support/textmate" includes="**/**" />
-        </zip>
-    </target>
-
     <target name="modules">
         <property name="play.path" value="../.."/>
         <property name="build-release" value="${build-release}"/>
@@ -417,7 +411,7 @@
         <mkdir dir="dist" />
         <mkdir dir="dist/play-${version}" />
         <copy todir="dist/play-${version}">
-            <fileset dir=".." excludes=".github,**/cobertura.ser,**/*.pyc,**/*.log,hs_err*,.*,.*/*,framework/dist/**,framework/test-src/**,id,nbproject/**,**/.bzr/**,**/.git/**,*.bzrignore,support/textmate/**,framework/classes/**,framework/tests-results/**,modules/**,openspec/**,.claude/**,CLAUDE.md,sync-fork.sh,_bmad/**,_bmad-output/**,.agents/**,AGENTS.md" />
+            <fileset dir=".." excludes=".github,**/cobertura.ser,**/*.pyc,**/*.log,hs_err*,.*,.*/*,framework/dist/**,framework/test-src/**,id,nbproject/**,**/.bzr/**,**/.git/**,*.bzrignore,framework/classes/**,framework/tests-results/**,modules/**,openspec/**,.claude/**,CLAUDE.md,sync-fork.sh,_bmad/**,_bmad-output/**,.agents/**,AGENTS.md" />
             <fileset dir=".." includes="modules/crud/**,modules/secure/**,modules/docviewer/**,modules/testrunner/**" excludes="**/*.pyc" />
         </copy>
     </target>

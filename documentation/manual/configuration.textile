@@ -973,9 +973,9 @@ Default: @true@
 
 h3(#play.editor). play.editor
 
-Open file from error pages. If your text editor supports opening files by URL, Play will dynamically link error pages to files. For Textmate, for example:
+Open file from error pages. If your text editor supports opening files by URL, Play will dynamically link error pages to files. For IntelliJ IDEA, for example:
 
-bc. play.editor=txmt://open?url=file://%s&line=%s
+bc. play.editor=idea://open?file=%s&line=%s
 
 
 h3(#play.netty.clientAuth). play.netty.clientAuth

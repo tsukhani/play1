@@ -16,18 +16,6 @@ h2(#intellij). <a>IntelliJ IDEA</a>
 IntelliJ からアプリケーションを実行するには、Gradle ツールウィンドウで @play1 → playRun@ タスクをダブルクリックします。同じパネルで @playTest@、@playAutotest@、@playPrecompile@ など @play1@ タスクグループのすべてのタスクを利用できます。
 
 
-h2(#textmate). <a>Textmate</a>
-
-シンタックスハイライトと自動補完を有効にするために @$PLAY_HOME/support/textmate.zip@ にある "Textmate":http://macromates.com/ バンドルをインストールします。このバンドルはコントローラとビューの行き来も容易にします。
-
-!images/editor!
-
-
-h2(#vim). <a>Vim</a>
-
-Textmate に影響された "snipMate":http://www.vim.org/scripts/script.php?script_id=2540 プラグインは、 "Vim":http://www.vim.org/ にキーワード自動補完を提供します。Play は HTML と Java のスニペットファイルを提供しています: これらを使用するためには、snipMate をインストールして @$PLAY_HOME/support/vim/*.snippets@ を @~/.vim/snippets/@ にコピーします。
-
-
 h2(#custom). <a>その他の IDE とエディタ</a>
 
 Gradle を理解するエディタ (VS Code + Gradle for Java 拡張、NetBeans、Eclipse + Buildship など) は、IntelliJ と同じように @build.gradle.kts@ をインポートできます。クラスパス、ソースルート、Java 25 ツールチェーン、@play1@ タスクグループは、すべて Gradle モデルから取得されます。@PLAY_PATH@/@play.jar@/@-javaagent@ などの手動配線は不要です。@playRun@ タスクが内部ですべてを組み立てます。

@@ -59,7 +59,6 @@ __pycache__/
 ./.settings
 framework/ecClasses
 documentation/api
-support/textmate
 *.ser
 help
 *.iml

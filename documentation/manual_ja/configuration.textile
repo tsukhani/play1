@@ -781,9 +781,9 @@ bc. play.bytecodeCache=false
 
 h3(#play.editor). play.editor
 
-エラーページからファイルを開きます。使用しているテキストエディタが URL からファイルを開くことが出来れば、Play はエラーページからファイルへ動的にリンクします。Textmate での具体例は以下のとおりです:
+エラーページからファイルを開きます。使用しているテキストエディタが URL からファイルを開くことが出来れば、Play はエラーページからファイルへ動的にリンクします。IntelliJ IDEA での具体例は以下のとおりです:
 
-bc. play.editor=txmt://open?url=file://%s&line=%s
+bc. play.editor=idea://open?file=%s&line=%s
 
 
 h3(#play.netty.clientAuth). play.netty.clientAuth

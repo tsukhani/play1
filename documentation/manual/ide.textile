@@ -20,18 +20,6 @@ To run the app from IntelliJ, use the Gradle tool window and double-click the
 @playPrecompile@, and the rest of the @play1@ task group.
 
 
-h2(#textmate). <a>Textmate</a>
-
-Install the "Textmate":http://macromates.com/ bundle provided at @$PLAY_HOME/support/textmate.zip@ to enable syntax coloring and auto-completion. The bundle also eases navigation between controllers and views.
-
-!images/editor!
-
-
-h2(#vim). <a>Vim</a>
-
-Inspired by Textmate, the "snipMate":http://www.vim.org/scripts/script.php?script_id=2540 plug-in provides keyword auto-completion in "Vim":http://www.vim.org/. Play provides snippets files for HTML and Java: to use them, install snipMate and copy @$PLAY_HOME/support/vim/*.snippets@ to @~/.vim/snippets/@.
-
-
 h2(#custom). <a>Other IDEs and editors</a>
 
 Any editor that understands Gradle (VS Code with the Gradle for Java extension, NetBeans, Eclipse with Buildship) can import @build.gradle.kts@ the same way IntelliJ does — classpath, source roots, the Java 25 toolchain, and the @play1@ task group all come from the Gradle model. There is no manual @PLAY_PATH@/@play.jar@/@-javaagent@ wiring to do; the @playRun@ task assembles all of that internally.
