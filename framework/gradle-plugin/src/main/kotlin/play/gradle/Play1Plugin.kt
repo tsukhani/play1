@@ -676,11 +676,19 @@ abstract class PlayAutotestTask : DefaultTask() {
                 add("play.modules.testrunner.FirePhoque")
             }
 
-            val fpExit = ProcessBuilder(fpCmd)
+            // Capture FirePhoque's stdout/stderr and forward each line through
+            // logger.lifecycle so per-test result lines actually reach the user.
+            // inheritIO() does NOT work here: under the Gradle daemon, fd 1 is a
+            // protocol pipe to the Gradle client, not a terminal — bytes written
+            // to it from a forked subprocess are silently dropped.
+            val fpProcess = ProcessBuilder(fpCmd)
                 .directory(appDir)
-                .inheritIO()
+                .redirectErrorStream(true)
                 .start()
-                .waitFor()
+            fpProcess.inputStream.bufferedReader().useLines { lines ->
+                lines.forEach { logger.lifecycle(it) }
+            }
+            val fpExit = fpProcess.waitFor()
 
             val testResultDir = File(appDir, "test-result")
             val passed = File(testResultDir, "result.passed").exists()
