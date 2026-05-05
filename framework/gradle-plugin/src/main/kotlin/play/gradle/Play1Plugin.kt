@@ -147,11 +147,13 @@ class Play1Plugin : Plugin<Project> {
 
         project.tasks.register<PlayDepsTask>("playDeps") {
             group = "play1"
-            description = "Resolve Gradle deps and copy to lib/. Optional: -Psync (also delete stale lib/ jars)"
+            description = "Resolve Gradle deps and copy to lib/, deleting stale jars by default. Optional: -Pnosync (skip the cleanup)"
             applicationPath.set(project.layout.projectDirectory)
             frameworkPath.set(ext.frameworkPath)
             playClasspath.from(playClasspathFor(project, ext, includeTestrunner = false))
-            sync.set(project.providers.gradleProperty("sync").map { true }.orElse(false))
+            // Default: sync ON (mirrors python's `play deps`, where --sync was redundant
+            // and only --nosync changed behavior).
+            sync.set(project.providers.gradleProperty("nosync").map { false }.orElse(true))
             outputs.upToDateWhen { false }
         }
 
@@ -1437,14 +1439,17 @@ abstract class PlayDepsTask : DefaultTask() {
 
         val targetNames = resolvedDeps.map { it.name }.toSet()
 
-        if (sync.getOrElse(false)) {
-            // Delete jars in lib/ that aren't in the new resolution.
+        val syncEnabled = sync.getOrElse(true)
+        if (syncEnabled) {
+            // Delete jars in lib/ that aren't in the new resolution. Mirrors the
+            // python's auto-sync (DependenciesManager.sync), which is on unless
+            // --nosync was passed.
             val staleJars = libDir.listFiles { f -> f.isFile && f.name.endsWith(".jar") }
                 ?.filter { it.name !in targetNames }
                 ?: emptyList()
             staleJars.forEach { it.delete() }
             if (staleJars.isNotEmpty()) {
-                logger.lifecycle("~ Removed ${staleJars.size} stale jar(s) from lib/ (--sync)")
+                logger.lifecycle("~ Removed ${staleJars.size} stale jar(s) from lib/")
             }
         }
 
@@ -1460,7 +1465,7 @@ abstract class PlayDepsTask : DefaultTask() {
             }
         }
         logger.lifecycle("~ Resolved ${resolvedDeps.size} dependencies → ${libDir.absolutePath}")
-        logger.lifecycle("~ Copied $copied, unchanged $skipped${if (sync.getOrElse(false)) " (--sync)" else ""}")
+        logger.lifecycle("~ Copied $copied, unchanged $skipped${if (!syncEnabled) " (--nosync: stale jars NOT deleted)" else ""}")
     }
 }
 
