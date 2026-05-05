@@ -2,11 +2,11 @@ h1. Test your application
 
 Creating automatic test suites for your application is a good way to make it robust. It allows you to work in a very agile way.
 
-Play tests are built using "JUnit 4":http://www.junit.org/ or "Selenium":http://seleniumhq.org/ depending what you want to test. 
+Play tests are built using "JUnit":http://www.junit.org/.
 
 h2. <a name="writing">Writing tests</a>
 
-The tests must be created in the @test/@ directory. This folder will only be added to the sources path when the application is run in @test@ mode. You can write 3 different kinds of tests.
+The tests must be created in the @test/@ directory. This folder will only be added to the sources path when the application is run in @test@ mode. You can write two different kinds of tests.
 
 h3. Unit test
 
@@ -60,74 +60,6 @@ public void testUserIsFoundAndPassedToView() {
     User user = (User) renderArgs("user");
     assertThat(user.name, is("mark"));
 }
-
-h3. Selenium test
-
-Acceptance tests are written using Selenium. Here you can test your application by running it in an automated browser. 
-
-Selenium tests are written using HTML tables. You can either use this native syntax or use the @#{selenium /}@ tag.
-
-Here is an example of a Selenium test:
-
-bc. #{selenium 'Test security'}
- 
-    // Try to log in the administration area
-    clearSession()
-    open('/admin')
-    assertTextPresent('Login')
-    type('login', 'admin')
-    type('password', 'secret')
-    clickAndWait('signin')
- 
-    // Verify that the user in correctly logged in
-    assertText('success', 'Welcom admin!')
- 
-#{/selenium}
-
-Because Selenium tests are run within your browser access to emails sent by the mock email and to String values placed in the Play Cache must be made using extensions to Selenium.
-
-Here is an example of accessing the most recent email sent to a specific email account:
-
-bc. #{selenium 'Test email sending'}
- 
-    // Open email form and send an email to boron@localhost
-    open('/sendEmail')
-    assertTextPresent('Email form')
-    type('To', 'boron@localhost')
-    type('Subject', 'Berillium Subject')
-    clickAndWait('send')
- 	
-	// Extract the last email sent to boron@localhost into a JavaScript
-	// variable called email
-	storeLastReceivedEmailBy('boron@localhost', 'email')
-	// Extract the subject line from the email variable into a variable 
-	// called subject
-	store('javascript{/Subject:\s+(.*)/.exec(storedVars["email"])[1]}', 'subject')
-	// Test the contents of the subject variable
-	assertEquals('Berillium Subject', '$[subject]')
- 
-#{/selenium}
-
-Here is an example of accessing a String stored in the Play Cache (for example the correct answer to a CAPTCHA):
-
-bc. #{selenium 'Get string from cache'}
- 
-	open('/register')
-	assertTextPresent('Registration form')
-	type('Email', 'my@email.com')
-	type('Password', 'secretpass')
-	type('Password2', 'secretpass')
-	// .. Fill in the registration form ..
- 
-	// Get the value of the magicKey variable from the cache
-	// (set to the CAPTCHA answer in the application)
-	storeCacheEntry('magicKey', 'captchaAnswer')
-	// Type it into the form
-	type('Answer', '$[captchaAnswer]')
- 
-    clickAndWait('register')
- 
-#{/selenium}
 
 h3. CleanTest Annotation
 
@@ -209,32 +141,14 @@ public void setUp() {
 
 p(note). You can read more about Play and YAML in the "YAML manual page":yaml.
 
-For Selenium tests, you can use the @#{fixture /}@ tag:
-
-bc. #{fixture delete:'all', load:'data.yml' /}
-#{selenium}
-    
-    // Write your test here
- 
-#{/selenium}
-
-p(note). Or you can use @loadModels@ instead of @load@, the two parameters are synonyms.
-
-#{fixture delete:'all', loadModels:'data.yml' /}
- 
-
+p(note). You can use @loadModels@ instead of @load@; the two parameters are synonyms.
 
 Sometimes it is convenient to split data into several YAML files. You can load fixtures from multiple files at once:
 
 bc. Fixtures.loadModels("users.yml", "roles.yml", "permissions.yml");
 
-and for Selenium tests:
-
-bc. #{fixture delete:'all', load:['users.yml', 'roles.yml', 'permissions.yml'] /}
-
 p(note). The fixture file will be loaded as a Template by default.
-To avoid this, you can use the @loadModels(boolean loadAsTemplate, String name)@ with loadAsTemplate set to @false@
-or for Selenium tests @#{fixture delete:'all', loadAsTemplate:false, load:'data.yml' /}@
+To avoid this, you can use @Fixtures.loadModels(boolean loadAsTemplate, String name)@ with @loadAsTemplate@ set to @false@.
 
 h2. <a name="running">Running the tests</a>
 
@@ -263,7 +177,7 @@ bc. %test.db=mem
 
 h2. <a name="continuous">Continuous integration, and running the tests automatically</a>
 
-The @auto-test@ command does the same as the @test@ command, but it automatically launches a headless browser via Selenium/Firephoque, runs all the tests, and stops:
+The @auto-test@ command does the same as the @test@ command, but it automatically launches a headless browser via Firephoque, runs all the tests, and stops:
 
 bc. play auto-test myapp
 

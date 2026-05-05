@@ -20,27 +20,23 @@ import play.mvc.*;
 import play.templates.Template;
 import play.templates.TemplateLoader;
 import play.test.*;
-import play.vfs.*;
 
 public class TestRunner extends Controller {
 
     public static void index() {
         List<Class> unitTests = TestEngine.allUnitTests();
         List<Class> functionalTests = TestEngine.allFunctionalTests();
-        List<String> seleniumTests = TestEngine.allSeleniumTests();
-        render(unitTests, functionalTests, seleniumTests);
+        render(unitTests, functionalTests);
     }
 
-    public static void list(Boolean runUnitTests, Boolean runFunctionalTests, Boolean runSeleniumTests) {
+    public static void list(Boolean runUnitTests, Boolean runFunctionalTests) {
         StringWriter list = new StringWriter();
         PrintWriter p = new PrintWriter(list);
         p.println("---");
         p.println(Play.getFile("test-result").getAbsolutePath());
-        p.println(Router.reverse(Play.modules.get("_testrunner").child("/public/test-runner/selenium/TestRunner.html")));
-        
+
         List<Class> unitTests = null;
         List<Class> functionalTests =  null;
-        List<String> seleniumTests = null;
         // Check configuration of test
         // method parameters have priority on configuration param
         if (runUnitTests == null || runUnitTests) {
@@ -49,14 +45,11 @@ public class TestRunner extends Controller {
         if (runFunctionalTests == null || runFunctionalTests) {
             functionalTests = TestEngine.allFunctionalTests();
         }
-        if (runSeleniumTests == null || runSeleniumTests) {
-            seleniumTests = TestEngine.allSeleniumTests();
-        }
-        
+
         // Category prefixes split unit tests into two lanes for FirePhoque:
         //   U: pure unit test  — no DB / JPA / Fixtures references → fully parallel.
         //   D: DB-touching     — single-permit serial lane (still concurrent with U:).
-        // Functional + Selenium go through the serial WebClient path because
+        // Functional tests go through the serial WebClient path because
         // FunctionalTest's static savedCookies/renderArgs would race under parallelism
         // (Stage 2 of the test-parallelism roadmap).
         if(unitTests != null){
@@ -69,11 +62,6 @@ public class TestRunner extends Controller {
         if(functionalTests != null){
             for(Class c : functionalTests) {
                 p.println("F:" + c.getName() + ".class");
-            }
-        }
-        if(seleniumTests != null){
-            for(String c : seleniumTests) {
-                p.println("S:" + c);
             }
         }
         renderText(list);
@@ -137,62 +125,6 @@ public class TestRunner extends Controller {
             response.contentType = "text/html";
             renderText(result);
         }
-        if (test.endsWith(".test.html.suite")) {
-            test = test.substring(0, test.length() - 6);
-            render("TestRunner/selenium-suite.html", test);
-        }
-        if (test.endsWith(".test.html")) {
-
-            File testFile = Play.getFile("test/" + test);
-            if (!testFile.exists()) {
-                for(VirtualFile root : Play.roots) {
-                    File moduleTestFile = Play.getFile(root.relativePath()+"/test/" + test);
-                    if(moduleTestFile.exists()) {
-                        testFile = moduleTestFile;
-                    }
-                }
-            }
-            if (testFile.exists()) {
-                Template testTemplate = TemplateLoader.load(VirtualFile.open(testFile));
-                Map<String, Object> options = new HashMap<String, Object>();
-                response.contentType = "text/html";
-                renderText(testTemplate.render(options));
-            } else {
-                renderText("Test not found, %s", testFile);
-            }
-        }
-        if (test.endsWith(".test.html.result")) {
-            flash.keep();
-            test = test.substring(0, test.length() - 7);
-            File testResults = Play.getFile("test-result/" + test.replace("/", ".") + ".passed.html");
-            if (testResults.exists()) {
-                response.contentType = "text/html";
-                response.status = 200;
-                renderText(IO.readContentAsString(testResults));
-            }
-            testResults = Play.getFile("test-result/" + test.replace("/", ".") + ".failed.html");
-            if (testResults.exists()) {
-                response.contentType = "text/html";
-                response.status = 500;
-                renderText(IO.readContentAsString(testResults));
-            }
-            response.status = 404;
-            renderText("No test result");
-        }
-       
-    }
-
-    public static void saveResult(String test, String result) throws Exception {
-        String table = params.get("testTable.1");
-        File testResults = Play.getFile("test-result/" + test.replace("/", ".") + "." + result + ".html");
-        Template resultTemplate = TemplateLoader.load("TestRunner/selenium-results.html");
-        Map<String, Object> options = new HashMap<String, Object>();
-        options.put("test", test);
-        options.put("table", table);
-        options.put("result", result);
-        String rf = resultTemplate.render(options);
-        IO.writeContent(rf, testResults);
-        renderText("done");
     }
 
     public static void mockEmail(String by) {

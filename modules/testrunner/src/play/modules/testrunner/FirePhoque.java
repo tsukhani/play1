@@ -1,12 +1,7 @@
 package play.modules.testrunner;
 
-import org.htmlunit.AlertHandler;
-
-import org.htmlunit.ConfirmHandler;
-import org.htmlunit.DefaultCssErrorHandler;
 import org.htmlunit.DefaultPageCreator;
 import org.htmlunit.Page;
-import org.htmlunit.PromptHandler;
 import org.htmlunit.WebClient;
 import org.htmlunit.WebResponse;
 import org.htmlunit.WebWindow;
@@ -32,9 +27,6 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 
-import org.htmlunit.corejs.javascript.Context;
-import org.htmlunit.corejs.javascript.ScriptRuntime;
-import org.htmlunit.corejs.javascript.ScriptableObject;
 import org.htmlunit.BrowserVersion;
 
 import static org.apache.commons.io.IOUtils.closeQuietly;
@@ -47,27 +39,22 @@ public class FirePhoque {
 
         // Tests description
         File root = null;
-        String selenium = null;
         List<String> tests = null;
         BufferedReader in = null;
         StringBuilder urlStringBuilder = new StringBuilder(app).append("/@tests.list");
-            
+
         String runUnitTests = System.getProperty("runUnitTests");
         String runFunctionalTests = System.getProperty("runFunctionalTests");
-        String runSeleniumTests = System.getProperty("runSeleniumTests");
-        
-        if(runUnitTests != null || runFunctionalTests != null || runSeleniumTests != null){
+
+        if(runUnitTests != null || runFunctionalTests != null){
             urlStringBuilder.append("?");
             urlStringBuilder.append("runUnitTests=").append(runUnitTests != null);
             System.out.println("~ Run unit tests:" + (runUnitTests != null));
 
             urlStringBuilder.append("&runFunctionalTests=").append(runFunctionalTests != null);
             System.out.println("~ Run functional tests:" + (runFunctionalTests != null));
-
-            urlStringBuilder.append("&runSeleniumTests=").append(runSeleniumTests != null);
-            System.out.println("~ Run selenium tests:" + (runSeleniumTests != null));
         }
-        
+
         try {
             in = new BufferedReader(new InputStreamReader(new URL(urlStringBuilder.toString()).openStream(), StandardCharsets.UTF_8));
             String marker = in.readLine();
@@ -75,7 +62,6 @@ public class FirePhoque {
                 throw new RuntimeException("Oops");
             }
             root = new File(in.readLine());
-            selenium = in.readLine();
             tests = new ArrayList<String>();
             String line;
             while ((line = in.readLine()) != null) {
@@ -125,49 +111,6 @@ public class FirePhoque {
                 firephoque.getOptions().setTimeout(timeout);
             }
 
-            firephoque.setAlertHandler((page, message) -> {
-                try {
-                    ScriptableObject window = page.getEnclosingWindow().getScriptableObject();
-                    String script = "parent.selenium.browserbot.recordedAlerts.push('" + message.replace("'", "\\'") + "');";
-                    ScriptRuntime.evalSpecial(Context.getCurrentContext(), window, window, new Object[]{script}, null, 0);
-
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-            });
-            firephoque.setConfirmHandler((page, message) -> {
-                try {
-                    ScriptableObject window = page.getEnclosingWindow().getScriptableObject();
-                    String script = "parent.selenium.browserbot.recordedConfirmations.push('" + message.replace("'", "\\'") + "');" +
-                            "var result = parent.selenium.browserbot.nextConfirmResult;" +
-                            "parent.selenium.browserbot.nextConfirmResult = true;" +
-                            "result";
-
-                    Object result = ScriptRuntime.evalSpecial(Context.getCurrentContext(), window, window, new Object[]{script}, null, 0);
-                    // window.execScript(script,  "JavaScript");
-
-                    return (Boolean) result;
-                } catch (Exception e) {
-                    e.printStackTrace();
-                    return false;
-                }
-            });
-            firephoque.setPromptHandler((page, message, defaultValue) -> {
-                try {
-                    ScriptableObject window = page.getEnclosingWindow().getScriptableObject();
-                    String script = "parent.selenium.browserbot.recordedPrompts.push('" + message.replace("'", "\\'") + "');" +
-                            "var result = !parent.selenium.browserbot.nextConfirmResult ? null : parent.selenium.browserbot.nextPromptResult;" +
-                            "parent.selenium.browserbot.nextConfirmResult = true;" +
-                            "parent.selenium.browserbot.nextPromptResult = '';" +
-                            "result";
-                    Object result = ScriptRuntime.evalSpecial(Context.getCurrentContext(), window, window, new Object[]{script}, null, 0);
-                    //window.execScript(script,  "JavaScript");
-                    return result != null ? (String)result : defaultValue;
-                } catch(Exception e) {
-                    e.printStackTrace();
-                    return "";
-                }
-            });
             firephoque.getOptions().setThrowExceptionOnScriptError(false);
             firephoque.getOptions().setPrintContentOnFailingStatusCode(false);
 
@@ -175,7 +118,7 @@ public class FirePhoque {
             //   pureUnitTests  (U:) — no DB references → parallel pool, N permits.
             //   dbUnitTests    (D:) — DB-touching → single-permit lane (serial among
             //                         themselves, but concurrent with the U: lane).
-            //   serialTests    (F:/S: + unprefixed) → WebClient sequential path
+            //   serialTests    (F: + unprefixed) → WebClient sequential path
             //                         (FunctionalTest's static savedCookies/renderArgs
             //                         and HtmlUnit's non-thread-safe WebClient race).
             List<String> pureUnitTests = new ArrayList<>();
@@ -186,19 +129,19 @@ public class FirePhoque {
                     pureUnitTests.add(entry.substring(2));
                 } else if (entry.startsWith("D:")) {
                     dbUnitTests.add(entry.substring(2));
-                } else if (entry.startsWith("F:") || entry.startsWith("S:")) {
+                } else if (entry.startsWith("F:")) {
                     serialTests.add(entry.substring(2));
                 } else {
                     // Older TestRunner without category prefixes: treat as serial
-                    // for safety (functional/selenium semantics are stricter).
+                    // for safety (functional semantics are stricter).
                     serialTests.add(entry);
                 }
             }
 
             int maxLength = 0;
             for (String test : tests) {
-                String body = test.startsWith("U:") || test.startsWith("D:") || test.startsWith("F:") || test.startsWith("S:") ? test.substring(2) : test;
-                String testName = body.replace(".class", "").replace(".test.html", "").replace(".", "/").replace("$", "/");
+                String body = test.startsWith("U:") || test.startsWith("D:") || test.startsWith("F:") ? test.substring(2) : test;
+                String testName = body.replace(".class", "").replace(".", "/").replace("$", "/");
                 if (testName.length() > maxLength) {
                     maxLength = testName.length();
                 }
@@ -209,7 +152,7 @@ public class FirePhoque {
             AtomicBoolean ok = new AtomicBoolean(true);
 
             runUnitTestsInParallel(app, pureUnitTests, dbUnitTests, root, maxLength, ok);
-            runSerialTests(firephoque, app, selenium, serialTests, root, maxLength, ok);
+            runSerialTests(firephoque, app, serialTests, root, maxLength, ok);
 
             firephoque.openWindow(new URL(app + "/@tests/end?result=" + (ok.get() ? "passed" : "failed")), "headless");
             // FirePhoque is a one-shot process whose only job is driving the test run
@@ -351,23 +294,17 @@ public class FirePhoque {
     }
 
     /**
-     * Run functional + Selenium tests serially through the existing WebClient path.
+     * Run functional tests serially through the existing WebClient path.
      * FunctionalTest's static savedCookies/renderArgs and HtmlUnit's non-thread-safe
      * WebClient both forbid parallelism here without a deeper refactor.
      */
-    private static void runSerialTests(WebClient firephoque, String app, String selenium,
+    private static void runSerialTests(WebClient firephoque, String app,
                                         List<String> serialTests, File root, int maxLength,
                                         AtomicBoolean ok) throws Exception {
         for (String test : serialTests) {
             long start = System.currentTimeMillis();
-            String testName = test.replace(".class", "").replace(".test.html", "").replace(".", "/").replace("$", "/");
-            URL url;
-            if (test.endsWith(".class")) {
-                url = new URL(app + "/@tests/" + test);
-            } else {
-                url = new URL(app + selenium + "?baseUrl=" + app + "&test=/@tests/" + test + ".suite&auto=true&resultsUrl=/@tests/" + test);
-            }
-            firephoque.openWindow(url, "headless");
+            String testName = test.replace(".class", "").replace(".", "/").replace("$", "/");
+            firephoque.openWindow(new URL(app + "/@tests/" + test), "headless");
             firephoque.waitForBackgroundJavaScript(5 * 60 * 1000);
             String resultStatus = pollResultFile(root, test, ok);
             emitResultLine(testName, maxLength, resultStatus, System.currentTimeMillis() - start);

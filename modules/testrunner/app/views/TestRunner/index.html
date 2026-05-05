@@ -109,13 +109,6 @@
                 };
 
                 var result = function() {
-                    var mask = q('#selenium-mask');
-                    var selenium = q('#selenium');
-                    var runner = q('#selenium-runner');
-                    if (mask) mask.style.display = 'none';
-                    if (selenium) selenium.style.display = 'none';
-                    if (runner) runner.src = 'about:blank';
-                    clearInterval(window.checkResult);
                     document.body.classList.remove('running');
                     qAll('.passing').forEach(function(el) { el.classList.remove('passing'); });
                     var header = q('#header');
@@ -155,39 +148,6 @@
                                 }
                             }
                         });
-                    }
-                    if (/.test.html/.test(testId)) {
-                        %{
-                            protocol = "http";
-                            port = 9000;
-                            if(play.configuration['https.port'] != null) {
-                                port = play.configuration['https.port'];
-                                protocol = "https";
-                            } else if (play.configuration['http.port'] != null) {
-                                port = play.configuration['http.port'];
-                            }
-                        }%
-                        q('#selenium-runner').src = '@{'/public/test-runner/selenium/TestRunner.html'}?baseUrl=${protocol}://localhost:${port}&test=/@tests/'+testId+'.suite&auto=true&close=true&resultsUrl=/@tests/'+testId;
-                        q('#selenium-mask').style.display = '';
-                        q('#selenium').style.display = '';
-                        window.checkResult = setInterval(function() {
-                            fetch('@{TestRunner.run("XXX.result")}'.replace('XXX', testId))
-                                .then(function(resp) {
-                                    if (resp.status === 200 || resp.status === 500) {
-                                        resp.text().then(function(text) {
-                                            var results = parseResultTable(text);
-                                            clearInterval(window.checkResult);
-                                            q('#selenium-mask').style.display = 'none';
-                                            q('#selenium').style.display = 'none';
-                                            if (resp.status === 200) {
-                                                testSuccess(test, results);
-                                            } else {
-                                                testFail(test, results);
-                                            }
-                                        });
-                                    }
-                                });
-                        }, 2000);
                     }
                 };
 
@@ -302,7 +262,6 @@
                 });
 
                 q('#stop').addEventListener('click', function() { stop(); });
-                q('#stopSelenium').addEventListener('click', function() { stop(); });
 
                 // URL-based test selection
                 var selectMatch = /select=([^&]+)/.exec(document.location.search);
@@ -408,7 +367,7 @@
             #{/if}
 
             #{if functionalTests}
-            <h2 class="text-gray-700 font-normal border-l-4 border-gray-300 pl-[5px] select-none"><span class="cursor-pointer">${tis ? '' : 'There '+functionalTests.size().pluralize('is', 'are')} ${tis && !seleniumTests ? 'and' : ''} ${functionalTests.size()} functional test${functionalTests.size().pluralize()},</span></h2>
+            <h2 class="text-gray-700 font-normal border-l-4 border-gray-300 pl-[5px] select-none"><span class="cursor-pointer">${tis ? '' : 'There '+functionalTests.size().pluralize('is', 'are')} ${tis ? 'and' : ''} ${functionalTests.size()} functional test${functionalTests.size().pluralize()},</span></h2>
             <ul class="list-none mb-10 pl-5">
                 #{list items:functionalTests, as:'test'}
                 <li class="p-[2px] mb-1">
@@ -422,39 +381,10 @@
             %{ tis = true; }%
             #{/if}
 
-            #{if seleniumTests}
-            <h2 class="text-gray-700 font-normal border-l-4 border-gray-300 pl-[5px] select-none"><span class="cursor-pointer">${tis ? '' : 'There '+seleniumTests.size().pluralize('is', 'are')} ${tis ? 'and' : ''} ${seleniumTests.size()} selenium test${seleniumTests.size().pluralize()},</span></h2>
-            <ul class="list-none mb-10 pl-5">
-                %{
-                    protocol = "http";
-                    port = 9000;
-                    if(play.configuration['https.port'] != null) {
-                        port = play.configuration['https.port'];
-                        protocol = "https";
-                    } else if (play.configuration['http.port'] != null) {
-                        port = play.configuration['http.port'];
-                    }
-                }%
-                #{list items:seleniumTests, as:'test'}
-                <li class="p-[2px] mb-1">
-                    <div class="test" id="${test}">
-                        <span class="touch text-gray-300 py-[2px] pr-[10px] pl-[5px] cursor-default font-mono text-[110%] font-bold">+</span><a href="@{'/public/test-runner/selenium/TestRunner.html'}?baseUrl=${protocol}://localhost:${port}&test=/@tests/${test}.suite" class="bg-gray-50 px-1.5 py-[3px] text-gray-500 font-bold no-underline cursor-pointer select-none">${test.replace('.test.html','')}</a>
-                        <div class="testResult hidden bg-white ml-6 mt-1.5 mb-2.5 p-2 text-[80%] border-l-[6px] border-gray-300 select-text"></div>
-                    </div>
-                </li>
-                #{/list}
-            </ul>
-            #{/if}
-
-            #{if !functionalTests && !unitTests && !seleniumTests}
+            #{if !functionalTests && !unitTests}
             <h2 class="text-gray-700 font-normal border-l-4 border-gray-300 pl-[5px] select-none"><span>There is no test to run</span></h2>
             #{/if}
 
-        </div>
-        <div id="selenium-mask" class="bg-black/80 fixed inset-0 hidden"></div>
-        <div id="selenium" class="fixed top-5 bottom-[50px] right-5 left-5 hidden z-[100000] text-white text-[110%]">
-            Play is running a selenium test... <span id="stopSelenium" class="bg-[#cc0000] text-white text-[90%] border border-double border-[#cc0000] cursor-pointer px-2 py-[2px] select-none">Stop it</span>
-            <iframe id="selenium-runner" class="mt-2.5 border border-gray-500 bg-white" width="100%" height="100%" src="about:blank"></iframe>
         </div>
     </body>
 </html>

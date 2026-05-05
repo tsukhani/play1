@@ -2,11 +2,11 @@ h1. アプリケーションのテスト
 
 自動実行できるテストスイートを作成するのは、アプリケーションを堅牢にする良い方法です。自動テストスイートを作成することで、アジャイルなやり方で作業することができます。
 
-Play のテストは、何をテストするかによって "Junit 4":http://www.junit.org/ または "Selenium":http://seleniumhq.org/ を使って作成されます。
+Play のテストは "JUnit":http://www.junit.org/ を使って作成されます。
 
 h2. <a name="writing">テストの記述</a>
 
-テストは @test/@ ディレクトリに作成されなければなりません。アプリケーションが @test@ モードで実行するときにだけ、このフォルダはソースパスに加えられます。テストは、異なる 3 種類の方法で書くことができます。
+テストは @test/@ ディレクトリに作成されなければなりません。アプリケーションが @test@ モードで実行するときにだけ、このフォルダはソースパスに加えられます。テストは、異なる 2 種類の方法で書くことができます。
 
 h3. 単体テスト
 
@@ -61,74 +61,6 @@ public void testUserIsFoundAndPassedToView() {
     assertThat(user.name, is("mark"));
 }
 
-h3. Selenium テスト
-
-受入テストは Selenium を使用して書かれます。このテストでは、自動化されたブラウザでこれを実行することでアプリケーションをテストします。
-
-Selenium テストは HTML テーブルを使用して書かれます。従来のこの構文を使用するか、または @#{selenium /}@ タグを使用することができます。
-
-Selenium テストの例を以下に示します:
-
-bc. #{selenium 'Test security'}
- 
-    // Try to log in the administration area
-    clearSession()
-    open('/admin')
-    assertTextPresent('Login')
-    type('login', 'admin')
-    type('password', 'secret')
-    clickAndWait('signin')
- 
-    // Verify that the user in correctly logged in
-    assertText('success', 'Welcom admin!')
- 
-#{/selenium}
-
-Slenium テストはブラウザを通して実行されるので、モックで送信された e メールや、Play Cache に格納された文字列にアクセスするためには、Selenium エクステンションを使用しなければなりません。
-
-あるアカウントに送信された最近の e メールにアクセスする例を以下に示します:
-
-bc. #{selenium 'Test email sending'}
- 
-    // Open email form and send an email to boron@localhost
-    open('/sendEmail')
-    assertTextPresent('Email form')
-    type('To', 'boron@localhost')
-    type('Subject', 'Berillium Subject')
-    clickAndWait('send')
-    
-    // Extract the last email sent to boron@localhost into a JavaScript
-    // variable called email
-    storeLastReceivedEmailBy('boron@localhost', 'email')
-    // Extract the subject line from the email variable into a variable 
-    // called subject
-    store('javascript{/Subject:\s+(.*)/.exec(storedVars["email"])[1]}', 'subject')
-    // Test the contents of the subject variable
-    assertEquals('Berillium Subject', '$[subject]')
- 
-#{/selenium}
-
-Play Cache に格納された文字列 (例えば、キャプチャに対する正しい答え) にアクセスする例を以下に示します:
-
-bc. #{selenium 'Get string from cache'}
- 
-    open('/register')
-    assertTextPresent('Registration form')
-    type('Email', 'my@email.com')
-    type('Password', 'secretpass')
-    type('Password2', 'secretpass')
-    // .. Fill in the registration form ..
- 
-    // Get the value of the magicKey variable from the cache
-    // (set to the CAPTCHA answer in the application)
-    storeCacheEntry('magicKey', 'captchaAnswer')
-    // Type it into the form
-    type('Answer', '$[captchaAnswer]')
- 
-    clickAndWait('register')
- 
-#{/selenium}
-
 h2. <a name="fixtures">フィクスチャ</a>
 
 テストを実行するとき、アプリケーションのための安定したデータを必要とします。最も簡単な方法は、各テストの前にデータベースをリセットすることです。
@@ -164,23 +96,9 @@ public void setUp() {
 
 p(note). "YAML マニュアルページ":yaml で Play と YAML について詳しく読むことができます。
 
-Selenium テストのために @#{fixture /}@ タグを使用することができます:
-
-bc. #{fixture delete:'all', load:'data.yml' /}
- 
-#{selenium}
-    
-    // Write your test here
- 
-#{/selenium}
-
-データをいくつかの YAML ファイルに分割すると便利な場合があります。複数のファイルかた一度にフィクスチャをロードすることができます:
+データをいくつかの YAML ファイルに分割すると便利な場合があります。複数のファイルから一度にフィクスチャをロードすることができます:
 
 bc. Fixtures.loadModels("users.yml", "roles.yml", "permissions.yml");
-
-Selenium テストは以下のようになります:
-
-bc. #{fixture delete:'all', load:['users.yml', 'roles.yml', 'permissions.yml'] /}
 
 h2. <a name="running">テストの実行</a>
 

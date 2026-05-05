@@ -5,5 +5,4 @@ h2. Test - Data loader
 Fixtures はユニットテストを実行する前にデータストアを初期化するために使用します。
 
 *==#{fixture delete:'all', load:'data.yml' /}==*  or *==#{fixture delete:'all', loadModels:'data.yml' /}==*
-*==#{selenium} ... #{/selenium}==*
-Selenium テストを使うときも同様に出来ます(@loadModels@ and @load@ parameters are synonyms).。
+テンプレートフィクスチャ内でも同様に使用できます (@loadModels@ and @load@ parameters are synonyms)。

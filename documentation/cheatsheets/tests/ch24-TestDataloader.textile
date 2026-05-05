@@ -5,5 +5,4 @@ h2. Test - Data loader
 Fixtures is used to initialise the datastore before running a unit test
 
 *==#{fixture delete:'all', load:'data.yml' /}==* or *==#{fixture delete:'all', loadModels:'data.yml' /}==*
-*==#{selenium} ... #{/selenium}==*
-Same idea using a Selenium test(@loadModels@ and @load@ parameters are synonyms).
+Same idea inside a template fixture (@loadModels@ and @load@ parameters are synonyms).
