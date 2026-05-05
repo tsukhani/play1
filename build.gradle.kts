@@ -38,16 +38,24 @@ abstract class PlayNewAppTask : DefaultTask() {
         if (!skel.isDirectory) throw GradleException("application-skel not found at ${skel.absolutePath}")
 
         logger.lifecycle("~ Scaffolding \"$displayName\" (identifier: $identifier) at ${dest.absolutePath}")
-        fileSystemOps.copy {
-            from(skel)
-            into(dest)
-            // Default copy spec excludes dot-files by default in some scenarios;
-            // be explicit by *not* setting any excludes. .gitignore is included.
+        // Plain JVM walk-and-copy. We can't use fileSystemOps.copy here because
+        // Gradle's default Ant excludes silently drop .gitignore, .gitattributes,
+        // and other dot-files we want in scaffolded apps. We still skip a small
+        // set of well-known junk files (macOS metadata, editor backups).
+        skel.walkTopDown().forEach { src ->
+            val rel = src.toRelativeString(skel)
+            if (rel.isEmpty()) return@forEach
+            if (src.name == ".DS_Store" || src.name == "Thumbs.db") return@forEach
+            if (src.name.endsWith("~")) return@forEach
+            val target = File(dest, rel)
+            if (src.isDirectory) {
+                target.mkdirs()
+            } else {
+                target.parentFile?.mkdirs()
+                src.copyTo(target, overwrite = false)
+            }
         }
         File(dest, "app/models").mkdirs()
-        // Python-era artifacts removed: lib/ (Gradle uses ~/.gradle/caches/, never writes
-        // to the app's lib/) and conf/dependencies.yml (replaced by build.gradle.kts).
-        File(dest, "conf/dependencies.yml").delete()
 
         // Substitute %APPLICATION_NAME% with the displayName (Play wants the
         // human-readable form, not the slug).
@@ -55,8 +63,7 @@ abstract class PlayNewAppTask : DefaultTask() {
         appConf.writeText(appConf.readText().replace("%APPLICATION_NAME%", displayName))
 
         // Generate a 64-char secret and write to certs/.env (chmod 0600) +
-        // certs/.env.example template. Mirrors framework/pym/play/utils.py:secretKey/
-        // writeAppSecret/writeEnvExample.
+        // certs/.env.example template. Same shape as the playSecret task.
         val secret = generateSecret()
         val envFile = File(dest, "certs/.env").apply { parentFile.mkdirs() }
         envFile.writeText("PLAY_SECRET=$secret\n")
@@ -117,6 +124,18 @@ abstract class PlayNewAppTask : DefaultTask() {
             }
         """.trimIndent() + "\n")
 
+        // Copy the Gradle wrapper from the framework so the new app can run
+        // ./gradlew (and `play <cmd>`, which dispatches to ./gradlew) without
+        // requiring system-installed Gradle. Pinning the wrapper to the
+        // framework's Gradle version also gives reproducible builds.
+        fileSystemOps.copy {
+            from(frameworkPath) {
+                include("gradlew", "gradlew.bat", "gradle/wrapper/**")
+            }
+            into(dest)
+        }
+        File(dest, "gradlew").setExecutable(true)
+
         // git init so playDist works
         try {
             execOps.exec {
@@ -134,9 +153,19 @@ abstract class PlayNewAppTask : DefaultTask() {
 
         logger.lifecycle("~")
         logger.lifecycle("~ OK, the application is created.")
-        logger.lifecycle("~ Start it with: cd ${dest.absolutePath} && gradle playRun")
+        logger.lifecycle("~")
+        logger.lifecycle("~ Start it with:")
+        logger.lifecycle("~     cd ${dest.absolutePath}")
+        logger.lifecycle("~     play run")
+        logger.lifecycle("~")
+        logger.lifecycle("~ Open it in your IDE:")
+        logger.lifecycle("~     Point IntelliJ IDEA / VS Code / Eclipse at:")
+        logger.lifecycle("~         ${dest.absolutePath}/build.gradle.kts")
+        logger.lifecycle("~     Modern IDEs auto-import this project with no extra setup.")
         if (frontend) {
-            logger.lifecycle("~ Start the frontend with: cd ${dest.absolutePath}/frontend && pnpm install && pnpm dev")
+            logger.lifecycle("~")
+            logger.lifecycle("~ Start the frontend with:")
+            logger.lifecycle("~     cd ${dest.absolutePath}/frontend && pnpm install && pnpm dev")
         }
         logger.lifecycle("~")
     }
