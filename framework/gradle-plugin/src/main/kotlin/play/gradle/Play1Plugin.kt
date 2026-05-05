@@ -1127,7 +1127,8 @@ abstract class PlayStopTask : DefaultTask() {
         val appDir = applicationPath.get().asFile
         val pidFile = resolvePidFile(appDir, pidFileOverride.orNull)
         if (!pidFile.exists()) {
-            throw GradleException("Oops! ${appDir.absolutePath} is not started (${pidFile.name} not found)")
+            logger.lifecycle("~ ${appDir.absolutePath} is already stopped")
+            return
         }
         val pid = pidFile.readText().trim().toLong()
         val handle = ProcessHandle.of(pid).orElse(null)
