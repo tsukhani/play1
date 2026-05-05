@@ -1,195 +1,210 @@
 h1. デプロイオプション
 
-事実上、Play アプリケーションはどこにでもデプロイすることができます: サーブレットコンテナの中や、スタンドアロンサーバとして、または Heroku, Google App Engine、Stack、クラウドにもデプロイすることができます。
+Play 1.12 アプリケーションは、組み込み Netty サーバを実行する **スタンドアロンの JVM プロセス** としてデプロイされます。サーブレットコンテナ経由のパスはありません: このフォークの主要機能 — HTTP/2 ALPN、HTTP/3 over QUIC、仮想スレッドディスパッチ — は設計上 Netty 専用です。
+
+組み込み HTTP サーバの機能 (HTTP/2、HTTP/3、仮想スレッド、TLS) については "HTTP サーバ":httpserver を参照してください。
+
+このページでは、サポートされている 2 つのデプロイトポロジ — Play を直接実行する方法と、リバースプロキシの背後で実行する方法 — について説明します。
 
 h2. <a name="standalone">スタンドアロン Play アプリケーション</a>
 
-もっとも簡単で堅牢な方法は、Play アプリケーションをどのコンテナにも乗せずに実行することです。バーチャルホストのような高度な HTTP の機能が必要な場合は、フロントに Lighttpd や Apache のような HTTP サーバを使用することができます。
+最もシンプルなデプロイは Play を直接実行することです。組み込み Netty サーバは CPU コアあたり数千の同時接続を捌くことができ、ロングポーリング、Server-Sent Events、WebSocket、@File@ や @InputStream@ ボディの直接ストリーミングをサポートします — リクエストスレッドをブロックすることなく。仮想スレッド (このフォークでは常に有効) によって、コントローラ内のブロッキング I/O 呼び出しが安価になります。
 
-内蔵の HTTP サーバは 1 秒あたり数千の HTTP リクエストを捌くことができるので、これが性能のボトルネックになることは決してありません。さらに、この HTTP サーバはより効率的なスレッドモデルを使用します (Servlet コンテナは 1 リクエストあたり 1 つのスレッドを使用します) 。"モジュール":http://playframework.com/modules を使うことで、別のサーバ (Grizzly、Netty、その他...) を使用することもできます。
+事前確認チェックリスト (ロギング、シークレット、JPA 設定、JVM フラグ) の全体については "「アプリケーションを本番環境に投入する」ページ":production を参照してください。
 
-これらのサーバは、長時間のポーリングをサポートしており、実行スレッドをブロックせずに非常に長い (長時間タスクの完了を待つ) リクエストや、ファイルオブジェクト (それから、Content-Length を指定すれば、どのような入力ストリームでも) の直接ストリーミングを管理することができます。
+h3. 起動と停止
 
-開発工程で使用したものと同じ環境を使用するので、この方法でアプリケーションを実行する場合、問題はほとんど起こりません。JEE アプリケーションサーバにデプロイするときにだけ、大量のバグ (異なるホームディレクトリ、クラスローダの問題、ライブラリの競合、その他...) が検出されます。
+アプリケーションをバックグラウンドで起動するには:
 
-より詳しい情報については、 "アプリケーションの本番稼動":production を参照してください。
+bc. play start /path/to/myapp
 
-h2. <a name="appservers">アプリケーションサーバ</a>
+これは JVM をフォークし、stdout と stderr を @logs/system.out@ にリダイレクトし、PID を @server.pid@ に書き込んで戻ります。フレームワークはデフォルトで @prod@ モードで起動します; 別のフレームワーク ID を選択するには @--%<id>@ を渡します (例: @--%staging@)。
 
-Play アプリケーションは、お好みのアプリケーションサーバで実行することもできます。ほとんどのアプリケーションサーバーは特別な設定なしでサポートされています。
+実行中のインスタンスを停止するには:
 
-h3. サポートするアプリケーションサーバ
+bc. play stop /path/to/myapp
 
-以下ののアプリケーションサーバで Play が動作することが分かっています。この他に動作する配備環境があれば、遠慮なく報告してください。
+これは @server.pid@ を読み取り、クリーンなシャットダウンシグナルを送信して、処理中のリクエストが完了するのを待ちます。
 
-* JBoss 4.2.x
-* JBoss 5.x
-* JBoss 6M2
-* Glassfish v3
-* IBM Websphere 6.1
-* IBM Websphere 7
-* Geronimo 2.x
-* Tomcat 6.x
-* Jetty 7.x
-* Resin 4.0.5                                                                
+実行中のインスタンスを完全に落とすことなく再起動するには (設定変更後などに便利)、@play stop@ の後に @play start@ を順に実行します; 本番環境でのゼロダウンタイム切り替えは、リバースプロキシ (次のセクション) の背後で 2 つのインスタンスを実行し、ローテーションさせる方法を使います。
 
-h3. デプロイ
+h3. ログの監視
 
-アプリケーションを war ファイルとしてパッケージする必要があります。これは、以下のコマンドで容易に実行できます:
+起動後は @logs/system.out@ で JVM の stdout/stderr を、@logs/application.log@ でフレームワークの log4j2 出力を tail します:
 
-bc. play war myapp -o myapp.war
+bc. tail -F /path/to/myapp/logs/system.out
+tail -F /path/to/myapp/logs/application.log
 
-p(note). アプリケーションサーバが展開された WAR ファイルの配備をサポートしていることを確認してください。
+JSON ロギング (@application.log.format=json@) を有効にしている場合、アプリケーションログは行区切りの JSON となり、Loki、Elasticsearch、Datadog などへの取り込みに適します。"構造化 JSON ロギング":logs#json を参照してください。
 
-これでアプリケーションをデプロイする準備が整いました。
+h3. JVM チューニング
 
-アプリケーションのライブラリ間におけるバージョン不整合を避けるため、Play アプリケーションを他のアプリケーションから ‘隔離’ するようアドバイスされています。この手順はベンダに特化したものであり、標準的な JEE/サーブレット仕様によるものではありません。
+JVM フラグを @play start@ に渡すには JVM オプション構文を使用します — @play@ は @-X@ / @-D@ / @-XX:@ にマッチするすべての引数を転送します:
 
-WAR ファイルを ‘隔離’ するために、アプリケーションサーバのマニュアルを参照することをお勧めします。以下の例は、JBoss アプリケーションサーバにおいて war ファイルを隔離する方法です。これがオプションの手順であることに注意してください:
+bc. play start /path/to/myapp -Xms2g -Xmx2g -XX:MaxRAMPercentage=75
 
-アプリケーションの war ディレクトリにある @myapp.war/WEB-INF/jboss-web.xml@  に以下の内容を挿入 (または新規に作成) してください:
+仮想スレッドによってリクエストごとのスタックメモリは無視できる程度になるため、従来の「@play.pool@ をコア数に合わせて調整する」というガイダンスはもはや当てはまりません — これらのキーは 1.12 で削除されています (設定にまだ参照が残っている場合は起動時の @WARN@ を確認してください)。
 
-bc. 
-<jboss-web>
- <class-loading java2classloadingcompliance="false">
- <loader-repository>
- com.example:archive=unique-archive-name
- <loader-repository-config>java2ParentDelegation=false</loader-repository-config>
- </loader-repository>
-</class-loading>
-</jboss-web>
+h2. <a name="precompiled">ソースコードなしでのデプロイ</a>
 
-com.example:archive=unique-archive-name を一意であり続ける名前に書き換えてください。
+ビルド成果物のみを配布したい場合 — 制限付きサーバ、軽量なコンテナイメージ、クローズドソースアプリケーションを顧客に配布する場合など — Play は @app/@ ソースをディスク上に置かずに、プリコンパイル済みのバイトコードツリーのみで動作できます。注意点として、「本番モード」(@application.mode=prod@) 単体ではこれを行いません: 起動時にプリコンパイルしますが、それでもソースツリーを読み込んで行います。デプロイ成果物から @app/@ を完全に省略できるようにするのが、以下のフローです。
 
+h3. ステップ 1 — ビルドホストでプリコンパイル
 
-h3. データソース
+bc. play precompile /path/to/myapp
 
-Play はデータソースとリソースのルックアップもサポートします。JNDI データソースを使うには、application.conf において "データベース設定":configuration#dbconf を以下のように編集してください。
+これは @app/@ 配下の全 Java クラスと @app/views/@ 配下の全 Groovy テンプレート (および各モジュール内の同等物) をコンパイルし、バイトコードを以下に書き出します:
 
-bc. db=java:comp/env/jdbc/mydb
-jpa.dialect=org.hibernate.dialect.Oracle10gDialect
-jpa.ddl=verify
+bc. myapp/precompiled/
 
-データソースプラグインは @db=java:@ というパターンを検出し、デフォルトの JDBC システムを非活性化します。
+このディレクトリは呼び出しのたびにゼロから再生成されます — コマンドは実行前に既存の @precompiled/@ と @tmp/@ を削除します。
 
+h3. ステップ 2 — デプロイ成果物を組み立てる
 
-h3. カスタム web.xml
+ランタイムには以下が必要です:
 
-IBM Websphere などのアプリケーションサーバは、サーブレット API 設定ファイル @web.xml@ 中の @resource-ref@ 要素にデータソースを定義することを要求します。デフォルトでは、 @play war@ コマンドを実行すると Play は @web.xml@ ファイルを生成します。生成された @web.xml@ をカスタマイズするには、展開した WAR バージョンを生成し、 @web.xml@ ファイルをアプリケーションの @war/WEB-INF@ フォルダにコピーします。この次に @play war@ コマンドを実行すると、カスタマイズした @web.xml@ が生成されたフォルダへコピーされます。
+* @precompiled/@ — ステップ 1 の出力
+* @conf/@ — @application.conf@、@routes@、log4j 設定、メッセージ、キーストア
+* @lib/@ — ランタイム依存関係
+* @public/@ — 静的アセット
 
-例えば、 @war/WEB=INF/web.xml@ ファイルの @resource-ref@ に IBM Websphere 7 用のデータソースを定義することができます:
+以下は省略可能です:
 
-bc. <?xml version="1.0" ?>
-<web-app xmlns="http://java.sun.com/xml/ns/j2ee"
-        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-        xsi:schemaLocation="http://java.sun.com/xml/ns/j2ee http://java.sun.com/xml/ns/j2ee/web-app_2_4.xsd"
-        version="2.4">
-  <display-name>Play! (%APPLICATION_NAME%)</display-name>
-  <context-param>
-    <param-name>play.id</param-name>
-    <param-value>%PLAY_ID%</param-value>
-  </context-param>
-  <listener>
-      <listener-class>play.server.ServletWrapper</listener-class>
-  </listener>
-  <servlet>
-    <servlet-name>play</servlet-name>
-    <servlet-class>play.server.ServletWrapper</servlet-class>	
-  </servlet>
-  <servlet-mapping>
-    <servlet-name>play</servlet-name>
-    <url-pattern>/</url-pattern>
-  </servlet-mapping>
-  <resource-ref>
-        <description>Play Datasource for testDatasource</description>
-        <res-ref-name>jdbc/mydb</res-ref-name>
-        <res-type>javax.sql.DataSource</res-type>
-        <res-auth>Container</res-auth>
-  </resource-ref>
-</web-app>
+* @app/@ — コントローラ、モデル、テンプレート (@precompiled/@ 配下にバイトコードとして存在)
+* @test/@ — テスト
+* @tmp/@ — ランタイムキャッシュ (起動時に再作成)
+* @build.gradle.kts@、@gradle/@、@.gradle/@ — ビルド時専用
 
+ホストに @logs/@ ディレクトリがない場合、@play@ ランチャが初回起動時に作成します。
 
-h2. <a name="cloud">クラウドベースのホスティング</a>
+h3. ステップ 3 — プリコンパイルモードで起動
 
+起動時の再コンパイルではなく @precompiled/@ からロードするようフレームワークに指示します:
 
-h3. <a name="elasticbeanstalk">AWS Elastic Beanstalk</a>
+bc. play start /path/to/myapp -Dprecompiled=true
 
-"AWS Elastic Beanstalk":http://aws.amazon.com/en/elasticbeanstalk/ は、Amazon Web Services インフラストラクチャに基づいた Amazon の Java ホスティングプラットフォームです。Play アプリケーションのデプロイに関する詳しい情報は "Java development 2.0: Play-ing with Amazon RDS":http://www.ibm.com/developerworks/java/library/j-javadev2-19/ を参照してください。
+このシステムプロパティは @prod@ モードを強制し、Java とテンプレートの両方のコンパイルパスをスキップします。@precompiled/@ が見つからない場合、フレームワークは @"Precompiled classes are missing!!"@ をログに出力し、起動を拒否します。
 
+h3. 注意点
 
-h3. <a name="cloudbees">CloudBees</a>
+* @application.mode=dev@ はこのレイアウトと互換性がありません — ホットリロードはソースファイルを必要とします。@-Dprecompiled=true@ フラグは @application.conf@ の設定に関わらず @prod@ モードを強制します。
+* スタックトレースはソース行ではなくバイトコードの行番号を参照します。デバッグのために、対応するソースのコピーをデプロイホスト外のどこかに保管しておいてください。
 
-"CloudBees":http://www.cloudbees.com/ は Java アプリケーションのホスティングプラットフォームです。詳しい情報は "CloudBees module":https://www.playframework.com/modules/cloudbees を参照してください。
+h2. <a name="reverseproxy">リバースプロキシの背後</a>
 
+本番デプロイでは、ほとんどの運用者は TLS 終端、バーチャルホスト、リクエストルーティング、(オプションで) 静的アセットキャッシュを処理するリバースプロキシを Play の前段に置きます。一般的な選択肢:
 
-h3. <a name="cloudfondry">Cloud Foundry</a>
+* "nginx":https://nginx.org/ — 最も人気のあるセルフホスト型の選択肢; クライアントとの間で HTTP/2 と HTTP/3 をサポートし、アップストリームとは HTTP/1.1 または HTTP/2 で通信します。
+* "HAProxy":https://www.haproxy.org/ — L4 ロードバランシングや sticky session が必要な場合に推奨。
+* "AWS Application Load Balancer":https://aws.amazon.com/elasticloadbalancing/application-load-balancer/ — TLS と HTTP/2 を終端しますが、UDP は転送 **しません** ので、クライアントからの HTTP/3 は ALB で終端し、Play は TCP のみを受信します。
+* "AWS Network Load Balancer":https://aws.amazon.com/elasticloadbalancing/network-load-balancer/ — UDP をパススルーするので、Play へのエンドツーエンド HTTP/3 が動作します (TLS は Play で終端)。
+* "Cloudflare":https://www.cloudflare.com/ — TLS、HTTP/2、HTTP/3 をエッジで終端し、オリジンとは HTTP/1.1 または HTTP/2 で通信します。
 
-"Cloud Foundry":http://www.cloudfoundry.com/ は VMWare のクラウドプロバイダです。詳しい情報は "Running Play Framework Application on CloudFoundry":http://iambivas.blogspot.com/2011/08/running-play-framework-application-on.html と "CloudFoundry module":https://www.playframework.com/modules/cloudfoundry を参照してください。
+h3. TLS 終端
 
+2 つのパターンがあります。運用モデルに合った方を選んでください:
 
-h3. <a name="gae">Google App Engine (GAE)</a>
+**パターン A — エッジで TLS、Play へはプレーン HTTP。** プロキシが証明書を保持し、Play は @http.port@ のみをバインドして @https.port@ は使用しません。プロキシが同じプライベートネットワーク上にある場合、これが最もシンプルなセットアップです。リバースルーティングが正しい URL を生成するように、正規スキームとホストを Play に伝えます:
 
-"Google App Engine":http://code.google.com/appengine/ は、一般的なホスティングソリューションと比較して異なった長所と短所を持つ最初のクラウドホスティングプラットフォームの一つです。特に、GAE は JPA 永続性をサポートしません。詳しい情報は "GAE module":https://www.playframework.com/modules/gae を参照してください。
+bc. http.port=9000
+XForwardedSupport=127.0.0.1
+XForwardedProto=https
 
+**パターン B — Play で TLS。** Play 自身が TLS を処理し、HTTP/2 ALPN と HTTP/3 QUIC ネゴシエーションも含めて担当します。プロキシは TCP+UDP を透過的にパススルーすることも (TCP モードの NLB / HAProxy)、オリジンと HTTPS で通信することもできます。@https.port@ と PEM 証明書 + 鍵の両方をバインドします:
 
-h3. <a name="heroku">Heroku</a>
+bc. https.port=9443
+certificate.file=/etc/letsencrypt/live/example.com/fullchain.pem
+certificate.key.file=/etc/letsencrypt/live/example.com/privkey.pem
 
-"Heroku cloud application platform":http://www.heroku.com/ は Play に特化したアプリケーションのホスティングサポートを提供しています。Play アプリケーションをデプロイして実行するには、以下の手順を使います。
+完全な TLS 設定リファレンスは "HTTP サーバ":httpserver を、HSTS 設定は "デフォルトのセキュリティヘッダ":security#headers を参照してください。
 
-1. Heroku コマンドラインクライアントを "Linux":http://toolbelt.herokuapp.com/linux/readme, "Mac":http://toolbelt.herokuapp.com/osx/download, または "Windows":http://toolbelt.herokuapp.com/windows/download にインストールします。
-2. "git":http://git-scm.com/ をインストールして SSH 鍵を設定します。
-3. "Heroku.com":http://heroku.com/signup アカウントを作成します。
-4. コマンドラインから Heroku にログインします:
+h3. パスプレフィックスの書き換え
 
-bc. heroku auth:login
+プロキシがアプリをサブパス (例: @example.com/myapp@) にマウントしている場合、リバースルーティングが正しい URL を生成するように Play に伝えます:
 
-5. git リポジトリを作成します:
+bc. http.path=/myapp
 
-bc. git init
+フレームワークは生成されるすべての URL にこの値をプレフィックスしますが、受信リクエストからこれを取り除く処理は **しません** — プロキシ側でフルパスを転送する責任があります。
 
-6. Play によって生成されたファイルを無視するために、以下の内容を含む @.gitignore@ ファイルを作成します:
+h3. nginx の例
 
-bc. /tmp
-/modules
-/lib
-/test-result
-/logs
+エッジで TLS を終端し、@127.0.0.1:9000@ の Play にプレーン HTTP でプロキシする最小限の nginx アップストリーム設定:
 
-7. このファイルを git リポジトリに追加してコミットします:
+bc. server {
+    listen 443 ssl http2;
+    server_name example.com;
 
-bc. git add .
-git commit -m init
+    ssl_certificate     /etc/letsencrypt/live/example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/example.com/privkey.pem;
 
-8. Heroku 上に新しいアプリケーションを作成します:
+    location / {
+        proxy_pass         http://127.0.0.1:9000;
+        proxy_http_version 1.1;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_read_timeout 600s;
+    }
+}
 
-bc. heroku create -s cedar
+@application.conf@ には以下を追加します:
 
-9. Heroku にアプリケーションを Push します:
+bc. http.port=9000
+XForwardedSupport=127.0.0.1
+XForwardedProto=https
 
-bc. git push heroku master
+エンドツーエンドの QUIC を使わずにクライアントの HTTP/3 サポートを有効にするには、nginx で @listen 443 quic@ を有効にし、nginx 自身が @Alt-Svc@ を発行するようにします。
 
-10. ブラウザでアプリケーションを開きます:
+h3. プロキシ経由の WebSocket
 
-bc. heroku open
+WebSocket には明示的な @Upgrade@ / @Connection@ のパススルーが必要です。nginx の場合:
 
+bc. location /ws/ {
+    proxy_pass         http://127.0.0.1:9000;
+    proxy_http_version 1.1;
+    proxy_set_header   Upgrade    $http_upgrade;
+    proxy_set_header   Connection "upgrade";
+    proxy_read_timeout 86400s;
+}
 
-ログを閲覧するためには、以下を実行します:
+Server-Sent Events も標準の @proxy_pass@ で動作しますが、レスポンスバッファリングをオフにする必要があります:
 
-bc. heroku logs
+bc. proxy_buffering off;
 
-複数の ‘dynos’ にアプリケーションをスケールするためには、以下を実行します:
+h3. Heroku などの PaaS
 
-bc. heroku scale web=2
+PaaS プラットフォームは一般に、アプリが @PORT@ 環境変数を尊重することを要求します。@application.conf@ で以下のように読み取ります:
 
-本番環境で "Heroku Shared Database":http://devcenter.heroku.com/articles/database を使うためには、以下を @conf/application.conf@ ファイルに追加します:
+bc. http.port=${PORT}
 
-bc. %prod.db=${DATABASE_URL}
-%prod.jpa.dialect=org.hibernate.dialect.PostgreSQLDialect
-%prod.jpa.ddl=update
+プラットフォームがエッジで TLS を処理します。汎用的なプロセス監視パターンについては、後述の "VPS / カスタムサーバ":#upstart セクションを参照してください。
 
-詳しい情報は "Heroku Dev Center":http://devcenter.heroku.com を参照してください。
+h2. <a name="upstart">システムサービスとしての実行</a>
 
+Linux サーバ上で長時間稼働するプロセスを動かすには、systemd、init スクリプト、またはプロセススーパバイザを使用します。systemd ユニットの例:
 
-h3. <a name="playapps">playapps.net</a>
+bc. [Unit]
+Description=Play Framework — myapp
+After=network.target
 
-"playapps.net":http://www.playapps.net/ は、Play を作成した Zenexity による PLay に特化したホスティングプラットフォームです。詳しい情報は "playapps.net module":https://www.playframework.com/modules/playapps を参照してください。
+[Service]
+Type=forking
+User=play
+Group=play
+WorkingDirectory=/srv/myapp
+PIDFile=/srv/myapp/server.pid
+ExecStart=/opt/playframework/play start /srv/myapp --%prod
+ExecStop=/opt/playframework/play stop /srv/myapp
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+
+そして:
+
+bc. systemctl daemon-reload
+systemctl enable myapp
+systemctl start myapp
+journalctl -u myapp -f
