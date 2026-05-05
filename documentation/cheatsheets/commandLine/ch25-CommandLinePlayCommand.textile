@@ -1,55 +1,41 @@
 h2. Command line - play command
 
-*classpath*
-Display the computed classpath
+The @play@ command is a thin shell wrapper around Gradle. Each subcommand
+delegates to a Gradle task in the @play1@ task group.
 
-*id*
-Define the framework ID, used for multi-environment configuration
+*classpath*
+Print the resolved runtime classpath
 
 *secret*
-Generate a new secret key, used for encryption
-
-*install*
-Install a module
-
-*list-modules*
-List modules available in the central module repository
-
-*modules*
-Display the computed modules list
+Generate a new secret key, used for HMAC and encryption
 
 *new*
-Create a new application
+Scaffold a new application (run from any directory; pass @--frontend@ for the
+Nuxt 3 frontend skeleton)
 
-*new-module*
-Create a module
-
-*build-module*
-Build and package a module
-
-*idealize*
-Create all IntelliJ Idea configuration files
+*modules*
+Print the modules that will be loaded for this app
 
 *javadoc*
-Generate your application Javadoc
+Generate the application's Javadoc
 
 *auto-test*
-Automatically run all application tests
+Run all application tests headlessly
 
 *clean*
-Delete temporary files (including the bytecode cache)
+Delete the @tmp/@ directory
 
 *test*
 Run the application in test mode in the current shell
 
 *precompile*
-Precompile all Java sources and templates to speed up application start-up
+Precompile all Java sources and templates for production
 
-*war*
-Export the application as a standalone WAR archive
+*bundle*
+Build a self-contained deployment ZIP (alias: @dist@)
 
 *run*
-Run the application in the current shell
+Run the application in the current shell (development mode)
 
 *start*
 Start the application in the background
@@ -61,16 +47,22 @@ Stop the running application
 Restart the running application
 
 *status*
-Display the running application’s status
+Print the running application's status
 
 *out*
-Follow logs/system.out file
+Tail @logs/system.out@
 
 *pid*
 Show the PID of the running application
 
-*check*
-Check for a Play framework release newer than the current one
+*evolutions*
+Apply database evolutions
+
+*enable-https / disable-https*
+Toggle HTTPS in @conf/application.conf@
+
+*version*
+Print the framework version
 
 *help*
-Display help on a specific command
+Show usage

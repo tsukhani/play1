@@ -125,17 +125,16 @@ Play について学ばなければならない全てです。
 ## "クロスサイトスクリプティング":security#xss
 ## "SQL インジェクション":security#sql
 ## "クロスサイトリクエストフォージェリ":security#csrf
-# "モジュールとモジュールリポジトリ":modules
+# "Play モジュール":modules
 ## "モジュールとは ?":modules#what
 ## "アプリケーションからモジュールをロードする方法":modules#loading
 ## "モジュールからデフォルトルートをロードする":modules#routes
-## "モジュールリポジトリの使用":modules#repository
-## "モジュールリポジトリへの新しいモジュールの寄付":modules#contributing
+## "同梱モジュール":modules#bundled
 # "依存性管理":dependency
-## "依存性フォーマット":dependency#format
-## "dependencies.yml":dependency#yml
-## "競合の解決":dependency#conflicts
-## "新しいリポジトリの追加":dependency#repositories
+## "アプリケーションの依存性を宣言する":dependency#declaring
+## "Play モジュールをロードする":dependency#modules
+## "依存性の解決":dependency#resolving
+## "フレームワーク自身の依存性":dependency#framework
 # "データベースの変更管理":evolutions
 ## "変更スクリプト":evolutions#script
 ## "同時に発生した変更の同期":evolutions#Synchronizingconcurrentchanges

@@ -133,17 +133,16 @@ Everything you need to know about Play.
 ## "Default security headers":security#headers
 ## "CORS":security#cors
 ## "SameSite cookies":security#samesite
-# "Modules and the module repository":modules
+# "Play modules":modules
 ## "What is a module?":modules#what
 ## "How to load a module from an application":modules#loading
 ## "Load default routes from modules":modules#routes
-## "Using the module repository":modules#repository
-## "Contributing a new module to the module repository":modules#contributing
+## "Bundled modules":modules#bundled
 # "Dependency management":dependency
-## "Dependency format":dependency#format
-## "dependencies.yml":dependency#yml
-## "Conflict resolution":dependency#conflicts
-## "Adding new repositories":dependency#repositories
+## "Declaring application dependencies":dependency#declaring
+## "Loading Play modules":dependency#modules
+## "Resolving dependencies":dependency#resolving
+## "Framework dependencies":dependency#framework
 # "Managing your database evolutions":evolutions
 ## "Evolutions scripts":evolutions#script
 ## "Synchronizing concurrent changes":evolutions#Synchronizingconcurrentchanges

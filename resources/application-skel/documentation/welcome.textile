@@ -8,6 +8,6 @@ Every textile file in documentation folder will automatically be added to your d
 
 You can customize the way it looks by editing @template.html@ file, but it's not mandatory so you can remove this file if plain black on white page is ok for you.
 
-h2. Export documentation to htmls
+h2. Browsing the documentation
 
-If you want to export your documentation just execute @play doc:export@ command in project root. This will generate zip file in @documentation@ folder with all your textile files rendered to html and files from @images@ and @files@ included.
+The documentation viewer is mounted automatically in dev mode at "/@documentation":/@documentation. Each textile file becomes a page in the sidebar.

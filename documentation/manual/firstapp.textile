@@ -43,7 +43,7 @@ The @play new@ command creates a new directory @helloworld/@ and populates it wi
 
 @public/@ contains all the publicly available resources, which includes JavaScript, stylesheets and images directories.
 
-@test/@ contains all the application tests. Tests are written either as Java JUnit tests or as Selenium tests.
+@test/@ contains all the application tests. Tests are written as Java JUnit tests.
 
 p(note). Because **Play uses UTF-8** as single encoding, it's very important that all text files hosted in these directories are encoded using this charset. Make sure to configure your text editor accordingly.
 
@@ -260,70 +260,6 @@ bc. #{extends 'main.html' /}
 And check that it works:
 
 !images/firstapp-6!
-
-h2. <a>Writing an automated test suite</a>
-
-We will finish by writing a test for the application. As there is no Java logic to test, we need to test the Web application itself. So we will write a Selenium test.
-
-First, you need to run your application in **test mode**. Stop the application and restart it with the @test@ command:
-
-bc. $ play test
-
-The @play test@ command is almost the same as @play run@, except that it loads a test runner module that allows to run test suite directly from a browser. 
-
-Open a browser to the "http://localhost:9000/@tests":http://localhost:9000/@tests URL to see the test runner. Try to select all the default tests and run them; all should be green… But these default tests don’t really test anything.
-
-!images/guide2-1!
-
-A selenium test suite is typically written as an HTML file. The HTML syntax required by selenium is a little tedious (formatted using an HTML table element) to write. The good news is that Play will help you to generate it using the Play template engine and a set of tags that support a simplified syntax for selenium scenarios. 
-
-The default test suite of a newly created Play application already contains a selenium test. Open the @helloworld/test/Application.test.html@ file:
-
-bc. *{ You can use plain selenium command using the selenium tag }*
- 
-#{selenium}
-    // Open the home page, and check that no error occurred
-    open('/')
-    assertNotTitle('Application error')
-#{/selenium}
-
-This test should run without any problem with the application for now. It just opens the home page and checks that the page content does not contain the ‘Application error’ text.
-
-Let’s write a test for our application. Edit the test content:
-
-bc. #{selenium}
-    // Open the home page, and check that no error occurred
-    open('/')
-    assertNotTitle('Application error')
-    
-    // Check that it is the Hello World application
-    assertTextPresent('The Hello world app.')
-    
-    // Submit the form
-    clickAndWait('css=input[type=submit]')
-    
-    // Check the error
-    assertTextPresent('Oops, please enter your name!')
-    
-    // Type the name and submit
-    type('css=input[type=text]', 'bob')
-    clickAndWait('css=input[type=submit]')
-    
-    // Check the result
-    assertTextPresent('Hello bob!')
-    assertTextPresent('The Hello world app.')
-    
-    // Check the back link
-    clickAndWait('link=Back to form')
-    
-    // Home page?
-    assertTextNotPresent('Hello bob!')
-#{/selenium}
-
-We have fully tested the application. Just select this test in the test runner and click ‘Start’. Everything should be green!
-
-!images/firstapp-7!
-
 
 h2. <a>Learn more</a>
 

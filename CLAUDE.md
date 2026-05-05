@@ -68,9 +68,11 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 ## Project Overview
 
-Play Framework 1 — a Java web framework (v1.12.x, requires Java 25+). Uses Apache Ant for builds and JUnit 5 for testing. Framework source is Java; CLI tooling is Python 3.
+Play Framework 1 — a Java web framework (v1.13.x, requires Java 25+). The framework source is Java built by Apache Ant + Ivy. End-user applications consume the framework through a Gradle plugin (`framework/gradle-plugin/`) and a thin shell wrapper (`/opt/play1/play`) that translates 1.12-era CLI ergonomics to Gradle.
 
 ## Build & Test Commands
+
+The framework's own build still uses Ant. End-user apps use Gradle (see `Consumer build` below).
 
 All Ant commands run from `framework/`:
 
@@ -84,8 +86,7 @@ ant compile                      # Compile only (no clean)
 # Tests
 ant unittest                     # Framework JUnit tests only (fast inner loop)
 ant integration-test             # Real-Netty integration tests (test-src/integration/)
-ant cli-test                     # Python tests for the play CLI (test-src/cli/)
-ant test                         # Full verification: clean + jar + unittest + integration-test + cli-test
+ant test                         # Full verification: clean + jar + unittest + integration-test
 ant test-single -Dtestclass=play.mvc.RouterTest  # Single test class (no package prefix in path, use dots)
 ant compile-tests                # Compile tests + copy fixture resources, no run
 
@@ -94,6 +95,8 @@ ant javadoc                      # Generate API docs
 ant package                      # Create distribution ZIP
 ant resolve                      # Resolve framework/dependencies.yml via Ivy and update framework/lib/ in place. Run after editing dependencies.yml. Idempotent. -Dprune=true to delete stray jars; -Dverbose for Ivy detail (PF-62)
 ```
+
+The Gradle plugin lives at `framework/gradle-plugin/` and is built via `./gradlew :gradle-plugin:build` from the repo root.
 
 ## Architecture
 
@@ -129,19 +132,18 @@ This fork runs on virtual threads exclusively. Request invocation (`Invoker`), b
 
 ### Module System
 
-Built-in modules in `modules/`: `testrunner`, `docviewer`, `crud`, `secure`. Each has its own `build.xml`, `app/`, and `conf/` directories. `testrunner` is consumed at runtime by the `play test` / `play auto-test` CLI commands when end-user apps invoke them.
+Built-in modules in `modules/`: `testrunner`, `docviewer`, `crud`, `secure`. Each has its own `build.xml`, `app/`, and `conf/` directories. Apps opt in via `play1 { modules("crud", "secure", ...) }` in their `build.gradle.kts`; the Gradle plugin extracts each declared module under `modules/<name>/` before launch. `testrunner` is auto-loaded when running under `play.id=test`.
 
 ### Testing Patterns
 
 **Framework-internal tests** (run against the framework itself):
 - Framework unit tests: `framework/test-src/play/**/*Test.java` (JUnit 5) — invoked by `ant unittest`
 - Integration tests: `framework/test-src/integration/**/*Test.java` (JUnit 5) — bind a real Netty server, exercise HTTP/1.1, h2 ALPN, h3, the SSE pipeline, and PlayHandler error paths. Invoked by `ant integration-test`. Test-app fixture lives at `framework/test-src/integration/testapp/`.
-- CLI tests: `framework/test-src/cli/test_*.py` (Python `unittest`) — invoked by `ant cli-test`
 - Test data via YAML fixtures loaded with `Fixtures.load("data.yml")`
 
 **End-user app testing** (run by app developers against THEIR apps, not the framework):
-- `play test myapp` — starts the app in test mode, foreground server with `play.id=test`. Apps put their tests under `app/` annotated with `@RunWith(PlayJUnitRunner.class)`; visit `http://host:port/@tests` to invoke them via the testrunner module's web UI.
-- `play auto-test myapp` — same setup but headless: spins the test runner via Selenium/Firephoque and exits with the test result. Used for CI of end-user apps.
+- `play test myapp` — backed by the `playTest` Gradle task. Starts the app in test mode (foreground, `play.id=test`). Apps put their tests under `app/` annotated with `@RunWith(PlayJUnitRunner.class)`; visit `http://host:port/@tests` to invoke them via the testrunner module's web UI.
+- `play auto-test myapp` — backed by the `playAutotest` Gradle task. Headless: boots the app, runs FirePhoque against `/@tests`, exits with the test result. Used for CI of end-user apps. Auto-synthesizes an ephemeral `${PLAY_SECRET}` for hermetic runs when neither `certs/.env` nor the host env supplies one.
 
 These commands depend on `modules/testrunner/lib/play-testrunner.jar` (built by the testrunner module) — they are NOT exercised by `ant test`.
 
@@ -157,6 +159,14 @@ cd framework && ./tailwind/build-css.sh
 
 The script requires the standalone Tailwind v4 CLI binary at `framework/tailwindcss` (gitignored — each dev installs their own; download links in the script's header). Commit the regenerated CSS alongside the template change. There is no CI auto-regen — staleness shows up as missing classes at render time on whichever app uses the asset.
 
-### CLI (`play` command)
+### Consumer build (Gradle plugin + `play` shim)
 
-Python 3 script at repo root. Commands defined in `framework/pym/play/commands/`. Key commands: `play new`, `play run`, `play test`, `play auto-test`, `play deps`.
+End-user apps use Gradle. The Play 1 plugin is at `framework/gradle-plugin/src/main/kotlin/play/gradle/Play1Plugin.kt` and exposes a `play1` task group: `playRun`, `playStart`/`playStop`/`playRestart`, `playTest`, `playAutotest`, `playPrecompile`, `playBundle`, `playSecret`, `playEvolutions`, `playEnableHttps`/`playDisableHttps`, `playClasspath`, `playModulesInfo`, `playJavadoc`, `playStatus`, `playPid`, `playOut`, `playNewApp`, `playClean`, `playVersion`.
+
+The `/opt/play1/play` shell script is a thin wrapper that:
+- Locates `./gradlew` (CWD), then `$PLAY_HOME/gradlew` (when in framework dir), then system `gradle` on PATH.
+- Translates 1.12-era flags to Gradle wire format: `--http.port=X` → `-PhttpPort=X`, `--%test` → `-PplayId=test`, `-Xmx...` etc. accumulate into `-PjvmArgs="..."`.
+- `play new <name>` runs the framework's `gradlew playNewApp -Pname=<name> -Pdest=<absolute>`.
+- Removed commands (`play deps`, `play idealize`, `play install`, `play list-modules`, `play check`, etc.) print a redirect message and exit non-zero.
+
+Module loading happens via the plugin's `extractPlayModules` task: each module declared in `play1 { modules(...) }` is sourced from the framework distribution and unzipped under the app's `modules/` directory. `Play.loadModules()` and `VirtualFile` are unchanged from 1.12 — modules remain real directories on disk so overlays and hot reload keep working.

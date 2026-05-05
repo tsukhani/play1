@@ -4,10 +4,11 @@ h1. 認証機能の追加
 
 h2. <a>secure モジュールの有効化</a>
 
-@yabe/conf/dependencies.yml@ ファイルにおいて **Secure** モジュールを有効化し、アプリケーションを再起動してください。
+アプリケーションの @build.gradle.kts@ において **Secure** モジュールを有効化し、アプリケーションを再起動してください。
 
-bc. # Import the secure module
-    - secure
+bc. play1 {
+    modules("secure")
+}
 
 再起動後、Play はこのモジュールがロードされたことを告げるはずです。
 
@@ -256,11 +257,11 @@ public class Posts extends CRUD {
 
 h2. <a>CRUD レイアウトのカスタマイズ</a>
 
-楽しくなってきましたが、管理領域の CRUD 部分へ行くと管理用レイアウトが無くなってしまいます。これは CURD モジュールが自身のレイアウトを提供するからです。しかし、もちろんこれをオーバーライドすることができます。以下の Play コマンドを使用してください:
+楽しくなってきましたが、管理領域の CRUD 部分へ行くと管理用レイアウトが無くなってしまいます。これは CURD モジュールが自身のレイアウトを提供するからです。しかし、モジュールのレイアウトをアプリケーションにコピーすることでもちろんこれをオーバーライドすることができます:
 
-bc. play crud:ov --layout
+bc. cp $PLAY_HOME/modules/crud/app/views/CRUD/layout.html app/views/CRUD/layout.html
 
-新しい @/yabe/app/views/CRUD/layout.html@ テンプレートが作成されます。このテンプレートの内容を @admin.html@ レイアウトとよく馴染むように置き換えましょう:
+テンプレートローダーはアプリケーションレベルのファイルを優先するので、新しい @/yabe/app/views/CRUD/layout.html@ がすぐに有効になります。このテンプレートの内容を @admin.html@ レイアウトとよく馴染むように置き換えましょう:
 
 bc. #{extends 'admin.html' /}
 #{set 'moreStyles'}
@@ -295,9 +296,9 @@ bc. #{extends 'admin.html' /}
 
 h2. <a>ログインページのスタイル変更</a>
 
-ここまでで、管理領域は視覚的にほぼ統一されました。スタイルについて最後にすることは、ログインページに対する作業です。いつもどおり、デフォルト CSS をオーバーライドすることで容易にカスタマイズすることができます:
+ここまでで、管理領域は視覚的にほぼ統一されました。スタイルについて最後にすることは、ログインページに対する作業です。いつもどおり、Secure モジュールからデフォルト CSS をアプリケーションにコピーすることで容易にカスタマイズすることができます:
 
-bc. play secure:ov --css
+bc. cp $PLAY_HOME/modules/secure/public/stylesheets/secure.css public/stylesheets/secure.css
 
 この CSS はこのまま維持しますが、先頭部分で @main.css@ をインポートします。単に以下の最初の一行を @yabe/public/stylesheets/secure.css@ に追加してください:
 

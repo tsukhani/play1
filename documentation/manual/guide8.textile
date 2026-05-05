@@ -4,10 +4,11 @@ Now that we have an administration area we need to plug in some authentication. 
 
 h2. <a>Enabling the Secure module</a>
 
-Enable the **Secure** module in the @yabe/conf/dependencies.yml@ file and restart the application.
+Enable the **Secure** module in the application's @build.gradle.kts@ and restart the application.
 
-bc. # Import the secure module
-    - secure
+bc. play1 {
+    modules("secure")
+}
 
 After restarting, Play should say that the module is loaded.
 
@@ -256,11 +257,11 @@ Do the same for the @Tags@, @Comments@ and @Users@ controllers. Now try to log o
 
 h2. <a>Customizing the CRUD layout</a>
 
-That’s fun but when we go to the CRUD part of the administration area, we lose the administration layout. That’s because the CRUD module provides its own layout. But we can of course override it. Use this Play command:
+That’s fun but when we go to the CRUD part of the administration area, we lose the administration layout. That’s because the CRUD module provides its own layout. But we can of course override it by copying the module's layout into our app:
 
-bc. play crud:ov --layout
+bc. cp $PLAY_HOME/modules/crud/app/views/CRUD/layout.html app/views/CRUD/layout.html
 
-And you get a new @/yabe/app/views/CRUD/layout.html@ template. Let’s replace its content to integrate it nicely with our @admin.html@ layout:
+The template loader prefers app-level files, so this new @/yabe/app/views/CRUD/layout.html@ takes effect immediately. Replace its content to integrate it nicely with our @admin.html@ layout:
 
 bc. #{extends 'admin.html' /}
 #{set 'moreStyles'}
@@ -295,9 +296,9 @@ As you can see, we reuse @crud.css@ and include it in @admin.html@ using the **g
 
 h2. <a>Styling the login page</a>
 
-The administration area is almost graphically coherent now. The last thing to style is the log-in page. As always it is easily customizable by overriding the default CSS:
+The administration area is almost graphically coherent now. The last thing to style is the log-in page. As always it is easily customizable by copying the default CSS from the secure module into the application:
 
-bc. play secure:ov --css
+bc. cp $PLAY_HOME/modules/secure/public/stylesheets/secure.css public/stylesheets/secure.css
 
 We will just keep the CSS as is, but import our @main.css@ at the top. Just add this first line to the @yabe/public/stylesheets/secure.css@:
 

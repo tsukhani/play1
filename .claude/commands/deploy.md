@@ -30,7 +30,7 @@ Run the full Play Framework release deployment:
    ```bash
    ant test
    ```
-   This is the ordered verification entrypoint defined in PF-80: `clean → jar → unittest → integration-test → cli-test`. It must report `BUILD SUCCESSFUL` before continuing.
+   This is the ordered verification entrypoint defined in PF-80: `clean → jar → unittest → integration-test`. It must report `BUILD SUCCESSFUL` before continuing.
 
    **Fail-fast.** If any test fails, stop immediately and report the failure to the user. Do NOT proceed to commit, push, tag, or release. A broken main must never become a release. The version bump from step 1 is local-only at this point and can be reverted (`/usr/bin/git checkout -- framework/build.xml`) or left for the user to decide.
 

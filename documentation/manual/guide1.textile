@@ -62,7 +62,7 @@ The @play new@ command creates a new directory @yabe/@ and populates it with a s
 
 @public/@ contains all the publicly available resources, which includes JavaScript files, stylesheets and images directories.
 
-@test/@ contains all the application tests. Tests are written either as Java JUnit tests or as Selenium tests.
+@test/@ contains all the application tests. Tests are written as Java JUnit tests.
 
 p(note). Because **Play uses UTF-8** as single encoding, it’s very important that all text files hosted in these directories are encoded using this charset. Make sure to configure your text editor accordingly.
 

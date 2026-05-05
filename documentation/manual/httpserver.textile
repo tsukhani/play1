@@ -103,7 +103,7 @@ The server's HTTP pipeline includes a content compressor configured via Netty 4.
 * *deflate* — for clients that prefer it over gzip.
 * *zstd* — opt-in. Activates when @zstd-jni@ is on the classpath; Play does not depend on it directly.
 
-Brotli's native library is bundled transitively through @netty-codec-compression@, so most apps get brotli for free without touching their @dependencies.yml@. On platforms without a native brotli binary, the compressor silently falls back to gzip — no error, no configuration needed.
+Brotli's native library is bundled transitively through @netty-codec-compression@, so most apps get brotli for free without touching their @build.gradle.kts@. On platforms without a native brotli binary, the compressor silently falls back to gzip — no error, no configuration needed.
 
 h2. <a name="operational">Operational notes</a>
 

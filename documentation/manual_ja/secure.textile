@@ -7,12 +7,11 @@ h2. <a name="setup">モジュールのセットアップ</a>
 
 h3. <a name="enable">アプリケーションで Secure モジュールを利用可能にする</a>
 
-@/conf/dependencies.yml@ ファイルの @require:@ の後に次の行を追加することで、Secure モジュールを有効にします:
+アプリケーションの @build.gradle.kts@ で Secure モジュールを有効にします:
 
-bc. require:
-    - play -> secure
-
-その後、 @play dependencies@ コマンドを実行してモジュールをアプリケーションに追加します。
+bc. play1 {
+    modules("secure")
+}
 
 
 h3. <a name="routes">デフォルトの Secure ルートの取り込み</a>
@@ -129,20 +128,18 @@ bc. #{secure.check "administrator"}
 
 このタグは認証されたユーザにのみ、そのボディをレンダリングするので、‘Delete’ リンクはユーザが @delete@ コントローラアクションの実行を許可された場合にのみ表示されます。
 
-h2. <a name="commands">コマンド</a>
+h2. <a name="commands">ログインページのカスタマイズ</a>
 
-Secure モジュールはログインページをオーバーライドするために使用する @play secure:override@ を提供しているので、アプリケーションをカスタマイズすることができます。これは、モジュールからアプリケーションにコピーされた関連するファイルが替わりに使用されることで動作します。
-
-@play secure:override@ は @play secure:ov@ と省略することができます。
+Secure モジュールには、ログインページ、そのレイアウト、付随する CSS のデフォルトテンプレートが同梱されています。いずれかをカスタマイズするには、モジュールから対応するファイルをアプリケーションにコピーしてください。テンプレートローダーはモジュールレベルのものよりもアプリケーションレベルのファイルを優先します。
 
 h3. <a name="css">CSS のオーバーライド</a>
 
-ログインページのルックアンドフィールを編集してカスタマイズできるように、CSS ファイルをアプリケーションにコピーするには、 @play secure:override --css@ コマンドを使用します。
+bc. $ cp $PLAY_HOME/modules/secure/public/stylesheets/secure.css public/stylesheets/secure.css
 
 h3. <a name="login">ログインテンプレートのオーバーライド</a>
 
-デフォルトのログインページテンプレートをオーバーライドするように、ログインページのビューテンプレートをアプリケーションにコピーするには、 @play secure:override --login@ コマンドを使用します。
+bc. $ cp $PLAY_HOME/modules/secure/app/views/Secure/login.html app/views/Secure/login.html
 
 h3. <a name="layout">メインレイアウトのオーバーライド</a>
 
-ログインページが使用するレイアウトをオーバーライドするように、メインレイアウトをコピーするには、 @play secure:override --layout@ コマンドを使用します。
+bc. $ cp $PLAY_HOME/modules/secure/app/views/Secure/layout.html app/views/Secure/layout.html

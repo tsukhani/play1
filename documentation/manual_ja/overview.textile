@@ -99,7 +99,7 @@ bc. public static void messages(int page) {
 
 h2. <a>テスト駆動開発 (お好みで) </a>
 
-組み込みのテストランナーは <a href="http://en.wikipedia.org/wiki/Test-driven_development">テスト駆動開発</a> による作業を容易にします。シンプルなユニットテストから完全な受入テストまで、あらゆる種類のテストを記述し、"Selenium":http://seleniumhq.org/ を使用してブラウザでこれらを実行することができます。コードのカバレッジ率も計測されます。
+組み込みのテストランナーは <a href="http://en.wikipedia.org/wiki/Test-driven_development">テスト駆動開発</a> による作業を容易にします。JUnit を使ったユニットテストおよびファンクショナルテストを記述し、ブラウザから直接実行することができます。コードのカバレッジ率も計測されます。
 
 !images/guide2-2!
 

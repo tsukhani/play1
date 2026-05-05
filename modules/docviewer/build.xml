@@ -36,4 +36,9 @@
         </javac>
     </target>
 
+    <!-- No-op: docviewer has no JUnit tests. The framework's `module-unittest`
+         target invokes this on every module; modules without tests just stay
+         silent here. Add a real implementation if/when docviewer grows tests. -->
+    <target name="unittest" />
+
 </project>

@@ -39,9 +39,6 @@
             <fileset dir=".">
                 <include name="play-*.jar" />
             </fileset>
-            <fileset dir="pym">
-                <include name="**/*.pyc"/>
-            </fileset>
         </delete>
         <antcall target="clean-tests"/>
     </target>
@@ -156,6 +153,17 @@
         <property name="build-release" value="${build-release}"/>
         <ant antfile="build.xml" target="build" dir="../modules/testrunner" />
         <ant antfile="build.xml" target="build" dir="../modules/docviewer" />
+    </target>
+
+    <!-- Runs each module's `unittest` target. Modules without tests have a
+         no-op `unittest` target so this can be called generically. Invoked
+         by the framework's `unittest` target after framework JUnit tests
+         have passed; new modules just need an `unittest` target in their
+         build.xml to be picked up. -->
+    <target name="module-unittest" depends="modules,compile-tests">
+        <property name="play.path" value="../.."/>
+        <ant antfile="build.xml" target="unittest" dir="../modules/testrunner" />
+        <ant antfile="build.xml" target="unittest" dir="../modules/docviewer" />
     </target>
 
     <!-- Netbeans support -->
@@ -276,32 +284,15 @@
         <fail if="integration.failure" message="Integration test(s) failed!"/>
     </target>
 
-    <target name="cli-test">
-        <exec executable="python3" failonerror="true" dir="${basedir}">
-            <arg value="-m"/>
-            <arg value="unittest"/>
-            <arg value="discover"/>
-            <arg value="-s"/>
-            <arg value="test-src/cli"/>
-            <arg value="-p"/>
-            <arg value="test_*.py"/>
-            <arg value="-v"/>
-        </exec>
-    </target>
-
     <!-- Single ordered verification entrypoint: clean build, framework JUnit
-         tests (fastest signal first), real-Netty integration tests, then the
-         python CLI tests. See PF-80. -->
-    <target name="test" depends="clean,jar" description="full verification: unit + integration + CLI tests">
+         tests (fastest signal first), then real-Netty integration tests. -->
+    <target name="test" depends="clean,jar" description="full verification: unit + integration tests">
 
         <echo message="Running unit tests" />
         <antcall target="unittest" />
 
         <echo message="Running integration tests" />
         <antcall target="integration-test" />
-
-        <echo message="Running CLI tests" />
-        <antcall target="cli-test" />
 
         <antcall target="test-success" />
     </target>
@@ -388,7 +379,7 @@
         </jar>
     </target>
 
-    <target name="unittest" depends="version,compile-tests">
+    <target name="unittest" depends="version,compile-tests,modules">
         <mkdir dir="${basedir}/tests-tmp" />
         <junitlauncher haltonfailure="false" failureproperty="junit.failure" printSummary="true">
             <classpath refid="classpath.test" />
@@ -406,6 +397,11 @@
             </classpath>
         </junitlauncher>
         <delete dir="${basedir}/tests-tmp" />
+
+        <!-- Framework tests done; now run each module's tests. Done after framework
+             tests so a module test failure doesn't skip framework feedback. -->
+        <antcall target="module-unittest" />
+
         <fail if="junit.failure" message="Unit test(s) failed. See reports!"/>
     </target>
 

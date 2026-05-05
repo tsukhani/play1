@@ -29,9 +29,9 @@ ant package                      # Create distribution ZIP
 ant resolve                      # Resolve framework/dependencies.yml via Ivy and update framework/lib/ in place. Run after editing dependencies.yml. Idempotent. -Dprune=true to delete stray jars; -Dverbose for Ivy detail (PF-62)
 ```
 
-To run functional tests on a sample app:
+To run an end-user app's tests headlessly (from the app directory):
 ```bash
-python3 play auto-test samples-and-tests/just-test-cases
+play auto-test
 ```
 
 ## Architecture
@@ -64,14 +64,14 @@ This fork runs on virtual threads exclusively. Request invocation (`Invoker`), b
 
 ### Module System
 
-Built-in modules in `modules/`: `testrunner`, `docviewer`, `crud`, `secure`. Each has its own `build.xml`, `app/`, and `conf/` directories.
+Built-in modules in `modules/`: `testrunner`, `docviewer`, `crud`, `secure`. Each has its own `build.xml`, `app/`, and `conf/` directories. Apps opt in via `play1 { modules(...) }` in their `build.gradle.kts`; the Gradle plugin extracts each declared module under `modules/<name>/` before launch.
 
 ### Testing Patterns
 
-- Framework unit tests: `framework/test-src/play/**/*Test.java` (JUnit 5)
-- Sample app tests: `samples-and-tests/*/test/` — mix of Java `FunctionalTest` subclasses and HTML-based Selenium tests
+- Framework unit tests: `framework/test-src/play/**/*Test.java` (JUnit 5) — invoked by `ant unittest`
+- Integration tests: `framework/test-src/integration/**/*Test.java` (JUnit 5) — invoked by `ant integration-test`
 - Test data via YAML fixtures loaded with `Fixtures.load("data.yml")`
 
-### CLI (`play` command)
+### Consumer build (Gradle plugin + `play` shim)
 
-Python 3 script at repo root. Commands defined in `framework/pym/play/commands/`. Key commands: `play new`, `play run`, `play test`, `play auto-test`, `play deps`.
+End-user apps use Gradle. The Play 1 plugin lives at `framework/gradle-plugin/src/main/kotlin/play/gradle/Play1Plugin.kt` and exposes `playRun`, `playStart`/`playStop`/`playRestart`, `playTest`, `playAutotest`, `playPrecompile`, `playBundle`, `playSecret`, `playEvolutions`, `playEnableHttps`/`playDisableHttps`, `playClasspath`, `playModulesInfo`, `playJavadoc`, `playStatus`, `playPid`, `playOut`, `playNewApp`, `playClean`, `playVersion`. The `/opt/play1/play` shell script is a thin wrapper that translates 1.12-era flags to Gradle wire format (`--http.port=X` → `-PhttpPort=X`, etc.) and forwards to the local `./gradlew`.

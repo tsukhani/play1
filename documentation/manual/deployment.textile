@@ -73,7 +73,7 @@ You can omit:
 * @app/@ — controllers, models, templates (now living as bytecode under @precompiled/@)
 * @test/@ — tests
 * @tmp/@ — runtime cache (recreated on boot)
-* @build.xml@, @dependencies.yml@ — build-time only
+* @build.gradle.kts@, @gradle/@, @.gradle/@ — build-time only
 
 If the host has no @logs/@ directory, the @play@ launcher creates one on first start.
 

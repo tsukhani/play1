@@ -8,12 +8,11 @@ Let’s see a simple example of using the CRUD module to manage user data.
 
 h3. <a name="enable">Enable the CRUD module for the application</a>
 
-In the @/conf/dependencies.yml@ file, enable the CRUD module by adding a line after @require:@
+In the application's @build.gradle.kts@, enable the CRUD module:
 
-bc. require:
-    - play -> crud
-
-Now run the @play dependencies@ command to resolve the new module dependency.
+bc. play1 {
+    modules("crud")
+}
 
 
 h3. <a name="routes">Import default CRUD routes</a>
@@ -137,11 +136,13 @@ The default list view uses only one column containing the result of the object�
 
 To customize this view, we need to create the @/app/views/Users/list.html@ template in the application.
 
-Open a shell, go the application directory and type:
+Open a shell, go the application directory and copy the default CRUD
+@list.html@ template into your application:
 
-bc. play crud:ov --template Users/list
+bc. cp $PLAY_HOME/modules/crud/app/views/CRUD/list.html app/views/Users/list.html
 
-This will copy the default CRUD @list.html@ template to the @Users/list.html@ template in your application, overwriting it if present.
+The template loader prefers app-level files over module-level ones, so the
+copied template is the one Play will render.
 
 Edit the template like this:
 
@@ -291,21 +292,25 @@ bc. crud.add=Create new &{%s}
 To see which message keys are used, look in the CRUD module’s own message file: @$PLAY_HOME/modules/crud/conf/messages@.
 
 
-h2. <a name="commands">Commands</a>
+h2. <a name="commands">Customizing CRUD templates</a>
 
-The CRUD module provides a *crud:override* command that you use on the command line to override the default templates. This works because the CRUD module loads templates from your application if they are present, instead of its own. You can also use @crud:ov@ instead of @crud:override@.
+The CRUD module loads templates from your application if they are present,
+falling back to its own otherwise. To customize a template, copy the
+corresponding file from the module into your application's @app/views/@.
 
-h3. play crud:override --template [path]
+h3. Override a per-type template
 
-Copies the template specified by the path, e.g. @Users/list@, to your application’s @app/views/CRUD/@ directory. You can also use @-t@ instead of @--template@.
+bc. cp $PLAY_HOME/modules/crud/app/views/CRUD/list.html app/views/Users/list.html
 
-h3. play crud:override --layout
+Replace @list.html@ / @Users@ with the template and target type you want.
 
-Overrides the main page layout template, @layout.html@.
+h3. Override the main layout
 
-h3. play crud:override --css
+bc. cp $PLAY_HOME/modules/crud/app/views/CRUD/layout.html app/views/CRUD/layout.html
 
-Overrides the style sheet, @crud.css@, copying it to your the @public/stylesheets/@ directory.
+h3. Override the CSS
+
+bc. cp $PLAY_HOME/modules/crud/public/stylesheets/play-tailwind.css public/stylesheets/play-tailwind.css
 
 
 

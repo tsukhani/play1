@@ -22,23 +22,31 @@ A modernized Play 1 fork built on top of Java 25:
 
 ## Getting started
 
-1. Install the latest version of Play framework and unzip it anywhere you want:
+Play 1.13 applications use Gradle. The bundled `play` script is a thin shell
+wrapper that translates familiar 1.12-era CLI invocations into Gradle tasks —
+you won't notice a difference at the prompt, but under the hood every command
+runs through the `play1` Gradle plugin.
+
+1. Install Java 25 (`sdk install java 25-tem` or equivalent).
+2. Install the latest version of Play framework and unzip it anywhere you want:
 ```
 unzip play-*.zip -d /opt/play
 ```
-2. Add the **play** script to your PATH:
+3. Add the **play** script to your PATH:
 ```
- export PATH=$PATH:/opt/play
+export PATH=$PATH:/opt/play
 ```
-3. Create a new Play application:
+4. Create a new Play application:
 ```
-play new /opt/myFirstApp
+cd ~/projects && play new myFirstApp
 ```
-4. Run the created application:
+   (Optional: pass `--frontend` to scaffold a Nuxt 3 frontend alongside the
+   Java app.)
+5. Run the created application:
 ```
-play run /opt/myFirstApp
+cd ~/projects/myFirstApp && play run
 ```
-5. Go to [localhost:9000/](http://localhost:9000) and you’ll see the welcome page.
+6. Go to [localhost:9000/](http://localhost:9000) and you'll see the welcome page.
 
 6. Start developing your new application:
 
@@ -208,7 +216,7 @@ Also bindable (no direct Joda equivalent):
 
 Each binder uses the type's default `parse(...)` formatter — ISO-8601 only, no localised parsing. `null` and blank inputs bind to `null`. Malformed inputs are caught by the binder pipeline and surfaced as a `validation.invalid` error on the bound parameter — they do not propagate as exceptions to your controller. If you need custom parsing, register your own binder via `play.data.binding.Binder.register(MyType.class, new MyBinder())`.
 
-The `joda-time` jar is no longer on the framework classpath. Apps that still need Joda for non-binding code paths must add it to their own `dependencies.yml`.
+The `joda-time` jar is no longer on the framework classpath. Apps that still need Joda for non-binding code paths must add it to their own `build.gradle.kts`.
 
 ## Get the source
 

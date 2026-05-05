@@ -8,12 +8,11 @@ CRUD モジュールを使ってデータを管理するシンプルな例を見
 
 h3. <a name="enable">アプリケーションで CRUD モジュールを利用可能にする</a>
 
-@/conf/dependencies.yml@ ファイルの @require:@ の後に次の行を追加することで、CRUD モジュールを有効にします:
+アプリケーションの @build.gradle.kts@ で CRUD モジュールを有効にします:
 
-bc. require:
-    - play -> crud
-
-新しいモジュールの依存性を取り込むために、ここで @play dependencies@ コマンドを実行します。
+bc. play1 {
+    modules("crud")
+}
 
 
 h3. <a name="routes">デフォルトの CRUD ルートの取り込み</a>
@@ -137,11 +136,13 @@ h3. <a name="list">User の作成とリストビューのカスタマイズ</a>
 
 このビューをカスタマイズするには、アプリケーションに @/app/views/Users/list.html@ テンプレートを作成する必要があります。
 
-シェルを開いてアプリケーションディレクトリに移動したら、以下をタイプします:
+シェルを開いてアプリケーションディレクトリに移動したら、CRUD モジュールから
+デフォルトの @list.html@ テンプレートをアプリケーションにコピーします:
 
-bc. play crud:ov --template Users/list
+bc. cp $PLAY_HOME/modules/crud/app/views/CRUD/list.html app/views/Users/list.html
 
-このコマンドは、CRUD のデフォルトの @list.html@ テンプレートを、アプリケーションの @Users/list.html@ にコピーしますが、もしこのファイルが存在すれば上書きします。
+テンプレートローダーはモジュールレベルのものよりもアプリケーションレベルの
+ファイルを優先するため、コピーされたテンプレートが Play によって描画されます。
 
 このテンプレートを以下のように編集してください:
 
@@ -291,21 +292,23 @@ bc. crud.add=Create new &{%s}
 CRUD モジュール自身のメッセージファイル: @$PLAY_HOME/modules/crud/conf/messages@ を見て、どのメッセージキーが使用されているか確認してください。
 
 
-h2. <a name="commands">コマンド</a>
+h2. <a name="commands">CRUD テンプレートのカスタマイズ</a>
 
-CRUD モジュールは、コマンドラインから使って、デフォルトのテンプレートを上書きする *crud:override* コマンドを提供します。これが機能するのは、CRUD モジュールはアプリケーションのテンプレートが存在する場合に、自身のテンプレートではなく、アプリケーションのものをロードするためです。 @crud:override@ の代わりに @crud:ov@ を使用することもできます。
+CRUD モジュールはアプリケーションのテンプレートが存在する場合にそれを優先的にロードし、なければ自身のテンプレートにフォールバックします。テンプレートをカスタマイズするには、対応するファイルをモジュールからアプリケーションの @app/views/@ にコピーしてください。
 
-h3. play crud:override --template [path]
+h3. 型ごとのテンプレートをオーバーライドする
 
-例えば @Users/list@ のようにパスで指定したテンプレートを、アプリケーションの @app/views/CRUD@ ディレクトリにコピーします。 @--template@ の代わりに @-t@ を使用することもできます。
+bc. cp $PLAY_HOME/modules/crud/app/views/CRUD/list.html app/views/Users/list.html
 
-h3. play crud:override --layout
+@list.html@ / @Users@ をオーバーライドしたいテンプレートと対象の型に置き換えてください。
 
-メインのレイアウトテンプレートである @layout.html@ を上書きします。
+h3. メインレイアウトをオーバーライドする
 
-h3. play crud:override --css
+bc. cp $PLAY_HOME/modules/crud/app/views/CRUD/layout.html app/views/CRUD/layout.html
 
-スタイルシート @crud.css@ を @public/stylesheets/@ ディレクトリにコピーして上書きします。
+h3. CSS をオーバーライドする
+
+bc. cp $PLAY_HOME/modules/crud/public/stylesheets/play-tailwind.css public/stylesheets/play-tailwind.css
 
 
 

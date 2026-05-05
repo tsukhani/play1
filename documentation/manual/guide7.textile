@@ -8,12 +8,15 @@ A Play application can be assembled from several application modules. This lets 
 
 The CRUD module is a generic application that introspects the model classes to create simple lists and forms.
 
-To enable the CRUD module, add a line in the @/conf/dependencies.yml@ file, after @require:@
+To enable the CRUD module, declare it in the application's @build.gradle.kts@:
 
-bc. require:
-    - play -> crud
+bc. play1 {
+    modules("crud")
+}
 
-Now run the @play dependencies@ command to resolve the new module dependency. If you are using IntelliJ IDEA, run `play idealize` again to refresh the project.
+The framework's bundled modules (@crud@, @secure@, @testrunner@, @docviewer@) are
+resolved from the framework distribution. Re-import the Gradle project in
+IntelliJ IDEA to refresh source roots.
 
 Then this module comes with a generic set of **routes** that we can reuse for now. To import these routes just add this line to the @/yabe/conf/routes@ file:
 
@@ -227,9 +230,11 @@ The CRUD module is made to be fully customizable. For example if you look at the
 
 In fact, as your applications keep the master, you can really override any **action** or **template** provided by the CRUD module. For example if we want to customize the ‘comments list’ view, we just have to provide another @/yabe/app/views/Comments/list.html@ template.
 
-The **CRUD** module provides more Play commands when it’s enabled. The @crud:ov@ command helps you override any template. From a command line, type:
+To override a CRUD template, copy the corresponding file from the CRUD module
+into your application's @app/views/@. The template loader prefers app-level
+files over module-level ones, so this is enough — no rewiring required.
 
-bc. $ play crud:ov --template Comments/list
+bc. $ cp $PLAY_HOME/modules/crud/app/views/CRUD/list.html app/views/Comments/list.html
 
 Now you have a new template at @/yabe/app/views/Comments/list.html@:
 
@@ -285,7 +290,7 @@ h2. <a>Customizing the ‘Post’ form</a>
 
 We can customize the generated forms as well. For example, the way we enter tags in the Post form is not really easy. We could build something better. Let’s override the @Posts/show@ template:
 
-bc. $ play crud:ov --template Posts/show
+bc. $ cp $PLAY_HOME/modules/crud/app/views/CRUD/show.html app/views/Posts/show.html
 
 Now you have a new template at @/yabe/app/views/Posts/show.html@:
 

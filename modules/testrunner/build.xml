@@ -35,4 +35,9 @@
         <delete dir="tmp" />
     </target>
 
+    <!-- No-op: testrunner has no framework-run JUnit tests. The framework's
+         `module-unittest` target invokes this on every module; modules without
+         tests just stay silent here. -->
+    <target name="unittest" />
+
 </project>

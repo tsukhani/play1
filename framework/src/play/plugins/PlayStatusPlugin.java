@@ -1,76 +1,33 @@
 package play.plugins;
 
+import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
-import com.google.gson.JsonPrimitive;
-import com.jamonapi.Monitor;
-import com.jamonapi.MonitorFactory;
-import com.jamonapi.utils.Misc;
-import org.apache.commons.lang3.StringUtils;
-import play.Invoker;
 import play.Logger;
 import play.Play;
 import play.Play.Mode;
 import play.PlayPlugin;
-import play.mvc.Http.Header;
 import play.mvc.Http.Request;
 import play.mvc.Http.Response;
+import play.server.Server;
+import play.vfs.VirtualFile;
 
-import java.io.PrintWriter;
-import java.io.StringWriter;
-import java.text.SimpleDateFormat;
-import java.util.*;
+import java.util.Map;
 
-import static java.util.Arrays.asList;
-
+/**
+ * Serves /@status — an unauthenticated JSON snapshot of the running app's
+ * basic JVM state, loaded modules, and loaded plugins. Designed for liveness
+ * checks (`play status` polls this) and ad-hoc inspection; deeper observability
+ * (request latencies, GC, HikariCP pool, custom counters) lives at
+ * /@metrics in Prometheus exposition.
+ *
+ * <p>No auth: same posture as /@metrics, /@kill, and /@tests. Operators are
+ * expected to firewall /@* off public ingress. The historical
+ * application.statusKey check was removed when /@status stopped exposing
+ * thread dumps and per-plugin debug data.</p>
+ */
 public class PlayStatusPlugin extends PlayPlugin {
 
-    /**
-     * Get the application status
-     * 
-     * @param json
-     *            true if the status should be return in JSON
-     * @return application status
-     */
-    public String computeApplicationStatus(boolean json) {
-        if (json) {
-            JsonObject o = new JsonObject();
-            for (PlayPlugin plugin : Play.pluginCollection.getEnabledPlugins()) {
-                try {
-                    JsonObject status = plugin.getJsonStatus();
-                    if (status != null) {
-                        o.add(plugin.getClass().getName(), status);
-                    }
-                } catch (Throwable e) {
-                    JsonObject error = new JsonObject();
-                    error.add("error", new JsonPrimitive(e.getMessage()));
-                    o.add(plugin.getClass().getName(), error);
-                }
-            }
-            return o.toString();
-        }
-        StringBuilder dump = new StringBuilder(16);
-        for (PlayPlugin plugin : Play.pluginCollection.getEnabledPlugins()) {
-            try {
-                String status = plugin.getStatus();
-                if (status != null) {
-                    dump.append(status);
-                    dump.append("\n");
-                }
-            } catch (Throwable e) {
-                dump.append(plugin.getClass().getName()).append(".getStatus() has failed (").append(e.getMessage()).append(")");
-            }
-        }
-        return dump.toString();
-    }
-
-    /**
-     * Intercept /@status and check that the Authorization header is valid. Then ask each plugin for a status dump and
-     * send it over the HTTP response.
-     *
-     * You can ask the /@status using the authorization header and putting your status secret key in it. Prior to that
-     * you would be required to start play with a -DstatusKey=yourkey
-     */
     @Override
     public boolean rawInvocation(Request request, Response response) throws Exception {
         if (Play.mode == Mode.DEV && request.path.equals("/@kill")) {
@@ -81,204 +38,92 @@ public class PlayStatusPlugin extends PlayPlugin {
                 Logger.error("Cannot execute @kill since Play is not running as standalone server");
             }
         }
-        if (request.path.equals("/@status") || request.path.equals("/@status.json")) {
+        if (request.path.equals("/@status")) {
+            response.contentType = "application/json";
             if (!Play.started) {
-                response.print("Application is not started");
                 response.status = 503;
+                response.print("{\"error\":\"Application is not started\"}");
                 return true;
             }
-            response.contentType = request.path.contains(".json") ? "application/json" : "text/plain";
-            Header authorization = request.headers.get("authorization");
-            String statusKey = Play.configuration.getProperty("application.statusKey", System.getProperty("statusKey"));
-            if (authorization != null && statusKey != null && statusKey.equals(authorization.value())) {
-                response.print(computeApplicationStatus(request.path.contains(".json")));
-                response.status = 200;
-                return true;
-            }
-            response.status = 401;
-            if (response.contentType.equals("application/json")) {
-                response.print("{\"error\": \"Not authorized\"}");
-            } else {
-                response.print("Not authorized");
-            }
+            response.status = 200;
+            response.print(computeApplicationStatus());
             return true;
         }
         return super.rawInvocation(request, response);
     }
 
     /**
-     * Retrieve status about play core.
+     * Pretty-printed JSON describing the running app. Pretty by default because
+     * /@status is a human-facing endpoint scraped at human cadence (manual or
+     * CLI); the few hundred extra bytes don't matter and the readability does.
+     * Use /@metrics if you need a machine-friendly stream.
      */
-    @Override
-    public String getStatus() {
-        StringWriter sw = new StringWriter();
-        PrintWriter out = new PrintWriter(sw);
-        out.println("Java:");
-        out.println("~~~~~");
-        out.println("Version: " + System.getProperty("java.version"));
-        out.println("Home: " + System.getProperty("java.home"));
-        out.println("Max memory: " + Runtime.getRuntime().maxMemory());
-        out.println("Free memory: " + Runtime.getRuntime().freeMemory());
-        out.println("Total memory: " + Runtime.getRuntime().totalMemory());
-        out.println("Available processors: " + Runtime.getRuntime().availableProcessors());
-        out.println();
-        out.println("Play framework:");
-        out.println("~~~~~~~~~~~~~~~");
-        out.println("Version: " + Play.version);
-        out.println("Path: " + Play.frameworkPath);
-        out.println("ID: " + (StringUtils.isEmpty(Play.id) ? "(not set)" : Play.id));
-        out.println("Mode: " + Play.mode);
-        out.println("Tmp dir: " + (Play.tmpDir == null ? "(no tmp dir)" : Play.tmpDir));
-        out.println();
-        out.println("Application:");
-        out.println("~~~~~~~~~~~~");
-        out.println("Path: " + Play.applicationPath);
-        out.println("Name: " + Play.configuration.getProperty("application.name", "(not set)"));
-        out.println("Started at: "
-                + (Play.started ? new SimpleDateFormat("MM/dd/yyyy HH:mm").format(new Date(Play.startedAt)) : "Not yet started"));
-        out.println();
-        out.println("Loaded modules:");
-        out.println("~~~~~~~~~~~~~~");
-        for (String module : Play.modules.keySet()) {
-            out.println(module + " at " + Play.modules.get(module).getRealFile());
+    public String computeApplicationStatus() {
+        JsonObject root = new JsonObject();
+
+        JsonObject java = new JsonObject();
+        java.addProperty("version", System.getProperty("java.version"));
+        java.addProperty("vendor", System.getProperty("java.vendor"));
+        java.addProperty("availableProcessors", Runtime.getRuntime().availableProcessors());
+        Runtime rt = Runtime.getRuntime();
+        JsonObject memory = new JsonObject();
+        memory.addProperty("max", humanReadableBytes(rt.maxMemory()));
+        memory.addProperty("total", humanReadableBytes(rt.totalMemory()));
+        memory.addProperty("free", humanReadableBytes(rt.freeMemory()));
+        memory.addProperty("used", humanReadableBytes(rt.totalMemory() - rt.freeMemory()));
+        java.add("memory", memory);
+        root.add("java", java);
+
+        JsonObject framework = new JsonObject();
+        framework.addProperty("version", Play.version);
+        framework.addProperty("mode", Play.mode.name());
+        framework.addProperty("id", Play.id == null ? "" : Play.id);
+        root.add("framework", framework);
+
+        JsonObject application = new JsonObject();
+        application.addProperty("name", Play.configuration.getProperty("application.name", ""));
+        application.addProperty("path", Play.applicationPath.getAbsolutePath());
+        application.addProperty("startedAt", Play.startedAt);
+        application.addProperty("uptimeMs", System.currentTimeMillis() - Play.startedAt);
+        root.add("application", application);
+
+        JsonObject server = new JsonObject();
+        server.addProperty("httpPort", Server.httpPort);
+        server.addProperty("httpsPort", Server.httpsPort);
+        root.add("server", server);
+
+        JsonArray modules = new JsonArray();
+        for (Map.Entry<String, VirtualFile> entry : Play.modules.entrySet()) {
+            JsonObject m = new JsonObject();
+            m.addProperty("name", entry.getKey());
+            m.addProperty("path", entry.getValue().getRealFile().getAbsolutePath());
+            modules.add(m);
         }
-        out.println();
-        out.println("Loaded plugins:");
-        out.println("~~~~~~~~~~~~~~");
+        root.add("modules", modules);
+
+        JsonArray plugins = new JsonArray();
         for (PlayPlugin plugin : Play.pluginCollection.getAllPlugins()) {
-            out.println(plugin.index + ":" + plugin.getClass().getName() + " ["
-                    + (Play.pluginCollection.isEnabled(plugin) ? "enabled" : "disabled") + "]");
+            JsonObject p = new JsonObject();
+            p.addProperty("index", plugin.index);
+            p.addProperty("class", plugin.getClass().getName());
+            p.addProperty("enabled", Play.pluginCollection.isEnabled(plugin));
+            plugins.add(p);
         }
-        out.println();
-        out.println("Threads:");
-        out.println("~~~~~~~~");
-        try {
-            visit(out, getRootThread(), 0);
-        } catch (Throwable e) {
-            out.println("Oops; " + e.getMessage());
-        }
-        out.println();
-        out.println("Requests execution pool:");
-        out.println("~~~~~~~~~~~~~~~~~~~~~~~~");
-        out.println("Mode: virtual threads");
-        out.println("Inflight invocations: " + Invoker.inflightInvocations.get());
-        out.println("Total invocations:    " + Invoker.totalInvocations.get());
-        out.println();
-        try {
-            out.println("Monitors:");
-            out.println("~~~~~~~~");
-            List<Monitor> monitors = new ArrayList<>(asList(MonitorFactory.getRootMonitor().getMonitors()));
-            monitors.sort((m1, m2) -> Double.compare(m2.getTotal(), m1.getTotal()));
-            int lm = 10;
-            for (Monitor monitor : monitors) {
-                if (monitor.getLabel().length() > lm) {
-                    lm = monitor.getLabel().length();
-                }
-            }
-            for (Monitor monitor : monitors) {
-                if (monitor.getHits() > 0) {
-                    out.println(String.format("%-" + lm + "s -> %8.0f hits; %8.1f avg; %8.1f min; %8.1f max;", monitor.getLabel(),
-                            monitor.getHits(), monitor.getAvg(), monitor.getMin(), monitor.getMax()));
-                }
-            }
-        } catch (Exception e) {
-            out.println("No monitors found: " + e);
-        }
-        return sw.toString();
-    }
+        root.add("plugins", plugins);
 
-    @Override
-    public JsonObject getJsonStatus() {
-        JsonObject status = new JsonObject();
-
-        {
-            JsonObject java = new JsonObject();
-            java.addProperty("version", System.getProperty("java.version"));
-            status.add("java", java);
-        }
-
-        {
-            JsonObject memory = new JsonObject();
-            memory.addProperty("max", Runtime.getRuntime().maxMemory());
-            memory.addProperty("free", Runtime.getRuntime().freeMemory());
-            memory.addProperty("total", Runtime.getRuntime().totalMemory());
-            status.add("memory", memory);
-        }
-
-        {
-            JsonObject application = new JsonObject();
-            application.addProperty("uptime", Play.started ? System.currentTimeMillis() - Play.startedAt : -1);
-            application.addProperty("path", Play.applicationPath.getAbsolutePath());
-            status.add("application", application);
-        }
-
-        {
-            JsonObject pool = new JsonObject();
-            pool.addProperty("mode", "virtual-threads");
-            pool.addProperty("inflight", Invoker.inflightInvocations.get());
-            pool.addProperty("total", Invoker.totalInvocations.get());
-            status.add("pool", pool);
-        }
-
-        {
-            JsonArray monitors = new JsonArray();
-            try {
-                Object[][] data = Misc.sort(MonitorFactory.getRootMonitor().getBasicData(), 3, "desc");
-                for (Object[] row : data) {
-                    if (((Double) row[1]) > 0) {
-                        JsonObject o = new JsonObject();
-                        o.addProperty("name", row[0].toString());
-                        o.addProperty("hits", (Double) row[1]);
-                        o.addProperty("avg", (Double) row[2]);
-                        o.addProperty("min", (Double) row[6]);
-                        o.addProperty("max", (Double) row[7]);
-                        monitors.add(o);
-                    }
-                }
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-            status.add("monitors", monitors);
-        }
-
-        return status;
+        return new GsonBuilder().setPrettyPrinting().create().toJson(root);
     }
 
     /**
-     * Recursively visit all JVM threads
+     * Format a byte count using binary (1024-based) units with one decimal,
+     * e.g. {@code 95593848 -> "91.2 MB"}, {@code 1024 -> "1.0 KB"}, {@code 5 -> "5 B"}.
+     * Common-use convention: KB/MB/GB labels with 1024 base (not strict SI's 1000-base
+     * KB / 1024-base KiB distinction).
      */
-    private void visit(PrintWriter out, ThreadGroup group, int level) {
-        // Get threads in `group'
-        int numThreads = group.activeCount();
-        Thread[] threads = new Thread[numThreads * 2];
-        numThreads = group.enumerate(threads, false);
-
-        // Enumerate each thread in `group'
-        for (int i = 0; i < numThreads; i++) {
-            // Get thread
-            Thread thread = threads[i];
-            out.println(thread + " " + thread.getState());
-        }
-
-        // Get thread subgroups of `group'
-        int numGroups = group.activeGroupCount();
-        ThreadGroup[] groups = new ThreadGroup[numGroups * 2];
-        numGroups = group.enumerate(groups, false);
-
-        // Recursively visit each subgroup
-        for (int i = 0; i < numGroups; i++) {
-            visit(out, groups[i], level + 1);
-        }
-    }
-
-    /**
-     * Retrieve the JVM root thread group.
-     */
-    private ThreadGroup getRootThread() {
-        ThreadGroup root = Thread.currentThread().getThreadGroup().getParent();
-        while (root.getParent() != null) {
-            root = root.getParent();
-        }
-        return root;
+    private static String humanReadableBytes(long bytes) {
+        if (bytes < 1024L) return bytes + " B";
+        int exp = (int) (Math.log(bytes) / Math.log(1024));
+        String unit = "KMGTPE".charAt(exp - 1) + "B";
+        return String.format("%.1f %s", bytes / Math.pow(1024, exp), unit);
     }
 }

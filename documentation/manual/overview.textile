@@ -99,7 +99,7 @@ bc. public static void messages(int page) {
 
 h2. <a>Test driven development (if you like it)</a>
 
-The integrated test runner makes it easy for you do <a href="http://en.wikipedia.org/wiki/Test-driven_development">test-driven development</a>. You can write all kinds of tests, from simple unit tests to full acceptance tests, and run them directly in a browser using "Selenium":http://seleniumhq.org/. Code coverage is also measured.
+The integrated test runner makes it easy for you do <a href="http://en.wikipedia.org/wiki/Test-driven_development">test-driven development</a>. You can write unit tests and functional tests with JUnit and run them directly from your browser. Code coverage is also measured.
 
 !images/guide2-2!
 

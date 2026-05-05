@@ -7,37 +7,13 @@ Play と共に作業することは簡単です。Play が自動的にソース�
 
 h2(#intellij). <a>IntelliJ IDEA</a>
 
-Play は IntelliJ IDEA の設定を簡易化するコマンドを提供しています。既存のアプリケーションを妥当な IntelliJ IDEA モジュールに変換するには、 @idealize@ コマンドを使用してください:
+アプリケーションの @build.gradle.kts@ をプロジェクトとして開きます。IntelliJ の Gradle インポートが @app/@、@conf/@、@test/@、および各 @modules/*/app/@ を自動的にソースルートとして認識します。@idealize@ ステップは不要です。
 
-bc. # play idealize myApp
+# コマンドラインから @play new myApp@ を実行して新しいアプリケーションを作成する。
+# IntelliJ IDEA で *File → Open* を選択し、生成された @build.gradle.kts@ を指定する。
+# Gradle インポートダイアログを承認する。Play 1 プラグインが Java 25 ツールチェーンを固定します。
 
-単一モジュールプロジェクトを作成する場合は、IntelliJ IDEA にて以下を実行してください。
-
-# コマンドラインから @play new@ コマンドを使って Play プロジェクトを作成する。
-# コマンドラインから @play idealize@ コマンドを使って IntelliJ IDEA モジュールを作成する。
-# IntelliJ IDEA の *File* メニューから *Open Project…* を選択して、生成された @.ipr@ ファイルを選択する。
-
-!images/intellij!
-
-実行設定を追加するには:
-
-# IntelliJ IDEA の *Run* メニューから *Edit Configurations* を選択する。
-# *Defaults* 内の *Application* で右クリックし、 *Add New Configuration* を選択する。
-# *Main class* 内に @play.server.Server@ を入力する。
-# *VM parameters* 内に @-Dapplication.path="."@ を入力する。
-# *Working directory* 内にアプリケーションパスを入力する。
-
-IntelliJ において Play をテストモードで実行するには:
-
-# 実行設定を編集し、 *VM parameters* に *-Dplay.id=test* を追加する。
-# モジュールを右クリックして *Open Module Settings* を選択する。
-# *Dependencies* タブを選択する。
-# *Add…* をクリックして *Single-Entry Module Library* を選択する。
-# @$PLAY_HOME/modules/testrunner/lib/play-testrunner.jar@ を選択して *OK* をクリックする。
-
-p(note). **チームで作業しているときは .iml ファイルをコミットしないこと!**
- 
-生成した設定ファイルにはフレームワークをインストールした場所への絶対参照が含まれています。これはあなた自身のインストール作業に特化したものです。チームで作業するときは、それぞれの開発者は自分の IntelliJ IDEA 設定ファイルを個人で管理しなければなりません。
+IntelliJ からアプリケーションを実行するには、Gradle ツールウィンドウで @play1 → playRun@ タスクをダブルクリックします。同じパネルで @playTest@、@playAutotest@、@playPrecompile@ など @play1@ タスクグループのすべてのタスクを利用できます。
 
 
 h2(#textmate). <a>Textmate</a>

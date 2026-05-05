@@ -62,8 +62,7 @@ Build / test / package:
   precompile           Precompile sources and templates for production
   test                 Run the application's tests interactively
   auto-test            Run all tests headlessly and exit
-  dist                 Build a distributable archive
-  bundle               Build a self-contained deployment zip
+  bundle               Build a self-contained deployment zip (alias: dist)
 
 Project setup:
   new <name>           Scaffold a new application in <cwd>/<name>
@@ -186,6 +185,11 @@ forward_args() {
         esac
     done
     [ -n "$JVM_ARGS" ] && printf '%s\n' "-PjvmArgs=$JVM_ARGS"
+    # Always return 0 — the trailing `&&` above sets $? to 1 when JVM_ARGS is
+    # empty, and with `set -e` that propagates out through `TRANSLATED=$(...)`
+    # and kills the wrapper before exec'ing Gradle. Empty-JVM_ARGS is the
+    # common case; this is not an error.
+    return 0
 }
 
 # --- Strip --silent from args (controls banner only; never reaches Gradle) -
@@ -211,6 +215,18 @@ CMD="${1:-help}"
 case "$CMD" in
     help|--help|-h|"")
         print_usage
+        exit 0
+        ;;
+    version)
+        # Handle directly so `play version` works from any cwd, including
+        # locations without a Gradle wrapper. The banner already reads this
+        # file; print the bare version too for scripting (parse with cut).
+        if [ -f "$PLAY_HOME/framework/src/play/version" ]; then
+            cat "$PLAY_HOME/framework/src/play/version"
+        else
+            echo "play: framework version file not found at $PLAY_HOME/framework/src/play/version" >&2
+            exit 1
+        fi
         exit 0
         ;;
     new)

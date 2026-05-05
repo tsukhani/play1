@@ -41,7 +41,7 @@ bc. ~$ play new helloworld
 
 @public/@ は JavaScript、スタイルシート、および画像ディレクトリを含む公的に利用可能なリソースを保存します。
 
-@test/@ には、すべてのアプリケーションテストを保存します。テストは Java の JUnit として書かれるか、または Selenium テストとして書かれます。
+@test/@ には、すべてのアプリケーションテストを保存します。テストは Java の JUnit として書かれます。
 
 p(note). **Play は UTF-8** を唯一のエンコーディングとして使用するので、これらのディレクトリでホスティングされたすべてのテキストファイルが UTF-8 でエンコードされていることは非常に重要です。テキストエディタの設定がこれに従っていることを確認してください。
 
@@ -258,70 +258,6 @@ bc. #{extends 'main.html' /}
 これが動作する事を確認します:
 
 !images/firstapp-6!
-
-h2. <a>自動化されたテストスイートの作成</a>
-
-このアプリケーションのためのいくつかのテストを書いて、このチュートリアルを終えましょう。今はテストすべき Java のロジックが無いので、Web アプリケーションそのものをテストする必要があります。そこで、Selenium テストを書いていきましょう。
-
-まず最初に、アプリケーションを **test モード** で実行する必要があります。アプリケーションを停止し、 @test@ コマンドで再起動してください:
-
-bc. $ play test
-
-@play test@ コマンドは、ブラウザから直接テストスイートを実行することのできるテストランナーモジュールをロードすること以外は @play run@ とほとんど同じです。
-
-URL "http://localhost:9000/@tests":http://localhost:9000/@tests をブラウザで開き、テストランナーを見てみてください。デフォルトのテストをすべて選択して実行してみてください。すべてのテストはグリーンであるべきですが、実際のところ、これらのデフォルトのテストは何もテストしません。
-
-!images/guide2-1!
-
-通常、selenium のテストスイートは HTML ファイルとして記述されます。selenium が必要とする HTML の構文は (HTML のテーブル要素を使うようフォーマットされており) 少々退屈です。Play のテンプレートエンジンと selenium シナリオの構文を簡易にするタグのセットを使うことで、Play がこれを手助けしてくれるのは良いニュースです。
-
-新しく作成された Play アプリケーションのデフォルトのテストスイートには selenium テストが含まれています。 @helloworld/test/Application.test.html@ ファイルを開いてください:
-
-bc. *{ You can use plain selenium command using the selenium tag }*
- 
-#{selenium}
-    // Open the home page, and check that no error occurred
-    open('/')
-    assertNotTitle('Application error')
-#{/selenium}
-
-現時点でこのテストは何も問題なく実行されるはずです。このテストは、ホームページを開いて、このページが 'Application error' というテキストを含んでいないことを確認するだけです。
-
-アプリケーションのためのテストを書きましょう。テストの内容を編集してください:
-
-bc. #{selenium}
-    // Open the home page, and check that no error occurred
-    open('/')
-    assertNotTitle('Application error')
-    
-    // Check that it is the Hello World application
-    assertTextPresent('The Hello world app.')
-    
-    // Submit the form
-    clickAndWait('css=input[type=submit]')
-    
-    // Check the error
-    assertTextPresent('Oops, please enter your name!')
-    
-    // Type the name and submit
-    type('css=input[type=text]', 'bob')
-    clickAndWait('css=input[type=submit]')
-    
-    // Check the result
-    assertTextPresent('Hello bob!')
-    assertTextPresent('The Hello world app.')
-    
-    // Check the back link
-    clickAndWait('link=Back to form')
-    
-    // Home page?
-    assertTextNotPresent('Hello bob!')
-#{/selenium}
-
-これでこのアプリケーションを完全にテストできました。テストランナーでこのテストを選択して 'Start' をクリックしてください。すべてがグリーンになるはずです!
-
-!images/firstapp-7!
-
 
 h2. <a>さらに詳しく</a>
 

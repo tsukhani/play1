@@ -7,38 +7,17 @@ However, using a modern Java IDE provides cool productivity features like auto-c
 
 h2(#intellij). <a>IntelliJ IDEA</a>
 
-Play provides a command to simplify IntelliJ IDEA configuration. To transform an existing application to a valid IntelliJ IDEA module, use the @idealize@ command:
+Open the application's @build.gradle.kts@ as a project. IntelliJ's Gradle import
+indexes @app/@, @conf/@, @test/@, and each @modules/*/app/@ as source roots
+automatically — there is no @idealize@ step.
 
-bc. # play idealize myApp
+# On the command line, run @play new myApp@ to scaffold a new application.
+# In IntelliJ IDEA, *File → Open* and select the generated @build.gradle.kts@.
+# Confirm the Gradle import dialog. The Play 1 plugin pins a Java 25 toolchain.
 
-To create a single module project, do the following in IntelliJ IDEA.
-
-# On the command line, use the @play new@ command to create the Play project.
-# On the command line, use the @play idealize@ command to create an IntelliJ IDEA module.
-# In IntelliJ IDEA, on the *File* menu, select *Open Project…* and select the generated @.ipr@ file.
-
-!images/intellij!
-
-To add a run configuration:
-
-# In IntelliJ IDEA, on the *Run* menu, select *Edit Configurations*.
-# Right-click on *Application* under *Defaults* and select *Add New Configuration*.
-# Under *Main class*, enter @play.server.Server@.
-# Under *VM parameters*, enter @-Dapplication.path="."@.
-# Under *Working directory*, enter the application path.
-# Under *Before launch*, remove @Make@ if exists.
-
-To run Play in test mode in IntelliJ:
-
-# Edit the run configuration and in *VM parameters*, append *-Dplay.id=test*.
-# Right-click on your module and select *Open Module Settings*.
-# Select the *Dependencies* tab.
-# Click *Add…* and select *Single-Entry Module Library*.
-# Select @$PLAY_HOME/modules/testrunner/lib/play-testrunner.jar@ and click *OK*.
-
-p(note). **Do not commit the .iml files when you work in a team!**
- 
-The generated configuration files contains absolute references to your framework installation. These are specific to your own installation. When you work in a team on the same application, each developer must keep his IntelliJ IDEA configuration files private.
+To run the app from IntelliJ, use the Gradle tool window and double-click the
+@play1 → playRun@ task. The same panel exposes @playTest@, @playAutotest@,
+@playPrecompile@, and the rest of the @play1@ task group.
 
 
 h2(#textmate). <a>Textmate</a>

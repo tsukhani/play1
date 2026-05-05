@@ -11,6 +11,7 @@ import org.gradle.api.file.FileSystemOperations
 import org.gradle.api.file.FileCollection
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.plugins.JavaPluginExtension
+import org.gradle.jvm.toolchain.JavaLanguageVersion
 import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Delete
@@ -313,17 +314,27 @@ class Play1Plugin : Plugin<Project> {
 
         project.tasks.register<PlayStatusTask>("playStatus") {
             group = "play1"
-            description = "Display the running application's status. Optional: -Purl=<url>, -Psecret=<key>, -Ppid-file=<name>"
+            description = "Report whether the application is running and dump /@status JSON if reachable. Optional: -Ppid-file=<name>, -PhttpPort=<port>"
             applicationPath.set(project.layout.projectDirectory)
-            urlOverride.set(project.providers.gradleProperty("url").orElse(""))
-            secretOverride.set(project.providers.gradleProperty("secret").orElse(""))
             pidFileOverride.set(project.providers.gradleProperty("pid-file").orElse(""))
+            httpPort.set(project.providers.gradleProperty("httpPort").map { it.toInt() })
             outputs.upToDateWhen { false }
         }
     }
 
     private fun configureSourceSets(project: Project, ext: Play1Extension) {
         val javaExt = project.extensions.getByType<JavaPluginExtension>()
+        // Pin a Java 25 toolchain. The framework jar is built with Java 25
+        // (class file 69), so apps must compile with a JDK that can read
+        // class 69 bytecode (-> JDK 25+). Without this, environments that
+        // resolve `java` to an older JDK (jenv shims, asdf, system Java)
+        // produce "class file has wrong version 69.0, should be 65.0"
+        // while reading play.mvc.Controller. Gradle auto-detects installed
+        // JDKs (~/.gradle/jdks, /Library/Java/JavaVirtualMachines, etc.);
+        // if no Java 25 is available, set
+        // org.gradle.java.installations.auto-download=true in
+        // ~/.gradle/gradle.properties to let Gradle fetch one.
+        javaExt.toolchain.languageVersion.set(JavaLanguageVersion.of(25))
         val frameworkClasspath = project.files(
             ext.frameworkPath.file(ext.frameworkVersion.map { "framework/play-$it.jar" }),
             project.provider {
@@ -422,8 +433,20 @@ class Play1Plugin : Plugin<Project> {
                 extra.split(Regex("\\s+")).filter { it.isNotEmpty() }.forEach { jvmArgs(it) }
             }
 
-            loadDotEnv(File(project.projectDir, "certs/.env")).forEach { (k, v) ->
+            val dotenv = loadDotEnv(File(project.projectDir, "certs/.env"))
+            dotenv.forEach { (k, v) ->
                 environment(k, v)
+            }
+            // Hermetic test runs (playTest, playPrecompile, playAutotest) — if
+            // certs/.env and the host env both lack the application.secret env
+            // var, synthesize an ephemeral one so `play auto-test` works on a
+            // fresh checkout without first running `play secret`. The framework
+            // rejects literal secrets and demands a `${VAR}` placeholder.
+            if (isTestMode) {
+                ensureTestSecret(project.projectDir, dotenv)?.let { (varName, secret) ->
+                    environment(varName, secret)
+                    logger.lifecycle("~ Generated ephemeral $varName for this test run")
+                }
             }
 
             // Only pass --http.port when -PhttpPort was supplied; otherwise let
@@ -558,14 +581,30 @@ abstract class PlayAutotestTask : DefaultTask() {
     fun runAutotest() {
         val appDir = applicationPath.get().asFile
         val fwPath = frameworkPath.get().asFile
-        // Fall back to conf/application.conf's http.port when DSL/-P didn't set it.
-        // Both Play and FirePhoque need to agree on the port; without an explicit
-        // override, conf is the source of truth.
+
+        // Parity with the legacy `app.check()` — surface a clear error before we
+        // start spawning JVMs. Without this, missing conf/routes manifests as a
+        // cryptic NPE deep in Play.bootstrap.
+        val routesFile = File(appDir, "conf/routes")
         val confFile = File(appDir, "conf/application.conf")
-        val confText = if (confFile.isFile) confFile.readText() else ""
+        if (!routesFile.isFile || !confFile.isFile) {
+            throw GradleException(
+                "~ Oops. conf/routes or conf/application.conf missing.\n" +
+                "~ ${appDir.absolutePath} does not seem to host a valid application."
+            )
+        }
+
+        val confText = confFile.readText()
+        // Resolve conf values with %test prefix priority — playAutotest always
+        // runs with play.id=test, so %test.<key> overrides <key>. Without this,
+        // FirePhoque would connect to the top-level http.port while the
+        // framework actually bound to %test.http.port (or vice versa).
         val port = httpPort.orNull
-            ?: activeValue(confText, "http.port")?.toIntOrNull()
+            ?: confValue(confText, "http.port", "test")?.toIntOrNull()
             ?: 9000
+        val headlessBrowser = confValue(confText, "headlessBrowser", "test").orEmpty()
+        val effectiveTimeout = webclientTimeout.orNull
+            ?: confValue(confText, "webclient.timeout", "test")
         val version = frameworkVersion.get()
 
         killExistingInstance(port, timeoutMs = 200)
@@ -578,7 +617,7 @@ abstract class PlayAutotestTask : DefaultTask() {
             if (runUnit.getOrElse(false)) add("-DrunUnitTests")
             if (runFunctional.getOrElse(false)) add("-DrunFunctionalTests")
             if (runSelenium.getOrElse(false)) add("-DrunSeleniumTests")
-            webclientTimeout.orNull?.let { add("-DwebclientTimeout=$it") }
+            effectiveTimeout?.let { add("-DwebclientTimeout=$it") }
         }
 
         val logsDir = File(appDir, "logs").apply { mkdirs() }
@@ -605,8 +644,13 @@ abstract class PlayAutotestTask : DefaultTask() {
             .directory(appDir)
             .redirectOutput(systemOut)
             .redirectErrorStream(true)
-        loadDotEnv(File(appDir, "certs/.env")).forEach { (k, v) ->
+        val dotenv = loadDotEnv(File(appDir, "certs/.env"))
+        dotenv.forEach { (k, v) ->
             playPb.environment().putIfAbsent(k, v)
+        }
+        ensureTestSecret(appDir, dotenv)?.let { (varName, secret) ->
+            playPb.environment().putIfAbsent(varName, secret)
+            logger.lifecycle("~ Generated ephemeral $varName for this test run")
         }
         val playProcess = playPb.start()
 
@@ -631,7 +675,7 @@ abstract class PlayAutotestTask : DefaultTask() {
                 add("-classpath")
                 add(fpCp.joinToString(File.pathSeparator))
                 add("-Dapplication.url=http://localhost:$port")
-                add("-DheadlessBrowser=")
+                add("-DheadlessBrowser=$headlessBrowser")
                 add("play.modules.testrunner.FirePhoque")
             }
 
@@ -717,17 +761,6 @@ abstract class PlaySecretTask : DefaultTask() {
         logger.lifecycle("~ Keep this value secret and consistent across all instances of your app.")
     }
 
-    private fun readSecretVarName(appConf: File): String {
-        if (!appConf.isFile) return "PLAY_SECRET"
-        val pattern = Regex("""^\s*application\.secret\s*=\s*\$\{([^}:]+)\}\s*$""")
-        appConf.readLines().forEach { line ->
-            val stripped = line.trimStart()
-            if (stripped.startsWith("#") || stripped.startsWith("!")) return@forEach
-            pattern.matchEntire(line.trimEnd())?.let { return it.groupValues[1] }
-        }
-        return "PLAY_SECRET"
-    }
-
     private fun writeEnvVar(envFile: File, varName: String, value: String) {
         val newLine = "$varName=$value"
         if (!envFile.exists()) {
@@ -761,13 +794,6 @@ abstract class PlaySecretTask : DefaultTask() {
         })
     }
 
-    private fun generateSecret(): String {
-        val alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-        val rng = SecureRandom()
-        return buildString(64) {
-            repeat(64) { append(alphabet[rng.nextInt(alphabet.length)]) }
-        }
-    }
 }
 
 abstract class PlayEnableHttpsTask : DefaultTask() {
@@ -974,6 +1000,54 @@ private fun activeValue(config: String, key: String): String? {
     return m?.groupValues?.get(1)?.trim()
 }
 
+// %playId-aware lookup. Mirrors how Play 1's ConfigurationParser resolves
+// `%test.<key>` to override `<key>` when play.id=test. Plain activeValue() is
+// not prefix-aware, which is correct for the cert/HTTPS plumbing — but tasks
+// that run with a hardcoded playId (playAutotest, playTest) must honor the
+// %prefix or they'll disagree with the framework about which port/setting is
+// active.
+private fun confValue(config: String, key: String, playId: String): String? {
+    if (playId.isNotEmpty()) {
+        activeValue(config, "%$playId.$key")?.let { return it }
+    }
+    return activeValue(config, key)
+}
+
+// Read the env-var name from `application.secret=${VARNAME}`. Returns
+// PLAY_SECRET when the conf is missing or the line uses an unparseable form
+// (the framework rejects literals — only `${VAR}` placeholders are valid).
+private fun readSecretVarName(appConf: File): String {
+    if (!appConf.isFile) return "PLAY_SECRET"
+    val pattern = Regex("""^\s*application\.secret\s*=\s*\$\{([^}:]+)\}\s*$""")
+    appConf.readLines().forEach { line ->
+        val stripped = line.trimStart()
+        if (stripped.startsWith("#") || stripped.startsWith("!")) return@forEach
+        pattern.matchEntire(line.trimEnd())?.let { return it.groupValues[1] }
+    }
+    return "PLAY_SECRET"
+}
+
+private fun generateSecret(): String {
+    val alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+    val rng = SecureRandom()
+    return buildString(64) {
+        repeat(64) { append(alphabet[rng.nextInt(alphabet.length)]) }
+    }
+}
+
+// Test commands (playTest, playAutotest) run hermetically and don't care about
+// a stable secret value across runs. If the secret variable named by
+// application.conf isn't already provided (via certs/.env or the host env),
+// synthesize a fresh one so a fresh checkout can run tests without first
+// running `play secret`. Returns (varName, freshSecret) when generation
+// occurred, or null when the env already provides it.
+private fun ensureTestSecret(appDir: File, dotenv: Map<String, String>): Pair<String, String>? {
+    val varName = readSecretVarName(File(appDir, "conf/application.conf"))
+    if (dotenv.containsKey(varName)) return null
+    if (!System.getenv(varName).isNullOrEmpty()) return null
+    return varName to generateSecret()
+}
+
 /**
  * Resolution order: -Ppid-file=<value>, then application.pidFile in
  * conf/application.conf, then "server.pid". Absolute paths are used as-is;
@@ -1145,40 +1219,51 @@ abstract class PlayOutTask : DefaultTask() {
 
 abstract class PlayStatusTask : DefaultTask() {
     @get:Internal abstract val applicationPath: DirectoryProperty
-    @get:Internal abstract val urlOverride: Property<String>
-    @get:Internal abstract val secretOverride: Property<String>
     @get:Internal abstract val pidFileOverride: Property<String>
+    @get:Internal abstract val httpPort: Property<Int>
 
     @TaskAction
     fun status() {
         val appDir = applicationPath.get().asFile
-        if (!resolvePidFile(appDir, pidFileOverride.orNull).exists()) {
+        val pidFile = resolvePidFile(appDir, pidFileOverride.orNull)
+        if (!pidFile.exists()) {
             logger.lifecycle("~ The application is not running")
             return
         }
+        val pid = pidFile.readText().trim().toLongOrNull()
+        if (pid == null) {
+            logger.lifecycle("~ ${pidFile.absolutePath} is unreadable; the application is likely not running")
+            return
+        }
+        if (!ProcessHandle.of(pid).isPresent) {
+            logger.lifecycle("~ Stale pid file ${pidFile.absolutePath}: pid $pid is not running")
+            return
+        }
+        // Process is alive — fetch the JSON dump from /@status. No auth: the
+        // endpoint is unauthenticated by design (same posture as /@metrics).
+        // Port resolution: -PhttpPort > conf > 9000. The -P override mirrors
+        // playStart so users who started on a non-default port can query the
+        // same way.
         val configFile = File(appDir, "conf/application.conf")
         val config = if (configFile.isFile) configFile.readText() else ""
-
-        val url = urlOverride.orNull?.takeIf { it.isNotBlank() }
-            ?: run {
-                val httpPort = activeValue(config, "http.port") ?: "9000"
-                "http://localhost:$httpPort/@status"
-            }
-        val secret = secretOverride.orNull?.takeIf { it.isNotBlank() }
-            ?: activeValue(config, "application.statusKey")
-            ?: throw GradleException("application.statusKey not set in conf/application.conf and no -Psecret= provided")
-
-        val conn = URI(url).toURL().openConnection() as HttpURLConnection
-        conn.setRequestProperty("Authorization", secret)
-        conn.connectTimeout = 5_000
-        conn.readTimeout = 10_000
+        val port = httpPort.orNull
+            ?: activeValue(config, "http.port")?.toIntOrNull()
+            ?: 9000
+        val url = "http://localhost:$port/@status"
         try {
-            val body = conn.inputStream.bufferedReader().use { it.readText() }
-            logger.lifecycle("~ Status from $url,")
+            val conn = URI(url).toURL().openConnection() as HttpURLConnection
+            conn.connectTimeout = 5_000
+            conn.readTimeout = 10_000
+            val stream = if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream
+            val body = stream?.bufferedReader()?.use { it.readText() } ?: ""
+            logger.lifecycle("~ Application is running (pid $pid). Status from $url:")
             logger.lifecycle("~")
             println(body)
         } catch (e: java.io.IOException) {
-            throw GradleException("Cannot retrieve status from $url: ${e.message}", e)
+            // Pid is alive but the HTTP port isn't reachable — typically means
+            // conf's http.port doesn't match the runtime port (e.g. app started
+            // with --http.port=<other>). Report what we know without failing.
+            logger.lifecycle("~ Application is running (pid $pid) but cannot reach $url: ${e.message}")
         }
     }
 }

@@ -37,7 +37,7 @@ In scope for this policy:
 
 - The framework code under `framework/src/` (request handling, security headers, session/cookie machinery, template engine, etc.)
 - The bundled modules under `modules/` (`crud`, `secure`, `testrunner`, `docviewer`, `console`)
-- The CLI under `framework/pym/` (`play new`, `play run`, `play test`, etc.)
+- The Gradle plugin under `framework/gradle-plugin/` and the `play` shell wrapper at the repo root (`play new`, `play run`, `play test`, `play auto-test`, etc.)
 - The application skeleton under `resources/application-skel/` and the Nuxt skeleton under `resources/nuxt-skel/`
 - The build/release pipeline (`/deploy` slash command flow, GitHub Actions workflows under `.github/workflows/`)
 
