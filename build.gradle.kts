@@ -233,11 +233,14 @@ abstract class PlayNewAppTask : DefaultTask() {
             }
         }
 
-        // Move ApiController.java from frontend/ to app/controllers/
-        val apiCtrlSrc = File(frontendDir, "ApiController.java")
+        // Move ApiController.java from frontend/server/ to app/controllers/.
+        // The skel keeps it under server/ so it's clear at a glance that the
+        // file is server-side Java, not part of the Nuxt frontend tree.
+        val apiCtrlSrc = File(frontendDir, "server/ApiController.java")
         val apiCtrlDst = File(dest, "app/controllers/ApiController.java")
         if (apiCtrlSrc.exists()) {
             apiCtrlSrc.renameTo(apiCtrlDst)
+            apiCtrlSrc.parentFile?.takeIf { it.isDirectory && it.list()?.isEmpty() == true }?.delete()
         }
 
         // Substitute placeholders in text files under frontend/.

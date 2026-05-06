@@ -1,0 +1,150 @@
+Play 1.13 fork — copyright and third-party notices
+====================================================
+
+This is a fork of the Play 1.x web framework. It carries forward the
+upstream Apache License 2.0 grant and adds substantial new work
+(Java 25 baseline, Netty 4 / HTTP-2 / HTTP-3, virtual threads,
+structured logging, Gradle plugin, etc.).
+
+Upstream copyright (preserved per Apache-2.0 §4):
+
+    Copyright 2010
+        Guillaume Bort (https://guillaume.bort.fr)
+        zenexity        (https://www.zenexity.fr)
+        Play framework contributors
+        (https://github.com/playframework/play1/graphs/contributors)
+
+Fork copyright:
+
+    Copyright 2024-2026 Tarun Sukhani and contributors to
+    https://github.com/tsukhani/play1
+
+Both the original and this fork are licensed under the Apache License,
+Version 2.0. The full license text is shipped alongside this file as
+LICENSE in the repository / distribution root, and is also available at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+You may not use this software except in compliance with the License.
+Software distributed under the License is distributed on an "AS IS"
+BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
+or implied. See LICENSE for the specific language governing permissions
+and limitations under the License.
+
+This NOTICE file (Apache-2.0 §4(d)) carries the attribution
+requirements that downstream redistributors must preserve. LICENSE
+carries the legal terms; NOTICE carries the credits.
+
+----------------------------------------------------------------------
+
+Third-party libraries
+=====================
+
+This distribution bundles third-party jars under framework/lib/. Each
+library remains under its own license. The list below tracks the jars
+actually shipped (regenerate when framework/dependencies.yml changes).
+
+Apache License 2.0
+    - Apache Commons (beanutils, codec, email2, fileupload, io,
+      lang3, logging, text)
+    - Apache Groovy + Groovy XML
+    - Apache Ivy
+    - Apache log4j (api, core, layout-template-json, slf4j2-impl)
+    - Byte Buddy
+    - Caffeine
+    - cglib
+    - ClassMate
+    - Gson
+    - Hibernate ORM (core, jcache, models, validator)
+    - HikariCP
+    - Jackson (annotations, core, databind, dataformat-xml,
+      dataformat-yaml, datatype-jsr310)
+    - JaMon (Java Monitoring API)
+    - Jandex
+    - JBoss Logging
+    - junit-platform-* (Apache-2.0 — the platform layer; see EPL-2.0
+      below for jupiter-* engine/api)
+    - Micrometer (commons, core, observation, registry-otlp,
+      registry-prometheus)
+    - Netty (buffer, codec-*, common, handler, resolver, transport,
+      transport-native-unix-common, codec-native-quic-*)
+    - OpenTelemetry Proto
+    - OVal (constraint-validation framework)
+    - Prometheus metrics (config, core, exposition-formats, model,
+      shaded-protobuf, tracer-common, tracer-initializer)
+    - SnakeYAML
+    - swagger-core, swagger-models, swagger-annotations
+    - Woodstox (core)
+    - apiguardian-api
+    - opentest4j
+    - cache-api (JSR-107)
+    - jakarta.inject-api
+
+Eclipse Public License 2.0
+    - Eclipse JDT Core / ECJ (org.eclipse.jdt.core, ecj)
+    - JUnit 5 Jupiter (api, engine, params)
+    - Jakarta Activation API
+    - Jakarta Mail
+    - Jakarta Persistence API
+    - Jakarta Transaction API
+    - Jakarta Validation API
+    - Jakarta XML Bind API
+    - JAXB Runtime (dual EPL-2.0 / EDL-1.0)
+
+BSD-style licenses
+    - ASM and ASM utilities (BSD-3) — asm, asm-analysis, asm-commons,
+      asm-tree, asm-util
+    - ANTLR runtime (BSD-3)
+    - Hamcrest (BSD-3)
+    - Protocol Buffers Java (BSD-3)
+    - Stax2 API (BSD-2)
+    - HdrHistogram (BSD-2)
+    - LatencyUtils (BSD-2)
+    - PostgreSQL JDBC driver (BSD-2 / The PostgreSQL License)
+    - JRegex (BSD-style custom)
+
+MIT License
+    - SLF4J API
+    - Brotli4j + native bindings (brotli4j, service,
+      native-{linux,osx,windows}-*)
+    - Bouncy Castle (bcprov-jdk18on, bcpkix-jdk18on) — MIT-style
+      (see https://www.bouncycastle.org/licence.html)
+
+H2 license (MPL-2.0 OR EPL-1.0)
+    - H2 Database Engine
+
+MPL-1.1 / LGPL-2.1 / Apache-2.0 triple license
+    - Javassist
+
+GPL-2.0 with FOSS Exception
+    - MySQL Connector/J (mysql-connector-j)
+      Distribution under GPL-2.0 with the Universal FOSS Exception 1.0,
+      which permits redistribution alongside Apache-2.0 software.
+      See https://oss.oracle.com/licenses/universal-foss-exception/
+
+Permissive (project-specific) licenses
+    - dom4j — see https://dom4j.github.io/license.html
+    - Jaxen — Apache-style custom license
+    - Eclipse Mylyn / WikiText fork (jj-wikitext, jj-textile) —
+      EPL-1.0; vendored as `jj-*` to retain the legacy Play 1 textile
+      dialect after upstream WikiText was archived.
+    - SimpleCaptcha (jj-simplecaptcha) — BSD-style custom license
+
+Vendored Tailwind CSS pipeline
+    - The bundled `framework/tailwindcss` standalone CLI binary (when
+      present in a developer checkout) is distributed under the MIT
+      license. See https://github.com/tailwindlabs/tailwindcss
+    - Generated CSS at resources/application-skel/public/stylesheets/
+      play-tailwind.css and modules/docviewer/public/stylesheets/
+      play-tailwind.css is the build output of MIT-licensed Tailwind
+      sources.
+
+----------------------------------------------------------------------
+
+Reporting license issues
+========================
+
+If you believe a third-party component is shipped under the wrong
+license here — or is missing from this list entirely — please open
+an issue at https://github.com/tsukhani/play1/issues so the notice
+can be corrected before the next release.
