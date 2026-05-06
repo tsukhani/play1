@@ -2,7 +2,17 @@ import java.io.File
 import java.security.SecureRandom
 
 group = "org.playframework"
-version = "1.13.0-SNAPSHOT"
+// Single source of truth: framework/build.xml's baseversion. This is the
+// version stamped into play-<version>.jar by Ant; reading it here means
+// playNewApp injects the matching version into generated apps' build.gradle.kts
+// (and `gradle playVersion` reports the same), with no manual sync needed
+// across version bumps.
+version = run {
+    val buildXml = file("framework/build.xml")
+    val match = Regex("""name="baseversion"\s+value="([^"]+)"""").find(buildXml.readText())
+        ?: error("Could not find baseversion property in ${buildXml.absolutePath}")
+    match.groupValues[1]
+}
 
 abstract class PlayNewAppTask : DefaultTask() {
     @get:org.gradle.api.tasks.Internal abstract val frameworkPath: org.gradle.api.file.DirectoryProperty

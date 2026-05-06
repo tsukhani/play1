@@ -2,7 +2,7 @@
 
 <project name="play! framework" default="jar" basedir="." xmlns:if="ant:if" xmlns:unless="ant:unless">
 
-    <property name="baseversion" value="1.13.2" />
+    <property name="baseversion" value="1.13.3" />
     <property name="build-release" value="25" />
     <!-- Loaded as a startup -javaagent in test forks so Mockito's inline mock-maker
          doesn't have to self-attach byte-buddy-agent at runtime (which JDK 21+ warns
@@ -309,8 +309,11 @@
     <target name="package" depends="artifact">
         <mkdir dir="dist" />
         <zip destfile="dist/play-${version}.zip" comment="Play! ${version}" update="false">
-            <zipfileset prefix="play-${version}" dir="dist/play-${version}" includes="**/*" excludes="play" />
-            <zipfileset prefix="play-${version}" dir="dist/play-${version}" includes="play" filemode="777" />
+            <!-- play + gradlew need the executable bit on Unix; the default zipfileset
+                 mode is 0644, which produces "Permission denied" on first run of
+                 ./play or ./gradlew after unzip. -->
+            <zipfileset prefix="play-${version}" dir="dist/play-${version}" includes="**/*" excludes="play,gradlew" />
+            <zipfileset prefix="play-${version}" dir="dist/play-${version}" includes="play,gradlew" filemode="755" />
         </zip>
     </target>
 

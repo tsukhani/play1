@@ -85,9 +85,41 @@ class Play1Plugin : Plugin<Project> {
         project.tasks.matching { it.name == "compileJava" || it.name == "compileTestJava" }
             .configureEach { dependsOn("extractPlayModules") }
 
+        // Fail loudly when the configured frameworkVersion does not resolve to a
+        // real jar in $frameworkPath/framework/. Without this check, project.files()
+        // silently drops missing paths from the compile classpath, producing an
+        // unhelpful wall of "package play does not exist" errors at javac time.
+        // Wired in as a dependency of extractPlayModules below, so every
+        // framework-consuming task (compileJava, playRun, playTest, playPrecompile,
+        // playBundle, ...) inherits it transitively.
+        project.tasks.register("_playValidateFramework") {
+            val jarProvider = ext.frameworkPath.file(ext.frameworkVersion.map { "framework/play-$it.jar" })
+            val versionProvider = ext.frameworkVersion
+            val frameworkDirProvider = ext.frameworkPath.dir("framework")
+            doLast {
+                val jar = jarProvider.get().asFile
+                if (jar.exists()) return@doLast
+                val frameworkDir = frameworkDirProvider.get().asFile
+                val available = frameworkDir.listFiles { _, name -> name.matches(Regex("play-.*\\.jar")) }
+                    ?.map { it.name }?.sorted() ?: emptyList()
+                throw GradleException(buildString {
+                    appendLine("Play framework jar not found: ${jar.absolutePath}")
+                    appendLine("  Configured frameworkVersion = '${versionProvider.get()}'")
+                    if (available.isEmpty()) {
+                        appendLine("  No play-*.jar files exist in $frameworkDir.")
+                        appendLine("  Check that play1 { frameworkPath } points to a built Play 1 distribution.")
+                    } else {
+                        appendLine("  Available jars: ${available.joinToString(", ")}")
+                        appendLine("  Set play1 { frameworkVersion } in build.gradle.kts to match an available jar.")
+                    }
+                })
+            }
+        }
+
         project.tasks.register<ExtractPlayModulesTask>("extractPlayModules") {
             group = "play1"
             description = "Populate modules/<name>/ from framework-bundled and Ivy-resolved sources"
+            dependsOn("_playValidateFramework")
             moduleZips.from(playModule)
             frameworkModules.from(project.provider {
                 val modulesRoot = ext.frameworkPath.dir("modules").get().asFile
