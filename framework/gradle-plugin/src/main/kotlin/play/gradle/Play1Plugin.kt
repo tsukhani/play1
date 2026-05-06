@@ -155,7 +155,15 @@ class Play1Plugin : Plugin<Project> {
             playIdOverride = "test",
             extraSysprops = listOf("-Dprecompile=yes"),
             includeHttpPort = false,
-            extraDependsOn = listOf("playPrecompileClean"))
+            extraDependsOn = listOf("playPrecompileClean"),
+            // Precompile spawns a JVM only to walk classes/templates and write
+            // bytecode + parsed templates to precompiled/ — no application code
+            // runs. Skip the conf-driven javaagent / agentlib / JMX flags that
+            // playId="test" would otherwise drag in (the typical example is
+            // %test.javaagent.path=bin/jacocoagent.jar, intended for play
+            // autotest's coverage instrumentation but useless here, and a hard
+            // VM-init failure when the agent jar isn't on disk).
+            inheritInstrumentation = false)
 
         project.tasks.register<PlayDistTask>("playDist") {
             group = "play1"
@@ -415,6 +423,17 @@ class Play1Plugin : Plugin<Project> {
         includeHttpPort: Boolean,
         extraDependsOn: List<String> = emptyList(),
         mainClassName: String = "play.server.Server",
+        // Whether to forward conf-declared instrumentation flags
+        // (`javaagent.path`, `agentlib`, `jmx.*`) onto the spawned JVM.
+        // True for tasks that execute application code (playRun, playTest,
+        // playEvolutions). False for build-time tasks like playPrecompile
+        // that spawn a JVM only to load classes and write .class files —
+        // an attached agent has nothing to instrument and a JMX registry
+        // has nothing to monitor, but a missing javaagent jar still fails
+        // the JVM at `Agent_OnLoad`. `jvm.memory` (heap sizing) passes
+        // through regardless: a large codebase can need extra heap to
+        // compile templates even though no application code runs.
+        inheritInstrumentation: Boolean = true,
     ) {
         val isTestMode = playIdOverride?.startsWith("test") == true
 
@@ -444,7 +463,14 @@ class Play1Plugin : Plugin<Project> {
             jvmArgs("-Dplay.id=$effectivePlayId")
             jvmArgs(ext.frameworkVersion.map { "-Dplay.version=$it" }.get())
             jvmArgs("-javaagent:${frameworkJar.get().asFile.absolutePath}")
-            confJvmArgs(project.projectDir, effectivePlayId).forEach { jvmArgs(it) }
+            val confArgs = confJvmArgs(project.projectDir, effectivePlayId)
+            val effectiveConfArgs = if (inheritInstrumentation) confArgs else confArgs.filterNot {
+                it.startsWith("-javaagent:") ||
+                    it.startsWith("-agentlib:") ||
+                    it.startsWith("-Dcom.sun.management.jmxremote") ||
+                    it.startsWith("-Djava.rmi.server.hostname=")
+            }
+            effectiveConfArgs.forEach { jvmArgs(it) }
             extraSysprops.forEach { jvmArgs(it) }
 
             // -PjvmArgs="..." carries 1.12-style JVM tuning flags that the
