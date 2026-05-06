@@ -208,7 +208,7 @@ certificate.key.file=certs/host.key
 
 The values above are the framework defaults. Keys must be unencrypted PEM — Netty's @SslContextBuilder@ does not accept encrypted keys.
 
-For local development, the easiest path is the "play enable-https":commands#enable-https command, which generates a cert+key pair via @mkcert@ (preferred — produces a system-trusted cert that works with Chrome's HTTP/3 stack) or @openssl@ (fallback — self-signed).
+For local development, generate a cert+key with @mkcert@ (preferred — produces a system-trusted cert that works with Chrome's HTTP/3 stack) or @openssl@ as a fallback (self-signed; browsers warn and HTTP/3 won't upgrade). See "TLS configuration":httpserver#local-dev for the exact commands.
 
 For production, replace @certs/host.cert@ and @certs/host.key@ with a real cert from Let's Encrypt, an internal CA, or your usual certificate provider. Generate self-signed certs manually with:
 

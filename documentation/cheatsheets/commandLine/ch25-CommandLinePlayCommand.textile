@@ -58,9 +58,6 @@ Show the PID of the running application
 *evolutions*
 Apply database evolutions
 
-*enable-https / disable-https*
-Toggle HTTPS in @conf/application.conf@
-
 *version*
 Print the framework version
 

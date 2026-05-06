@@ -786,7 +786,7 @@ Default: none, in that case the listening address will be 127.0.0.1 only for JDK
 
 h2(#certificate). X509 certificates (PEM)
 
-Play 1.12 ships PEM-only HTTPS support (PF-68 dropped JKS). The "play enable-https":commands#enable-https command generates these files automatically via @mkcert@ (preferred — produces a system-trusted cert that works with Chrome's HTTP/3 stack) or @openssl@ (fallback — self-signed).
+Play 1.12 ships PEM-only HTTPS support (PF-68 dropped JKS). Generate the cert+key with @mkcert@ (preferred — produces a system-trusted cert that works with Chrome's HTTP/3 stack) or @openssl@ as a fallback (self-signed; browsers warn and HTTP/3 won't upgrade). See "TLS configuration":httpserver#local-dev for the exact commands.
 
 
 h3(#certificate.file). certificate.file

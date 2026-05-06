@@ -62,15 +62,16 @@ Build / test / package:
   precompile           Precompile sources and templates for production
   test                 Run the application's tests interactively
   autotest             Run all tests headlessly and exit
-  bundle               Build a self-contained deployment zip (alias: dist)
+  dist                 Package the source tree as <rootProject.name>.zip
+                       (respects .gitignore and .distignore)
+  bundle               Build a self-contained deployment zip
+                       (precompiled classes + framework + deps + bin/start.sh)
 
 Project setup:
   new <name>           Scaffold a new application in <cwd>/<name>
                        Optional: --frontend (Nuxt 3 frontend)
                                  --dest=<path> (override destination directory)
   secret               Generate a new application secret
-  enable-https         Enable HTTPS in conf/application.conf
-  disable-https        Disable HTTPS in conf/application.conf
 
 Information:
   classpath            Print the resolved runtime classpath
@@ -106,10 +107,8 @@ task_for() {
         classpath)       echo playClasspath ;;
         modules)         echo playModulesInfo ;;
         secret)          echo playSecret ;;
-        enable-https)    echo playEnableHttps ;;
-        disable-https)   echo playDisableHttps ;;
         javadoc)         echo playJavadoc ;;
-        dist)            echo playBundle ;;
+        dist)            echo playDist ;;
         bundle)          echo playBundle ;;
         version)         echo playVersion ;;
         *)               return 1 ;;

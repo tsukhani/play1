@@ -48,15 +48,19 @@ certificate.key.file = conf/host.key
 
 p. The certificate file is a PEM cert (or full chain). The key file is the corresponding PEM private key. Both paths can be absolute or relative to the application root.
 
-h3. <a name="enable-https">Quick start with @play enable-https@</a>
+h3. <a name="local-dev">Quick start for local development</a>
 
-For local development, the @play enable-https@ CLI command sets up a working HTTPS listener in one step:
+Generate a cert+key under @certs/@ with @mkcert@ (preferred — produces a system-trusted cert that Chrome's HTTP/3 stack will negotiate against without warnings) or @openssl@ as a fallback (self-signed; browsers warn and HTTP/3 won't upgrade):
 
-bc. play enable-https myapp
+bc.. mkcert -cert-file certs/host.cert -key-file certs/host.key \
+    localhost 127.0.0.1 ::1
+# or, without mkcert:
+openssl req -x509 -newkey rsa:2048 -nodes \
+    -keyout certs/host.key -out certs/host.cert \
+    -days 3650 -subj '/CN=localhost' \
+    -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1'
 
-This generates a PEM cert+key under @certs/host.cert@ and @certs/host.key@, then uncomments (or inserts) the @https.port@, @certificate.file@, and @certificate.key.file@ entries in @conf/application.conf@. The command prefers @mkcert@ — which produces a system-trusted cert that Chrome's HTTP/3 stack will actually negotiate against — and falls back to @openssl@ self-signed if @mkcert@ is not installed.
-
-After running the command, h2 and h3 are both serving. No further configuration is needed.
+p. The skel @application.conf@ ships @https.port=${https.port:-1}@, so the listener stays off by default and turns on when the JVM is launched with @-Dhttps.port=9443@ — the placeholder resolves at conf-load time. Once the @-D@ is set and the cert paths above are in place, h1.1, h2, and h3 are all serving on 9443.
 
 h3. <a name="encrypted-keys">Encrypted private keys</a>
 

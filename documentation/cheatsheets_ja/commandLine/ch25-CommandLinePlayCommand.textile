@@ -58,9 +58,6 @@ HMAC および暗号化に使われる秘密鍵を生成します。
 *evolutions*
 データベースの evolutions を適用します。
 
-*enable-https / disable-https*
-@conf/application.conf@ で HTTPS を有効化／無効化します。
-
 *version*
 フレームワークのバージョンを表示します。
 

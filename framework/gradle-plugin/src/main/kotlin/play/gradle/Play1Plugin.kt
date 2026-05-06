@@ -10,6 +10,7 @@ import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.FileSystemOperations
 import org.gradle.api.file.FileCollection
 import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.logging.Logger
 import org.gradle.api.plugins.JavaPluginExtension
 import org.gradle.jvm.toolchain.JavaLanguageVersion
 import org.gradle.api.provider.ListProperty
@@ -31,6 +32,9 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URI
+import java.nio.file.FileSystems
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.security.SecureRandom
 import java.util.concurrent.TimeUnit
 import java.util.zip.ZipEntry
@@ -123,8 +127,10 @@ class Play1Plugin : Plugin<Project> {
 
         project.tasks.register<PlayDistTask>("playDist") {
             group = "play1"
-            description = "Package the application as a ZIP distribution. Optional: -Poutput=<path>"
+            description = "Package the application source + precompiled classes + frontend SPA as <rootProject.name>.zip (respects .gitignore + .distignore). Optional: -Poutput=<path>"
+            dependsOn("playPrecompile")
             projectDir.set(project.layout.projectDirectory)
+            projectName.set(project.name)
             val customOutput = project.providers.gradleProperty("output").orNull
             outputFile.set(
                 if (customOutput != null && customOutput.isNotBlank()) {
@@ -138,7 +144,7 @@ class Play1Plugin : Plugin<Project> {
 
         project.tasks.register<PlayBundleTask>("playBundle") {
             group = "play1"
-            description = "Self-contained deployment ZIP (precompiled, framework, deps, .classpath, bin/start.sh). Optional: -Poutput=<path>"
+            description = "Self-contained <rootProject.name>-bundle.zip (source + precompiled + frontend SPA + framework + deps + bundled `play` launcher). Java 25+ is the only runtime dependency. Optional: -Poutput=<path>"
             dependsOn("extractPlayModules", "playPrecompile")
             projectDir.set(project.layout.projectDirectory)
             projectName.set(project.name)
@@ -213,21 +219,6 @@ class Play1Plugin : Plugin<Project> {
             doLast {
                 cp.files.sortedBy { it.absolutePath }.forEach { println(it.absolutePath) }
             }
-        }
-
-        project.tasks.register<PlayEnableHttpsTask>("playEnableHttps") {
-            group = "play1"
-            description = "Enable HTTPS on port 9443. Optional: -Pregenerate (force fresh cert)"
-            applicationPath.set(project.layout.projectDirectory)
-            regenerate.set(project.providers.gradleProperty("regenerate").map { true }.orElse(false))
-            outputs.upToDateWhen { false }
-        }
-
-        project.tasks.register<PlayDisableHttpsTask>("playDisableHttps") {
-            group = "play1"
-            description = "Disable HTTPS but keep cert files for re-enabling later"
-            applicationPath.set(project.layout.projectDirectory)
-            outputs.upToDateWhen { false }
         }
 
         project.tasks.register<PlayStartTask>("playStart") {
@@ -512,6 +503,9 @@ abstract class PlayDistTask : DefaultTask() {
     @get:Internal
     abstract val projectDir: DirectoryProperty
 
+    @get:Internal
+    abstract val projectName: Property<String>
+
     @get:OutputFile
     abstract val outputFile: RegularFileProperty
 
@@ -522,8 +516,19 @@ abstract class PlayDistTask : DefaultTask() {
     fun dist() {
         val projDir = projectDir.get().asFile
         val outFile = outputFile.get().asFile
-        val appName = projDir.name
+        // rootProject.name from settings.gradle.kts — used for both the zip
+        // filename (set at registration) and the inner directory prefix, so a
+        // project whose directory differs from rootProject.name still gets a
+        // consistently-named archive.
+        val appName = projectName.get()
 
+        // Build the SPA if a Nuxt frontend is present at frontend/. Shared
+        // helper between playDist and playBundle.
+        buildFrontendAndCopySpa(projDir, execOps, logger)
+
+        // Source file list from git: tracked + untracked-not-gitignored.
+        // Honors all .gitignore files, including frontend/.gitignore (which
+        // keeps node_modules/ and .output/ out of the zip).
         val gitOutput = ByteArrayOutputStream()
         execOps.exec {
             commandLine("git", "ls-files", "--cached", "--others", "--exclude-standard")
@@ -534,6 +539,24 @@ abstract class PlayDistTask : DefaultTask() {
             .lineSequence()
             .filter { it.isNotBlank() }
             .toList()
+
+        // Force-include the build outputs this task just produced. Typical
+        // application .gitignore files exclude precompiled/ and public/spa/
+        // (they're regenerated build artifacts), so git ls-files won't list
+        // them — but excluding them from the dist defeats the purpose of
+        // running playPrecompile + nuxi generate. .distignore (applied below)
+        // still gets the final say, so users can exclude specific files
+        // within these trees if needed.
+        val forcedRoots = listOf("precompiled", "public/spa")
+            .map { File(projDir, it) }
+            .filter { it.isDirectory }
+        val forcedFiles = forcedRoots.flatMap { root ->
+            root.walkTopDown()
+                .filter { it.isFile }
+                .map { it.relativeTo(projDir).path.replace(File.separatorChar, '/') }
+                .toList()
+        }
+        val allFiles = (gitFiles + forcedFiles).distinct().sorted()
 
         val distignore = projDir.resolve(".distignore")
         val ignorePrefixes = if (distignore.isFile) {
@@ -548,15 +571,24 @@ abstract class PlayDistTask : DefaultTask() {
         outFile.parentFile.mkdirs()
         if (outFile.exists()) outFile.delete()
 
-        ZipOutputStream(outFile.outputStream()).use { zip ->
-            for (relpath in gitFiles.sorted()) {
+        // Use the JDK's ZipFileSystem provider with enablePosixFileAttributes
+        // so the source file's executable bit (0755 vs 0644) is preserved in
+        // the zip entry's Unix mode field. Plain ZipOutputStream has no public
+        // setter for external attributes, so shell scripts and other +x files
+        // would lose their executable bit on extract — `unzip` falls back to
+        // the umask and shell scripts come out as 0644.
+        val zipPath = outFile.toPath()
+        val env = mapOf(
+            "create" to "true",
+            "enablePosixFileAttributes" to "true",
+        )
+        FileSystems.newFileSystem(zipPath, env).use { zipfs ->
+            for (relpath in allFiles) {
                 if (outRelPrefix != null && relpath.startsWith(outRelPrefix)) continue
                 if (ignorePrefixes.any { relpath.startsWith(it) }) continue
                 val srcFile = projDir.resolve(relpath)
                 if (!srcFile.isFile) continue
-                zip.putNextEntry(ZipEntry("$appName/$relpath"))
-                srcFile.inputStream().use { it.copyTo(zip) }
-                zip.closeEntry()
+                copyToZipfs(srcFile.toPath(), zipfs.getPath("/$appName/$relpath"))
             }
         }
         logger.lifecycle("Distribution created at ${outFile.absolutePath}")
@@ -803,186 +835,6 @@ abstract class PlaySecretTask : DefaultTask() {
 
 }
 
-abstract class PlayEnableHttpsTask : DefaultTask() {
-    @get:Internal abstract val applicationPath: DirectoryProperty
-    @get:Internal abstract val regenerate: Property<Boolean>
-
-    @get:Inject abstract val execOps: ExecOperations
-
-    @TaskAction
-    fun enable() {
-        val appDir = applicationPath.get().asFile
-        val configFile = File(appDir, "conf/application.conf")
-        if (!configFile.isFile) throw GradleException("conf/application.conf not found at ${configFile.absolutePath}")
-        var config = configFile.readText()
-
-        val certFileValue = activeValue(config, "certificate.file") ?: "certs/host.cert"
-        val keyFileValue = activeValue(config, "certificate.key.file") ?: "certs/host.key"
-        val certPath = File(appDir, certFileValue)
-        val keyPath = File(appDir, keyFileValue)
-
-        val httpsActive = hasActiveLine(config, "https.port")
-        val httpActive = hasActiveLine(config, "http.port")
-        val filesPresent = certPath.exists() && keyPath.exists()
-
-        val force = regenerate.getOrElse(false)
-        val regenerateReason: String? = when {
-            force && filesPresent -> "force"
-            !filesPresent -> "missing"
-            else -> when (checkCertValidity(certPath)) {
-                "expired" -> "expired"
-                "corrupted" -> "corrupted"
-                else -> null
-            }
-        }
-
-        if (regenerateReason == null && httpsActive && httpActive) {
-            logger.lifecycle("~ HTTPS is already enabled in conf/application.conf.")
-            logger.lifecycle("~ Cert+key present at $certFileValue and $keyFileValue.")
-            return
-        }
-
-        if (regenerateReason == null) {
-            logger.lifecycle("~ Reusing existing PEM cert+key at $certFileValue and $keyFileValue.")
-        } else {
-            when (regenerateReason) {
-                "expired" -> logger.lifecycle("~ Existing cert at $certFileValue has expired -- regenerating.")
-                "corrupted" -> logger.lifecycle("~ Existing cert at $certFileValue is unreadable -- regenerating.")
-                "force" -> logger.lifecycle("~ -Pregenerate: regenerating PEM cert+key (existing files will be replaced).")
-                // 'missing' falls through silently
-            }
-            try {
-                if (whichOnPath("mkcert")) {
-                    generateMkcert(certPath, keyPath)
-                    logger.lifecycle("~ Generated mkcert-signed PEM cert+key at $certFileValue and $keyFileValue.")
-                    logger.lifecycle("~ (Trusted by the system store after `mkcert -install` -- Chrome will accept HTTP/3.)")
-                } else if (whichOnPath("openssl")) {
-                    generateOpenssl(certPath, keyPath)
-                    logger.lifecycle("~ Generated self-signed PEM cert+key at $certFileValue and $keyFileValue (openssl fallback).")
-                    logger.lifecycle("~ Hint: install mkcert (https://github.com/FiloSottile/mkcert) for browser-trusted local-dev TLS.")
-                } else {
-                    throw GradleException("required tool not found on PATH: install either mkcert (preferred) or openssl, then re-run.")
-                }
-            } catch (e: Exception) {
-                throw GradleException("cert generation failed: ${e.message}", e)
-            }
-        }
-
-        if (!hasActiveLine(config, "certificate.file")) {
-            config = setOrUncomment(config, "certificate.file", "certs/host.cert")
-        }
-        if (!hasActiveLine(config, "certificate.key.file")) {
-            config = setOrUncomment(config, "certificate.key.file", "certs/host.key")
-        }
-        if (!httpsActive) {
-            config = setOrUncomment(config, "https.port", "9443")
-        }
-        if (!httpActive) {
-            config = setOrUncomment(config, "http.port", "9000")
-        }
-        if (!hasActiveLine(config, "%test.https.port")) {
-            config = setOrUncomment(config, "%test.https.port", "-1")
-        }
-        configFile.writeText(config)
-
-        val httpValue = activeValue(config, "http.port")
-        val httpsValue = activeValue(config, "https.port")
-        if (httpValue == "-1") {
-            logger.lifecycle("~ HTTP listener stays disabled per existing http.port=-1 setting.")
-        } else {
-            logger.lifecycle("~ HTTP enabled on port $httpValue.")
-        }
-        logger.lifecycle("~ HTTPS enabled on port $httpsValue (HTTP/2 + HTTP/3 via ALPN).")
-        logger.lifecycle("~ Run gradle playRun to apply.")
-    }
-
-    private fun whichOnPath(cmd: String): Boolean {
-        val pathDirs = System.getenv("PATH")?.split(File.pathSeparator) ?: emptyList()
-        return pathDirs.any { File(it, cmd).canExecute() }
-    }
-
-    private fun checkCertValidity(certPath: File): String {
-        if (!whichOnPath("openssl")) return "unknown"
-        val parseExit = try {
-            val sink = ByteArrayOutputStream()
-            execOps.exec {
-                commandLine("openssl", "x509", "-noout", "-in", certPath.absolutePath)
-                standardOutput = sink
-                errorOutput = sink
-                isIgnoreExitValue = true
-            }.exitValue
-        } catch (_: Exception) { return "corrupted" }
-        if (parseExit != 0) return "corrupted"
-        val expiryExit = try {
-            val sink = ByteArrayOutputStream()
-            execOps.exec {
-                commandLine("openssl", "x509", "-checkend", "0", "-noout", "-in", certPath.absolutePath)
-                standardOutput = sink
-                errorOutput = sink
-                isIgnoreExitValue = true
-            }.exitValue
-        } catch (_: Exception) { return "expired" }
-        return if (expiryExit == 0) "valid" else "expired"
-    }
-
-    private fun generateMkcert(certPath: File, keyPath: File) {
-        certPath.parentFile.mkdirs()
-        execOps.exec {
-            commandLine(
-                "mkcert",
-                "-cert-file", certPath.absolutePath,
-                "-key-file", keyPath.absolutePath,
-                "localhost", "127.0.0.1", "::1"
-            )
-        }
-    }
-
-    private fun generateOpenssl(certPath: File, keyPath: File) {
-        certPath.parentFile.mkdirs()
-        execOps.exec {
-            commandLine(
-                "openssl", "req", "-x509",
-                "-newkey", "rsa:2048", "-nodes",
-                "-keyout", keyPath.absolutePath,
-                "-out", certPath.absolutePath,
-                "-days", "3650",
-                "-subj", "/CN=localhost",
-                "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1"
-            )
-        }
-    }
-}
-
-abstract class PlayDisableHttpsTask : DefaultTask() {
-    @get:Internal abstract val applicationPath: DirectoryProperty
-
-    @TaskAction
-    fun disable() {
-        val appDir = applicationPath.get().asFile
-        val configFile = File(appDir, "conf/application.conf")
-        if (!configFile.isFile) throw GradleException("conf/application.conf not found at ${configFile.absolutePath}")
-        var config = configFile.readText()
-
-        val certFileValue = activeValue(config, "certificate.file") ?: "certs/host.cert"
-        val keyFileValue = activeValue(config, "certificate.key.file") ?: "certs/host.key"
-        val certPath = File(appDir, certFileValue)
-
-        if (!hasActiveLine(config, "https.port")) {
-            logger.lifecycle("~ HTTPS is already disabled.")
-            return
-        }
-
-        config = config.replace(Regex("""^(https\.port\s*=.*)$""", RegexOption.MULTILINE), "# $1")
-        config = config.replace(Regex("""^(%test\.https\.port\s*=.*)$""", RegexOption.MULTILINE), "# $1")
-        configFile.writeText(config)
-
-        logger.lifecycle("~ HTTPS disabled.")
-        if (certPath.exists()) {
-            logger.lifecycle("~ The cert+key at $certFileValue and $keyFileValue are preserved -- re-run gradle playEnableHttps to reactivate.")
-        }
-    }
-}
-
 private fun loadDotEnv(envFile: File): Map<String, String> {
     if (!envFile.isFile) return emptyMap()
     val out = linkedMapOf<String, String>()
@@ -996,10 +848,6 @@ private fun loadDotEnv(envFile: File): Map<String, String> {
         out[key] = value
     }
     return out
-}
-
-private fun hasActiveLine(config: String, key: String): Boolean {
-    return Regex("""^${Regex.escape(key)}\s*=""", RegexOption.MULTILINE).containsMatchIn(config)
 }
 
 private fun activeValue(config: String, key: String): String? {
@@ -1127,17 +975,88 @@ private fun resolvePidFile(appDir: File, override: String?): File {
     return if (f.isAbsolute) f else File(appDir, name)
 }
 
-private fun setOrUncomment(config: String, key: String, value: String): String {
-    val active = Regex("""^${Regex.escape(key)}\s*=.*$""", RegexOption.MULTILINE)
-    if (active.containsMatchIn(config)) {
-        return active.replaceFirst(config, "$key=$value")
+// Build the SPA if a Nuxt frontend is present at the project root. Runs
+// pnpm install + pnpm run generate, then copies frontend/.output/public/ to
+// public/spa/ in the project root. Used by both playDist and playBundle so
+// the dist-shaped artifacts include the frontend build alongside the
+// precompiled Java classes. Returns true if a frontend was found and built.
+private fun buildFrontendAndCopySpa(
+    projDir: File,
+    execOps: ExecOperations,
+    logger: Logger,
+): Boolean {
+    val frontendDir = File(projDir, "frontend")
+    if (!frontendDir.isDirectory) return false
+
+    // Probe for pnpm. Without a pre-flight check the user gets a cryptic
+    // "Cannot run program 'pnpm'" from ProcessBuilder; we'd rather fail
+    // with an actionable message naming the tool and where to install it.
+    try {
+        execOps.exec {
+            commandLine("pnpm", "--version")
+            workingDir = frontendDir
+            standardOutput = ByteArrayOutputStream()
+            errorOutput = ByteArrayOutputStream()
+        }
+    } catch (_: Exception) {
+        throw GradleException(
+            "pnpm not found on PATH but ${frontendDir.absolutePath} is a Nuxt frontend. " +
+            "Install pnpm (https://pnpm.io/installation) or remove the frontend directory."
+        )
     }
-    val commented = Regex("""^#\s*${Regex.escape(key)}\s*=.*$""", RegexOption.MULTILINE)
-    if (commented.containsMatchIn(config)) {
-        return commented.replaceFirst(config, "$key=$value")
+
+    // Always install. Warm-cache pnpm install is sub-second; skipping when
+    // node_modules/ already exists creates a footgun where editing
+    // package.json and running play dist ships a stale SPA with no warning.
+    logger.lifecycle("~ Running pnpm install in ${frontendDir.absolutePath}")
+    execOps.exec {
+        commandLine("pnpm", "install")
+        workingDir = frontendDir
     }
-    val withNewline = if (config.endsWith("\n")) config else "$config\n"
-    return "$withNewline$key=$value\n"
+
+    logger.lifecycle("~ Running pnpm run generate in ${frontendDir.absolutePath}")
+    execOps.exec {
+        commandLine("pnpm", "run", "generate")
+        workingDir = frontendDir
+    }
+
+    val spaSource = File(frontendDir, ".output/public")
+    if (!spaSource.isDirectory) {
+        throw GradleException("nuxi generate did not produce ${spaSource.absolutePath}")
+    }
+    val spaDest = File(projDir, "public/spa")
+    if (spaDest.exists()) spaDest.deleteRecursively()
+    spaSource.copyRecursively(spaDest)
+    logger.lifecycle("~ Copied SPA build to ${spaDest.absolutePath}")
+    return true
+}
+
+// Copy a file into a ZipFileSystem path, preserving POSIX permissions. Used
+// by playDist and playBundle to build zips where the source file's
+// executable bit (e.g. on shell scripts) survives the round-trip. Plain
+// java.util.zip.ZipOutputStream has no public setter for external
+// attributes; ZipFileSystem with enablePosixFileAttributes does.
+private fun copyToZipfs(source: java.nio.file.Path, dest: java.nio.file.Path) {
+    Files.createDirectories(dest.parent)
+    Files.copy(source, dest, StandardCopyOption.REPLACE_EXISTING)
+    try {
+        Files.setPosixFilePermissions(dest, Files.getPosixFilePermissions(source))
+    } catch (_: UnsupportedOperationException) {
+        // Source FS doesn't expose POSIX permissions (Windows host on NTFS).
+        // Zip entry keeps its default mode.
+    }
+}
+
+// Load the bundled-play launcher script template and substitute the
+// framework version. The template is shipped as a plugin resource (under
+// src/main/resources/bundle-play.sh) so it can be syntax-checked / linted
+// independently of the Kotlin source — embedding 150 lines of bash inside
+// a Kotlin string would require escaping every `$` as `${'$'}`.
+private fun bundlePlayScript(fwVersion: String): String {
+    val resource = Play1Plugin::class.java.classLoader
+        .getResource("bundle-play.sh")
+        ?: throw IllegalStateException("bundle-play.sh resource not found in plugin classpath")
+    return resource.readText().replace("__FW_VERSION__", fwVersion)
 }
 
 abstract class PlayStartTask : DefaultTask() {
@@ -1480,27 +1399,29 @@ abstract class PlayBundleTask : DefaultTask() {
     @get:Internal abstract val playClasspath: ConfigurableFileCollection
     @get:OutputFile abstract val outputFile: RegularFileProperty
 
+    @get:Inject abstract val execOps: ExecOperations
+
     @TaskAction
     fun bundle() {
         val projDir = projectDir.get().asFile
-        val name = projectName.get()
+        val outFile = outputFile.get().asFile
+        val appName = projectName.get()
         val fwDir = frameworkPath.get().asFile
         val fwVersion = frameworkVersion.get()
-        val outFile = outputFile.get().asFile
 
-        outFile.parentFile.mkdirs()
-        if (outFile.exists()) outFile.delete()
-
-        // Resolve framework jar + framework lib (these are AT frameworkPath, not in
-        // the consumer's runtimeClasspath).
         val frameworkJar = File(fwDir, "framework/play-$fwVersion.jar")
         if (!frameworkJar.isFile) {
             throw GradleException("Framework jar not found at ${frameworkJar.absolutePath}. Did you run `ant jar` in the framework?")
         }
         val frameworkLibDir = File(fwDir, "framework/lib")
 
-        // Filter playClasspath into the deps that are NOT framework/conf/app's own lib/modules
-        // (those get bundled differently).
+        // Same dist-shaped frontend build as playDist: pnpm install + generate,
+        // copy frontend/.output/public/ to public/spa/ for static-asset serving.
+        buildFrontendAndCopySpa(projDir, execOps, logger)
+
+        // Resolve dep jars: Gradle-resolved minus framework/ + projDir/lib +
+        // projDir/modules (those are bundled separately under their respective
+        // trees so the .classpath file points at known relative paths).
         val gradleResolvedDeps = playClasspath.files.filter { f ->
             f.isFile && f.name.endsWith(".jar") &&
                 !f.absolutePath.startsWith(fwDir.absolutePath) &&
@@ -1508,8 +1429,6 @@ abstract class PlayBundleTask : DefaultTask() {
                 !f.absolutePath.startsWith(File(projDir, "modules").absolutePath)
         }.distinctBy { it.name }
 
-        // Local app lib jars (manually placed; should be empty for clean Gradle apps).
-        // Skip any whose name already appears in gradleResolvedDeps to avoid zip duplicates.
         val gradleResolvedNames = gradleResolvedDeps.map { it.name }.toSet()
         val appLibJars = File(projDir, "lib").let { dir ->
             if (dir.isDirectory) {
@@ -1520,8 +1439,9 @@ abstract class PlayBundleTask : DefaultTask() {
             } else emptyList()
         }
 
-        // Module lib jars
-        val moduleLibJars = mutableListOf<Pair<File, String>>() // (file, relative path inside zip)
+        // Module lib jars — modules/ is typically untracked (extracted by
+        // extractPlayModules at build time), so we explicitly walk and add them.
+        val moduleLibJars = mutableListOf<Pair<File, String>>()
         File(projDir, "modules").let { modulesDir ->
             if (modulesDir.isDirectory) {
                 modulesDir.listFiles()?.filter { it.isDirectory }?.forEach { moduleDir ->
@@ -1537,7 +1457,9 @@ abstract class PlayBundleTask : DefaultTask() {
             }
         }
 
-        // Compute classpath entries (relative paths inside the zip).
+        // Compute classpath entries (relative to bundle root, one per line in
+        // .classpath). The bundled `play` script reads this at startup to
+        // assemble the runtime classpath.
         val classpathEntries = mutableListOf<String>()
         classpathEntries += "conf"
         classpathEntries += "framework/play-$fwVersion.jar"
@@ -1547,8 +1469,7 @@ abstract class PlayBundleTask : DefaultTask() {
             }
         }
         appLibJars.sortedBy { it.name }.forEach { jar ->
-            val rel = jar.relativeTo(projDir).path
-            classpathEntries += rel
+            classpathEntries += jar.relativeTo(projDir).path.replace(File.separatorChar, '/')
         }
         gradleResolvedDeps.sortedBy { it.name }.forEach {
             classpathEntries += "lib/${it.name}"
@@ -1557,81 +1478,122 @@ abstract class PlayBundleTask : DefaultTask() {
             classpathEntries += rel
         }
 
-        // Bundle uses an INCLUDE list — only directories Play needs at runtime.
-        // Specifically excludes:
-        // - app/ (replaced by precompiled)
-        // - test/, documentation/ (not needed at runtime)
-        // - certs/ (TLS material + .env secrets — never bake secrets into deployment
-        //   artifacts; runtime should mount a volume / use Docker secrets / k8s Secrets
-        //   to provide host.cert, host.key, and PLAY_SECRET)
-        // - user-specific top-level dirs (workspace/, data/, frontend/, etc.) that
-        //   aren't standard Play layout
-        val includeTopLevel = setOf("conf", "public", "modules", "precompiled")
+        // Source file list (dist-style):
+        //   - git ls-files for source (respects .gitignore everywhere, including
+        //     frontend/.gitignore which keeps node_modules/.output out of the zip)
+        //   - PLUS explicit walk of precompiled/ and public/spa/ to force-include
+        //     build outputs that are typically gitignored
+        // We then filter out paths under lib/, modules/, framework/ — those are
+        // populated from the explicit jar lists below, so re-walking them via
+        // git ls-files would duplicate entries.
+        val gitOutput = ByteArrayOutputStream()
+        execOps.exec {
+            commandLine("git", "ls-files", "--cached", "--others", "--exclude-standard")
+            workingDir = projDir
+            standardOutput = gitOutput
+        }
+        val gitFiles = gitOutput.toString(Charsets.UTF_8)
+            .lineSequence()
+            .filter { it.isNotBlank() }
+            .toList()
 
-        java.util.zip.ZipOutputStream(outFile.outputStream()).use { zip ->
-            // 1. Add only the runtime-relevant Play directories from projDir.
-            includeTopLevel.forEach { dirName ->
-                val dir = File(projDir, dirName)
-                if (!dir.isDirectory) return@forEach
-                dir.walkTopDown()
-                    .filter { it.isFile }
-                    .forEach { f ->
-                        val rel = f.relativeTo(projDir).path
-                        addFileToZip(zip, f, "$name/$rel")
-                    }
+        val forcedRoots = listOf("precompiled", "public/spa")
+            .map { File(projDir, it) }
+            .filter { it.isDirectory }
+        val forcedFiles = forcedRoots.flatMap { root ->
+            root.walkTopDown()
+                .filter { it.isFile }
+                .map { it.relativeTo(projDir).path.replace(File.separatorChar, '/') }
+                .toList()
+        }
+        val bundleOwnedPrefixes = listOf("lib/", "modules/", "framework/")
+        val sourceFiles = (gitFiles + forcedFiles)
+            .distinct()
+            .filterNot { rel -> bundleOwnedPrefixes.any { rel.startsWith(it) } }
+            .sorted()
+
+        val distignore = projDir.resolve(".distignore")
+        val ignorePrefixes = if (distignore.isFile) {
+            distignore.readLines()
+                .map { it.trim() }
+                .filter { it.isNotEmpty() && !it.startsWith("#") }
+        } else emptyList()
+
+        val outRel = outFile.parentFile.relativeTo(projDir).path
+        val outRelPrefix = if (outRel.isEmpty()) null else "$outRel/"
+
+        outFile.parentFile.mkdirs()
+        if (outFile.exists()) outFile.delete()
+
+        // Write the bundle zip via JDK ZipFileSystem so POSIX perms (executable
+        // bit on shell scripts, 0644 vs 0755) survive the round-trip.
+        val zipPath = outFile.toPath()
+        val env = mapOf("create" to "true", "enablePosixFileAttributes" to "true")
+        FileSystems.newFileSystem(zipPath, env).use { zipfs ->
+            // 1. Source files (preserve source POSIX perms).
+            for (relpath in sourceFiles) {
+                if (outRelPrefix != null && relpath.startsWith(outRelPrefix)) continue
+                if (ignorePrefixes.any { relpath.startsWith(it) }) continue
+                val srcFile = projDir.resolve(relpath)
+                if (!srcFile.isFile) continue
+                copyToZipfs(srcFile.toPath(), zipfs.getPath("/$appName/$relpath"))
             }
-            // 2. Add framework jar.
-            addFileToZip(zip, frameworkJar, "$name/framework/play-$fwVersion.jar")
-            // 3. Add framework lib jars.
+
+            // 2. Framework jar.
+            copyToZipfs(frameworkJar.toPath(), zipfs.getPath("/$appName/framework/play-$fwVersion.jar"))
+
+            // 3. Framework lib jars.
             if (frameworkLibDir.isDirectory) {
                 frameworkLibDir.listFiles()?.filter { it.isFile && it.name.endsWith(".jar") }?.sortedBy { it.name }?.forEach { jar ->
-                    addFileToZip(zip, jar, "$name/framework/lib/${jar.name}")
+                    copyToZipfs(jar.toPath(), zipfs.getPath("/$appName/framework/lib/${jar.name}"))
                 }
             }
-            // 4. Add Gradle-resolved deps + manually-placed app lib jars under lib/.
+
+            // 4. Gradle-resolved deps under lib/.
             gradleResolvedDeps.sortedBy { it.name }.forEach { jar ->
-                addFileToZip(zip, jar, "$name/lib/${jar.name}")
+                copyToZipfs(jar.toPath(), zipfs.getPath("/$appName/lib/${jar.name}"))
             }
+
+            // 5. Manually-placed app lib jars (uncommon — clean Gradle apps have none).
             appLibJars.sortedBy { it.name }.forEach { jar ->
-                addFileToZip(zip, jar, "$name/lib/${jar.name}")
+                copyToZipfs(jar.toPath(), zipfs.getPath("/$appName/lib/${jar.name}"))
             }
-            // 5. Write .classpath (relative paths from bundle root, one per line).
-            zip.putNextEntry(java.util.zip.ZipEntry("$name/.classpath"))
-            zip.write(classpathEntries.joinToString("\n").toByteArray(Charsets.UTF_8))
-            zip.write("\n".toByteArray(Charsets.UTF_8))
-            zip.closeEntry()
-            // 6. Write bin/play-start.sh (renamed to avoid collision with user bin/ scripts).
-            val startScript = """
-                #!/bin/bash
-                set -e
-                cd "${'$'}(dirname "${'$'}0")/.."
-                CP=${'$'}(/usr/bin/tr '\n' ':' < .classpath | /usr/bin/sed 's/:${'$'}//')
-                exec java \
-                  --enable-native-access=ALL-UNNAMED \
-                  -javaagent:framework/play-$fwVersion.jar \
-                  -Dapplication.path="${'$'}PWD" \
-                  -Dplay.id=${'$'}{PLAY_ID:-prod} \
-                  -Dplay.version=$fwVersion \
-                  -Dprecompiled=true \
-                  -Dfile.encoding=utf-8 \
-                  -classpath "${'$'}CP" \
-                  play.server.Server
-            """.trimIndent() + "\n"
-            // ZipEntry can't set unix mode; runtime needs `chmod +x bin/play-start.sh`
-            // after unzip, or invoke via `bash bin/play-start.sh`.
-            zip.putNextEntry(java.util.zip.ZipEntry("$name/bin/play-start.sh"))
-            zip.write(startScript.toByteArray(Charsets.UTF_8))
-            zip.closeEntry()
+
+            // 6. Module lib jars (extracted by extractPlayModules; typically
+            //    untracked, so source file collection wouldn't include them).
+            moduleLibJars.forEach { (jar, rel) ->
+                copyToZipfs(jar.toPath(), zipfs.getPath("/$appName/$rel"))
+            }
+
+            // 7. .classpath — one entry per line, used by the bundled `play`
+            //    script to assemble the runtime classpath at startup.
+            val classpathPath = zipfs.getPath("/$appName/.classpath")
+            Files.createDirectories(classpathPath.parent)
+            Files.writeString(classpathPath, classpathEntries.joinToString("\n") + "\n")
+
+            // 8. Bundled `play` runtime launcher (executable). Mirrors the dev-
+            //    time shim's CLI surface (run/start/stop/restart/status/pid/out)
+            //    but dispatches to a direct java exec — no gradle needed at
+            //    runtime. Writes to /$appName/play, overriding any user-tracked
+            //    file at that path. Marked +x explicitly so unzip preserves it.
+            val playPath = zipfs.getPath("/$appName/play")
+            Files.createDirectories(playPath.parent)
+            Files.writeString(playPath, bundlePlayScript(fwVersion))
+            try {
+                Files.setPosixFilePermissions(playPath, java.util.EnumSet.of(
+                    java.nio.file.attribute.PosixFilePermission.OWNER_READ,
+                    java.nio.file.attribute.PosixFilePermission.OWNER_WRITE,
+                    java.nio.file.attribute.PosixFilePermission.OWNER_EXECUTE,
+                    java.nio.file.attribute.PosixFilePermission.GROUP_READ,
+                    java.nio.file.attribute.PosixFilePermission.GROUP_EXECUTE,
+                    java.nio.file.attribute.PosixFilePermission.OTHERS_READ,
+                    java.nio.file.attribute.PosixFilePermission.OTHERS_EXECUTE,
+                ))
+            } catch (_: UnsupportedOperationException) { /* non-POSIX FS */ }
         }
         logger.lifecycle("Bundle created at ${outFile.absolutePath} (${outFile.length() / 1024 / 1024} MB)")
-        logger.lifecycle("Runtime requires: PLAY_SECRET env var, plus certs/ dir (mount a volume or generate at boot) if HTTPS is enabled in application.conf.")
-        logger.lifecycle("Unzip + run: cd $name && bash bin/play-start.sh   (PLAY_ID env overrides default 'prod')")
-    }
-
-    private fun addFileToZip(zip: java.util.zip.ZipOutputStream, src: File, entryName: String) {
-        zip.putNextEntry(java.util.zip.ZipEntry(entryName))
-        src.inputStream().use { it.copyTo(zip) }
-        zip.closeEntry()
+        logger.lifecycle("~ Self-contained — runtime requires only Java 25+. Unzip and run:")
+        logger.lifecycle("~     cd $appName && ./play start --%prod")
     }
 }
 
