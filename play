@@ -256,9 +256,41 @@ case "$CMD" in
             /*) ;;
             *)  DEST="$ORIG_CWD/$DEST" ;;
         esac
-        cd "$PLAY_HOME"
+        # PLAY_HOME may be a read-only system install (e.g. /opt/play1 owned by
+        # root) where the invoking user can't write. Gradle 9 refuses to run
+        # against a read-only project directory regardless of --project-cache-dir,
+        # so we stage a scratch project that *symlinks* the framework's build
+        # files into a writable temp dir, then run Gradle from there. The task
+        # itself reads from the symlinked source paths (read OK on a read-only
+        # install) and writes scaffolded output under -Pdest (already on a
+        # writable user path); only Gradle's own .gradle/ + build/ land in the
+        # scratch dir, which we clean up on exit.
+        SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/play-new.XXXXXX")
+        # Restore write bits before rm-rf — cp -R below preserves source modes,
+        # so files copied from a read-only install are read-only and rm refuses
+        # to unlink them on macOS without prior chmod.
+        trap 'chmod -R u+w "$SCRATCH" 2>/dev/null; rm -rf "$SCRATCH"' EXIT INT TERM HUP
+        # Symlink the heavy stuff (framework/, resources/) and the build script
+        # itself. gradle/ is small (~50KB) and has to be a real directory because
+        # PlayNewAppTask runs `fileSystemOps.copy { include("gradle/wrapper/**") }`,
+        # which doesn't traverse symlinked source directories the way include()
+        # globs expect.
+        for entry in build.gradle.kts gradlew framework resources; do
+            if [ -e "$PLAY_HOME/$entry" ]; then
+                ln -s "$PLAY_HOME/$entry" "$SCRATCH/$entry"
+            fi
+        done
+        cp -R "$PLAY_HOME/gradle" "$SCRATCH/gradle"
+        # Minimal settings file: deliberately omit `include(":gradle-plugin")`
+        # because playNewApp doesn't need the plugin subproject configured, and
+        # configuring it would force its own build dir to be writable too.
+        printf 'rootProject.name = "play1-scaffold"\n' > "$SCRATCH/settings.gradle.kts"
+        cd "$SCRATCH"
+        # -PframeworkPath pins the *real* framework location into the generated
+        # app's build.gradle.kts (instead of leaking the scratch dir, which we're
+        # about to delete).
         # shellcheck disable=SC2086  # word-splitting EXTRA is intentional
-        exec ./gradlew playNewApp -Pname="$APP_NAME" -Pdest="$DEST" $EXTRA
+        ./gradlew playNewApp -PframeworkPath="$PLAY_HOME" -Pname="$APP_NAME" -Pdest="$DEST" $EXTRA
         ;;
     deps|check|ant|install|list-modules|build-module|new-module|id)
         cat >&2 <<EOF

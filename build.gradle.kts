@@ -108,9 +108,22 @@ abstract class PlayNewAppTask : DefaultTask() {
         // Generate Gradle build files
         val fwPath = frameworkPath.get().asFile.absolutePath
         val fwVer = frameworkVersion.get()
+        // Resolve the play1 plugin from the framework's pre-published local
+        // Maven repo (framework/gradle-plugin-repo). Earlier 1.13.x releases
+        // used pluginManagement.includeBuild("$fwPath"), which builds the plugin
+        // from source — that requires writing into $fwPath/.gradle/ and
+        // $fwPath/framework/gradle-plugin/build/, which fails on read-only
+        // installs (e.g. /opt/play1 owned by root). Resolving from a flat
+        // Maven repo only reads from $fwPath, so the framework can stay
+        // read-only.
         File(dest, "settings.gradle.kts").writeText("""
             pluginManagement {
-                includeBuild("$fwPath")
+                repositories {
+                    maven {
+                        url = uri("file://$fwPath/framework/gradle-plugin-repo")
+                    }
+                    gradlePluginPortal()
+                }
             }
             rootProject.name = "$identifier"
         """.trimIndent() + "\n")
@@ -121,7 +134,7 @@ abstract class PlayNewAppTask : DefaultTask() {
         File(dest, "gradle.properties").writeText("org.gradle.configuration-cache=true\n")
         File(dest, "build.gradle.kts").writeText("""
             plugins {
-                id("org.playframework.play1")
+                id("org.playframework.play1") version "$fwVer"
             }
 
             play1 {
@@ -138,11 +151,25 @@ abstract class PlayNewAppTask : DefaultTask() {
         // ./gradlew (and `play <cmd>`, which dispatches to ./gradlew) without
         // requiring system-installed Gradle. Pinning the wrapper to the
         // framework's Gradle version also gives reproducible builds.
-        fileSystemOps.copy {
-            from(frameworkPath) {
-                include("gradlew", "gradlew.bat", "gradle/wrapper/**")
+        //
+        // Manual JVM copy (not fileSystemOps.copy) for the same reason as the
+        // skel walk-and-copy above: Gradle's CopySpec-with-include() behaves
+        // unpredictably when the source root is a Property<Directory> resolved
+        // from -PframeworkPath (the play wrapper sets this when invoking from a
+        // scratch project dir on read-only installs), occasionally treating the
+        // wrapper subdirectory as a single file and aborting with "Failed to
+        // create directory". Walking with java.io.File doesn't have that quirk.
+        val fwFile = frameworkPath.get().asFile
+        listOf("gradlew", "gradlew.bat").forEach { name ->
+            val src = File(fwFile, name)
+            if (src.isFile) src.copyTo(File(dest, name), overwrite = false)
+        }
+        val srcWrapper = File(fwFile, "gradle/wrapper")
+        if (srcWrapper.isDirectory) {
+            val dstWrapper = File(dest, "gradle/wrapper").apply { mkdirs() }
+            srcWrapper.listFiles()?.forEach { f ->
+                if (f.isFile) f.copyTo(File(dstWrapper, f.name), overwrite = false)
             }
-            into(dest)
         }
         File(dest, "gradlew").setExecutable(true)
 
@@ -188,9 +215,22 @@ abstract class PlayNewAppTask : DefaultTask() {
         logger.lifecycle("~")
         logger.lifecycle("~ Setting up Nuxt 3 frontend...")
 
-        fileSystemOps.copy {
-            from(nuxtSkel)
-            into(frontendDir)
+        // Manual walk-and-copy (same reasoning as the gradle-wrapper copy
+        // above): fileSystemOps.copy preserves source-file permissions, so
+        // copying from a read-only install (e.g. root-owned /opt/play1) lands
+        // read-only files in dest, then chokes on its own subsequent writes
+        // into dest subdirectories. java.io.File.copyTo creates dest files
+        // under the user's umask regardless of source perms.
+        nuxtSkel.walkTopDown().forEach { src ->
+            val rel = src.toRelativeString(nuxtSkel)
+            if (rel.isEmpty()) return@forEach
+            val target = File(frontendDir, rel)
+            if (src.isDirectory) {
+                target.mkdirs()
+            } else {
+                target.parentFile?.mkdirs()
+                src.copyTo(target, overwrite = false)
+            }
         }
 
         // Move ApiController.java from frontend/ to app/controllers/
@@ -243,8 +283,13 @@ abstract class PlayNewAppTask : DefaultTask() {
 
 tasks.register<PlayNewAppTask>("playNewApp") {
     group = "play1"
-    description = "Scaffold a new Play 1 application. Required: -Pname=<name>. Optional: -Pdest=<path> (default: <cwd>/<name>), -Pfrontend (add Nuxt 3 frontend)"
-    frameworkPath.set(layout.projectDirectory)
+    description = "Scaffold a new Play 1 application. Required: -Pname=<name>. Optional: -Pdest=<path> (default: <cwd>/<name>), -Pfrontend (add Nuxt 3 frontend), -PframeworkPath=<path> (override; defaults to projectDir — used by the play wrapper to invoke this task from a writable scratch dir)"
+    val fwPathProp = providers.gradleProperty("frameworkPath").orNull?.takeIf { it.isNotBlank() }
+    if (fwPathProp != null) {
+        frameworkPath.set(file(fwPathProp))
+    } else {
+        frameworkPath.set(layout.projectDirectory)
+    }
     frameworkVersion.set(version.toString())
     appName.set(providers.gradleProperty("name").orElse(""))
     destDir.set(providers.gradleProperty("dest").orElse(""))

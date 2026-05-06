@@ -509,24 +509,54 @@ abstract class ExtractPlayModulesTask : DefaultTask() {
             val moduleName = if (baseName.contains("-"))
                 baseName.substringBeforeLast('-')
             else baseName
-            extractTo(outDir.resolve(moduleName)) {
-                from(archiveOps.zipTree(zip))
-            }
+            extractZip(zip, outDir.resolve(moduleName))
         }
         frameworkModules.forEach { srcDir ->
-            extractTo(outDir.resolve(srcDir.name)) {
-                from(srcDir)
+            extractDir(srcDir, outDir.resolve(srcDir.name))
+        }
+    }
+
+    // Manual extraction (java.io.File / java.util.zip) instead of
+    // fileSystemOps.copy + archiveOps.zipTree. Gradle's CopySpec preserves
+    // source file permissions, so when the source is a read-only install
+    // (e.g. modules/docviewer under root-owned /opt/play1) the extracted
+    // files land with the read-only mode, and subsequent overwrites/cleanups
+    // fail with "Permission denied". java.io.File.copyTo + ZipFile.getInputStream
+    // create destination files under the user's umask regardless of source
+    // mode, which is what we want.
+    private fun extractZip(zip: File, dest: File) {
+        fileSystemOps.delete { delete(dest) }
+        dest.mkdirs()
+        java.util.zip.ZipFile(zip).use { zf ->
+            val entries = zf.entries()
+            while (entries.hasMoreElements()) {
+                val entry = entries.nextElement()
+                val out = File(dest, entry.name)
+                if (entry.isDirectory) {
+                    out.mkdirs()
+                } else {
+                    out.parentFile?.mkdirs()
+                    zf.getInputStream(entry).use { input ->
+                        out.outputStream().use { output -> input.copyTo(output) }
+                    }
+                }
             }
         }
     }
 
-    private fun extractTo(dest: File, configure: org.gradle.api.file.CopySpec.() -> Unit) {
-        fileSystemOps.delete {
-            delete(dest)
-        }
-        fileSystemOps.copy {
-            configure()
-            into(dest)
+    private fun extractDir(srcDir: File, dest: File) {
+        fileSystemOps.delete { delete(dest) }
+        dest.mkdirs()
+        srcDir.walkTopDown().forEach { src ->
+            val rel = src.toRelativeString(srcDir)
+            if (rel.isEmpty()) return@forEach
+            val target = File(dest, rel)
+            if (src.isDirectory) {
+                target.mkdirs()
+            } else {
+                target.parentFile?.mkdirs()
+                src.copyTo(target, overwrite = true)
+            }
         }
     }
 }

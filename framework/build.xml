@@ -2,7 +2,7 @@
 
 <project name="play! framework" default="jar" basedir="." xmlns:if="ant:if" xmlns:unless="ant:unless">
 
-    <property name="baseversion" value="1.13.3" />
+    <property name="baseversion" value="1.13.4" />
     <property name="build-release" value="25" />
     <!-- Loaded as a startup -javaagent in test forks so Mockito's inline mock-maker
          doesn't have to self-attach byte-buddy-agent at runtime (which JDK 21+ warns
@@ -307,6 +307,21 @@
     </target>
 
     <target name="package" depends="artifact">
+        <!-- Pre-publish the gradle-plugin into a local Maven repo bundled in the
+             distribution. Generated apps resolve `id("org.playframework.play1")`
+             from this repo via pluginManagement.repositories, so they don't
+             need to compile the plugin from source at the user's first run.
+             That source-compile path (the old pluginManagement.includeBuild
+             model) requires writing into $frameworkPath, which fails on
+             read-only installs (e.g. /opt/play1 owned by root). -->
+        <delete dir="${basedir}/gradle-plugin-repo" />
+        <exec executable="${basedir}/../gradlew" dir="${basedir}/.." failonerror="true">
+            <arg value=":gradle-plugin:publishAllPublicationsToFrameworkLocalRepository" />
+            <arg value="-q" />
+        </exec>
+        <copy todir="dist/play-${version}/framework/gradle-plugin-repo">
+            <fileset dir="${basedir}/gradle-plugin-repo" />
+        </copy>
         <mkdir dir="dist" />
         <zip destfile="dist/play-${version}.zip" comment="Play! ${version}" update="false">
             <!-- play + gradlew need the executable bit on Unix; the default zipfileset

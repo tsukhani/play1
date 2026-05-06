@@ -21,6 +21,7 @@ framework/tailwindcss
 # Gradle
 .gradle/
 build/
+framework/gradle-plugin-repo/
 
 # IDE and editors
 *~
