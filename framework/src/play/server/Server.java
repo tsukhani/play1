@@ -307,6 +307,23 @@ public class Server {
                 writePID(root);
             }
 
+            // Allow the launcher to pin frameworkPath explicitly. Without
+            // this, Play.init's auto-detect computes frameworkPath from
+            // the play jar location (jar.getParentFile().getParentFile()),
+            // which collapses to the application root when the bundle
+            // ships the jar at <appRoot>/framework/play-X.jar — making
+            // application.path == framework.path. The collision then
+            // mis-tags every app file (including conf/routes) with the
+            // {play} prefix in VirtualFile.relativePath() and breaks
+            // precompiled-template lookup at startup with
+            // NoSuchFileException on "from_play/conf/routes". Setting
+            // it explicitly keeps the two paths distinct so the dev-time
+            // and dist-time encodings agree.
+            String frameworkPathProp = System.getProperty("framework.path");
+            if (frameworkPathProp != null) {
+                Play.frameworkPath = new File(frameworkPathProp).getAbsoluteFile();
+            }
+
             Play.init(root, System.getProperty("play.id", ""));
 
             if (System.getProperty("precompile") == null) {

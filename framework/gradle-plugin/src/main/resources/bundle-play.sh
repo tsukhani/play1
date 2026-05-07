@@ -110,6 +110,18 @@ build_java_cmd() {
         --enable-native-access=ALL-UNNAMED
         -javaagent:"$FW_JAR"
         -Dapplication.path="$SCRIPT_DIR"
+        # Pin frameworkPath to the bundle's framework/ subdir so it stays
+        # distinct from application.path (= $SCRIPT_DIR). Without this,
+        # Play.init's auto-detect computes frameworkPath from the play jar
+        # location (jar.parent.parent), which for a bundle whose jar
+        # lives at framework/play-X.jar collapses to $SCRIPT_DIR. The
+        # path collision then tags every app file (conf/routes,
+        # conf/messages, ...) with the {play} prefix in
+        # VirtualFile.relativePath() and the runtime fails to load
+        # precompiled template "from_play/conf/routes" because precompile
+        # produced "conf/routes". Server.main reads this property and
+        # sets Play.frameworkPath before Play.init runs.
+        -Dframework.path="$SCRIPT_DIR/framework"
         -Dplay.id="$PLAY_ID"
         -Dplay.version="$FW_VERSION"
         -Dprecompiled=true
