@@ -206,6 +206,13 @@ class Play1Plugin : Plugin<Project> {
             group = "play1"
             description = "Run all application tests headlessly via FirePhoque"
             dependsOn("extractPlayModules")
+            // PF-94: keep build/classes/java/main/ coherent with app/ sources before
+            // the test JVM forks. PropertiesEnhancer's javassist ClassPool walks the
+            // JVM classpath in order; a stale Gradle compile output shadows the
+            // freshly enhanced bytecode in tmp/classes/ and surfaces as a generic
+            // FirePhoque exit=255 with the real NotFoundException buried in
+            // logs/system.out.
+            dependsOn("compileJava")
 
             frameworkPath.set(ext.frameworkPath)
             frameworkVersion.set(ext.frameworkVersion)
@@ -265,6 +272,9 @@ class Play1Plugin : Plugin<Project> {
             group = "play1"
             description = "Start the application in the background. Optional: -Ppid-file=<name>"
             dependsOn("extractPlayModules")
+            // PF-94: same staleness trap as playRun/playAutotest — see the
+            // comment in registerPlayJvmTask.
+            dependsOn("compileJava")
             applicationPath.set(project.layout.projectDirectory)
             frameworkPath.set(ext.frameworkPath)
             frameworkVersion.set(ext.frameworkVersion)
@@ -292,6 +302,9 @@ class Play1Plugin : Plugin<Project> {
             group = "play1"
             description = "Restart the running application. Optional: -Ppid-file=<name>"
             dependsOn("extractPlayModules")
+            // PF-94: same staleness trap as playRun/playAutotest — see the
+            // comment in registerPlayJvmTask.
+            dependsOn("compileJava")
             applicationPath.set(project.layout.projectDirectory)
             frameworkPath.set(ext.frameworkPath)
             frameworkVersion.set(ext.frameworkVersion)
@@ -441,6 +454,14 @@ class Play1Plugin : Plugin<Project> {
             group = "play1"
             this.description = description
             dependsOn("extractPlayModules")
+            // PF-94: ensure build/classes/java/main/ is rebuilt against current
+            // app/ sources before the JVM forks. Without this, javassist's
+            // ClassPool resolves cross-class field references against the stale
+            // Gradle compile output (which sits on the runtime classpath via
+            // sourceSets.main.runtimeClasspath) and PropertiesEnhancer throws
+            // NotFoundException on any field added since the last compileJava.
+            // UP-TO-DATE makes this free when nothing changed.
+            dependsOn("compileJava")
             extraDependsOn.forEach { dependsOn(it) }
 
             mainClass.set(mainClassName)
