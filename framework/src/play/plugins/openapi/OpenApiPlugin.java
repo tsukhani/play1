@@ -17,7 +17,7 @@ import play.mvc.Router;
  * <ul>
  *   <li>{@code /@api/openapi.json} — pretty-printed JSON spec (DEV mode by default; PROD opt-in via {@code openapi.publicSpec=true})</li>
  *   <li>{@code /@api/openapi.yaml} — pretty-printed YAML spec (same gating as JSON)</li>
- *   <li>{@code /@api/docs} — Swagger UI loaded from the unpkg CDN (DEV mode only, always)</li>
+ *   <li>{@code /@api/docs} — Swagger UI loaded from the unpkg CDN (same gating as JSON/YAML)</li>
  * </ul>
  *
  * <p>The spec is generated on-demand from {@link Router#routes} and reflection on
@@ -28,7 +28,7 @@ import play.mvc.Router;
  * <pre>
  * openapi.enabled=true        # master switch (default: true)
  * openapi.basePath=/@api      # path prefix; must start with /
- * openapi.publicSpec=false    # serve /openapi.{json,yaml} in non-DEV modes (default: false)
+ * openapi.publicSpec=false    # serve /openapi.{json,yaml} and /docs in non-DEV modes (default: false)
  * </pre>
  *
  * <p>Why {@code publicSpec} defaults to false: the spec describes every route + parameter
@@ -86,7 +86,7 @@ public class OpenApiPlugin extends PlayPlugin {
         return false;
     }
 
-    /** True when /@api/openapi.{json,yaml} should be served. DEV mode always, PROD only when opted in. */
+    /** True when the OpenAPI surface (JSON, YAML, and Swagger UI) should be served. DEV mode always, PROD only when opted in. */
     private boolean specEnabled() {
         return Play.mode == Play.Mode.DEV || publicSpec;
     }
@@ -129,7 +129,7 @@ public class OpenApiPlugin extends PlayPlugin {
     }
 
     private boolean serveDocs(Response response) {
-        if (Play.mode != Play.Mode.DEV) {
+        if (!specEnabled()) {
             return notFound(response);
         }
         response.status = 200;
@@ -147,7 +147,7 @@ public class OpenApiPlugin extends PlayPlugin {
 
     /**
      * Minimal Swagger UI loader. Pulls the JS/CSS from the unpkg CDN — keeps the
-     * framework jar lean and avoids bundling ~3 MB of static assets. DEV mode only.
+     * framework jar lean and avoids bundling ~3 MB of static assets.
      */
     static String renderDocsHtml(String specUrl) {
         return """
