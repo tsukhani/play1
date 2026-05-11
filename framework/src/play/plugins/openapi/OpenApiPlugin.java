@@ -13,8 +13,9 @@ import play.mvc.Router;
 /**
  * Built-in OpenAPI 3 spec generation (PF-12).
  *
- * <p>Exposes three endpoints under {@code openapi.basePath} (default {@code /@api}):
+ * <p>Exposes four endpoints under {@code openapi.basePath} (default {@code /@api}):
  * <ul>
+ *   <li>{@code /@api} (and {@code /@api/}) — 302 redirect to {@code /@api/docs} (same gating as the spec endpoints)</li>
  *   <li>{@code /@api/openapi.json} — pretty-printed JSON spec (DEV mode by default; PROD opt-in via {@code openapi.publicSpec=true})</li>
  *   <li>{@code /@api/openapi.yaml} — pretty-printed YAML spec (same gating as JSON)</li>
  *   <li>{@code /@api/docs} — Swagger UI loaded from the unpkg CDN (same gating as JSON/YAML)</li>
@@ -82,6 +83,14 @@ public class OpenApiPlugin extends PlayPlugin {
         }
         if (path.equals(basePath + "/docs") || path.equals(basePath + "/docs/")) {
             return serveDocs(response);
+        }
+        if (path.equals(basePath) || path.equals(basePath + "/")) {
+            if (!specEnabled()) {
+                return notFound(response);
+            }
+            response.status = 302;
+            response.setHeader("Location", basePath + "/docs");
+            return true;
         }
         return false;
     }
