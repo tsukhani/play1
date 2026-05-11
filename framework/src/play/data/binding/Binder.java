@@ -132,6 +132,44 @@ public abstract class Binder {
         return beanwrappers.computeIfAbsent(clazz, BeanWrapper::new);
     }
 
+    // PF-103: cache the Scala default-arg helper probe result so we don't throw
+    // NoSuchMethodException per parameter bind in Java-only apps. The probe at the
+    // MISSING branch below looks for `methodName$default$N` on the declaring class;
+    // in pure-Java apps that lookup always misses, and the JDK-level stack-walk
+    // cost is non-trivial under load. Key encodes the target slot (declaring class
+    // + method name + parameter index); value is either the resolved Method or
+    // NO_SCALA_DEFAULT — a static sentinel so a cache hit is one map lookup with
+    // no allocation. Footprint is bounded by the app's action-method set.
+    static final Map<String, Method> scalaDefaultMethodCache = new ConcurrentHashMap<>();
+    private static final Method NO_SCALA_DEFAULT = noScalaDefaultSentinel();
+
+    private static Method noScalaDefaultSentinel() {
+        try {
+            return Binder.class.getDeclaredMethod("scalaDefaultSentinel");
+        } catch (NoSuchMethodException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
+
+    @SuppressWarnings("unused")
+    private static void scalaDefaultSentinel() {
+        // Reflective sentinel target for scalaDefaultMethodCache (PF-103). Never invoked.
+    }
+
+    private static Method resolveScalaDefaultMethod(Method method, int parameterIndex) {
+        String key = method.getDeclaringClass().getName()
+                + "#" + method.getName()
+                + "$default$" + parameterIndex;
+        return scalaDefaultMethodCache.computeIfAbsent(key, k -> {
+            try {
+                return method.getDeclaringClass()
+                        .getDeclaredMethod(method.getName() + "$default$" + parameterIndex);
+            } catch (NoSuchMethodException e) {
+                return NO_SCALA_DEFAULT;
+            }
+        });
+    }
+
     public record MethodAndParamInfo(Object objectInstance, Method method, int parameterIndex) {}
 
     /**
@@ -189,17 +227,17 @@ public abstract class Binder {
         }
 
         if (result == MISSING) {
-            // Try the scala default
+            // Try the scala default. PF-103: cached probe; see scalaDefaultMethodCache above.
             if (methodAndParamInfo != null) {
-                try {
-                    Method method = methodAndParamInfo.method();
-                    Method defaultMethod = method.getDeclaringClass()
-                            .getDeclaredMethod(method.getName() + "$default$" + methodAndParamInfo.parameterIndex());
-                    return defaultMethod.invoke(methodAndParamInfo.objectInstance());
-                } catch (NoSuchMethodException ignore) {
-                } catch (Exception e) {
-                    logBindingNormalFailure(paramNode, e);
-                    throw new UnexpectedException(e);
+                Method method = methodAndParamInfo.method();
+                Method defaultMethod = resolveScalaDefaultMethod(method, methodAndParamInfo.parameterIndex());
+                if (defaultMethod != NO_SCALA_DEFAULT) {
+                    try {
+                        return defaultMethod.invoke(methodAndParamInfo.objectInstance());
+                    } catch (Exception e) {
+                        logBindingNormalFailure(paramNode, e);
+                        throw new UnexpectedException(e);
+                    }
                 }
             }
 

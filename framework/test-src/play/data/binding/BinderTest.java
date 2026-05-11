@@ -7,6 +7,7 @@ import play.data.validation.Validation;
 import play.data.validation.ValidationPlugin;
 
 import java.lang.annotation.Annotation;
+import java.lang.reflect.Method;
 import java.lang.reflect.Type;
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -367,6 +368,66 @@ public class BinderTest {
         Map<String, String[]> r2 = fromUnbindMap2BindMap(r);
         RootParamNode root = ParamNode.convert(r2);
         assertThat(Binder.bind(root, "myBigInt", BigInteger.class, null, null)).isEqualTo(myBigInt);
+    }
+
+    // -- PF-103 Scala default-arg probe caching -----------------------------
+
+    /**
+     * Fixture controller-style class for the scala-default-method probe tests.
+     * A Java-only "action" plus a hand-written {@code $default$N} sibling that
+     * mimics what scalac generates for a method with a default argument.
+     */
+    public static class ScalaDefaultsFixture {
+        public void javaOnlyAction(String unused) {
+            // No $default$N helper exists — exercises the negative-cache path.
+        }
+
+        public void actionWithDefault(String unused) {
+            // Body irrelevant; bind never invokes this directly.
+        }
+
+        public String actionWithDefault$default$1() {
+            return "default-from-scala-helper";
+        }
+    }
+
+    @Test
+    public void scalaDefaultProbeReturnsHelperValueWhenPresent() throws Exception {
+        RootParamNode root = ParamNode.convert(Map.of());
+        Method m = ScalaDefaultsFixture.class.getMethod("actionWithDefault", String.class);
+        Binder.MethodAndParamInfo info = new Binder.MethodAndParamInfo(new ScalaDefaultsFixture(), m, 1);
+
+        Object bound = Binder.bind(root, "missingParam", String.class, String.class, noAnnotations, info);
+        assertThat(bound).isEqualTo("default-from-scala-helper");
+
+        // Cache populated with the resolved Method, not the sentinel.
+        Method cached = Binder.scalaDefaultMethodCache.get(
+                ScalaDefaultsFixture.class.getName() + "#actionWithDefault$default$1");
+        assertThat(cached).isNotNull();
+        assertThat(cached.getName()).isEqualTo("actionWithDefault$default$1");
+    }
+
+    @Test
+    public void scalaDefaultProbeCachesNegativeResultAndReturnsNull() throws Exception {
+        RootParamNode root = ParamNode.convert(Map.of());
+        Method m = ScalaDefaultsFixture.class.getMethod("javaOnlyAction", String.class);
+        Binder.MethodAndParamInfo info = new Binder.MethodAndParamInfo(new ScalaDefaultsFixture(), m, 1);
+
+        // First call: probe misses, sentinel cached, bind returns null (no primitive default for String).
+        Object first = Binder.bind(root, "missingParam", String.class, String.class, noAnnotations, info);
+        assertThat(first).isNull();
+
+        // Cache entry is the sentinel — verify by class equality, not by value match.
+        Method cached = Binder.scalaDefaultMethodCache.get(
+                ScalaDefaultsFixture.class.getName() + "#javaOnlyAction$default$1");
+        assertThat(cached).as("sentinel must be cached after the miss").isNotNull();
+        assertThat(cached.getName())
+                .as("sentinel resolves to the static placeholder method on Binder")
+                .isEqualTo("scalaDefaultSentinel");
+
+        // Second call: cache hit, same null result.
+        Object second = Binder.bind(root, "missingParam", String.class, String.class, noAnnotations, info);
+        assertThat(second).isNull();
     }
 }
 
