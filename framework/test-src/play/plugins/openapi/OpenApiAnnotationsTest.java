@@ -29,7 +29,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 public class OpenApiAnnotationsTest {
 
     private final OpenApiGenerator generator =
-            new OpenApiGenerator(getClass().getClassLoader(), "Test API");
+            new OpenApiGenerator(getClass().getClassLoader(), "Test API", "1.0.0");
 
     private Router.Route route(String method, String path, String action) {
         var r = new Router.Route();

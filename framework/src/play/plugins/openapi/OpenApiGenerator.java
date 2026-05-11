@@ -67,11 +67,13 @@ public class OpenApiGenerator {
 
     private final ClassLoader classLoader;
     private final String title;
+    private final String version;
     private final OpenApiAnnotationReader annotationReader;
 
-    public OpenApiGenerator(ClassLoader classLoader, String title) {
+    public OpenApiGenerator(ClassLoader classLoader, String title, String version) {
         this.classLoader = classLoader;
         this.title = title;
+        this.version = version;
         this.annotationReader = new OpenApiAnnotationReader(this);
     }
 
@@ -82,7 +84,7 @@ public class OpenApiGenerator {
         OpenAPI openApi = new OpenAPI();
         openApi.setInfo(new Info()
                 .title(title == null || title.isBlank() ? "Play Application API" : title)
-                .version("1.0.0")
+                .version(version == null || version.isBlank() ? "1.0.0" : version)
                 .description("Generated from Play's routes file."));
         openApi.setComponents(new Components());
 

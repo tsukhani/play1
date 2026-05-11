@@ -150,7 +150,8 @@ public class OpenApiPlugin extends PlayPlugin {
     private OpenAPI buildSpec() {
         OpenApiGenerator generator = new OpenApiGenerator(
                 Play.classloader != null ? Play.classloader : getClass().getClassLoader(),
-                Play.configuration.getProperty("application.name"));
+                Play.configuration.getProperty("application.name"),
+                Play.configuration.getProperty("application.version"));
         return generator.generate(Router.routes);
     }
 
