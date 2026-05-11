@@ -357,4 +357,32 @@ public class OpenApiTestController extends Controller {
     public static void postStdlib(StdlibBean body) { _ignore(body); }
     public static void postOptional(OptionalBean body) { _ignore(body); }
     public static void postMap(MapBean body) { _ignore(body); }
+
+    // -- PF-102 opaque JSON-tree fixtures -----------------------------------
+
+    /** Mirrors JClaw's ChannelView pattern: a bean with a JsonElement field. */
+    public static class WithGsonTree {
+        public String label;
+        public com.google.gson.JsonElement config;
+    }
+
+    /** Map-valued tree: the map handling must still kick in, and the value stays opaque. */
+    public static class WithMapOfGsonTree {
+        public Map<String, com.google.gson.JsonElement> attrs;
+    }
+
+    /** Jackson tree, via JsonNode (superclass detection). */
+    public static class WithJacksonTreeBase {
+        public com.fasterxml.jackson.databind.JsonNode payload;
+    }
+
+    /** Jackson tree, via ObjectNode subclass (superclass walk should still hit JsonNode). */
+    public static class WithJacksonTreeSubclass {
+        public com.fasterxml.jackson.databind.node.ObjectNode payload;
+    }
+
+    public static void postWithGsonTree(WithGsonTree body) { _ignore(body); }
+    public static void postWithMapOfGsonTree(WithMapOfGsonTree body) { _ignore(body); }
+    public static void postWithJacksonTreeBase(WithJacksonTreeBase body) { _ignore(body); }
+    public static void postWithJacksonTreeSubclass(WithJacksonTreeSubclass body) { _ignore(body); }
 }

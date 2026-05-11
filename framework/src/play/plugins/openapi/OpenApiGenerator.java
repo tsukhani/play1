@@ -377,6 +377,13 @@ public class OpenApiGenerator {
     }
 
     private Schema<?> classSchema(Class<?> cls) {
+        // PF-102: JSON-library tree types (Gson JsonElement, Jackson JsonNode,
+        // org.json) are opaque "JSON of unspecified shape" containers — recursing
+        // into them surfaces the library's API methods (asString, isJsonArray,
+        // etc.) as schema properties, which is pure noise. Short-circuit early.
+        if (isOpaqueJsonTreeType(cls)) {
+            return new ObjectSchema();
+        }
         if (cls == String.class || cls == Character.class || cls == char.class) {
             return new StringSchema();
         }
@@ -678,6 +685,42 @@ public class OpenApiGenerator {
 
     private static Schema<?> refSchema(String name) {
         return new Schema<Object>().$ref("#/components/schemas/" + name);
+    }
+
+    /**
+     * Detect JSON-library tree types that should render as opaque {@code object}
+     * schemas instead of being recursed into. Detection is by fully-qualified
+     * class name (and superclass-chain walk for Jackson's {@code *Node} family),
+     * so neither Jackson nor json.org becomes a framework compile-time dep.
+     *
+     * <p>Covered:
+     * <ul>
+     *   <li>Gson: {@code JsonElement}, {@code JsonObject}, {@code JsonArray},
+     *       {@code JsonPrimitive}, {@code JsonNull} (explicit list — Gson has
+     *       exactly these four subclasses)</li>
+     *   <li>Jackson: {@code JsonNode} and any subclass (via superclass walk —
+     *       covers {@code ArrayNode}, {@code ObjectNode}, {@code TextNode}, etc.)</li>
+     *   <li>json.org: {@code JSONObject}, {@code JSONArray}</li>
+     * </ul>
+     */
+    private static boolean isOpaqueJsonTreeType(Class<?> cls) {
+        String name = cls.getName();
+        if (name.equals("com.google.gson.JsonElement")
+                || name.equals("com.google.gson.JsonObject")
+                || name.equals("com.google.gson.JsonArray")
+                || name.equals("com.google.gson.JsonPrimitive")
+                || name.equals("com.google.gson.JsonNull")) {
+            return true;
+        }
+        if (name.equals("org.json.JSONObject") || name.equals("org.json.JSONArray")) {
+            return true;
+        }
+        for (Class<?> c = cls; c != null; c = c.getSuperclass()) {
+            if (c.getName().equals("com.fasterxml.jackson.databind.JsonNode")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

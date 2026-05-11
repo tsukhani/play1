@@ -496,4 +496,68 @@ public class OpenApiBeanSchemaTest {
         // Raw Map → plain object, no additionalProperties.
         assertThat(rawMap.getAdditionalProperties()).isNull();
     }
+
+    // -- PF-102 opaque JSON tree types --------------------------------------
+
+    @Test
+    public void gsonJsonElementFieldStaysOpaque() {
+        var routes = List.of(route("POST", "/gson", "OpenApiTestController.postWithGsonTree"));
+        OpenAPI spec = generator.generate(routes);
+
+        Map<String, Schema> schemas = spec.getComponents().getSchemas();
+        // No JsonElement/JsonObject/JsonArray/JsonPrimitive/JsonNull schemas leak in.
+        assertThat(schemas).doesNotContainKeys(
+                "JsonElement", "JsonObject", "JsonArray", "JsonPrimitive", "JsonNull");
+
+        Schema<?> bean = schemas.get("WithGsonTree");
+        Schema<?> configProp = (Schema<?>) bean.getProperties().get("config");
+        // The JsonElement field renders as a plain object schema (no $ref, no properties).
+        assertThat(configProp.get$ref()).isNull();
+        assertThat(configProp.getProperties()).isNullOrEmpty();
+        assertThat(configProp.getType()).isEqualTo("object");
+    }
+
+    @Test
+    public void mapValueOfGsonJsonElementStaysOpaque() {
+        var routes = List.of(route("POST", "/gson-map", "OpenApiTestController.postWithMapOfGsonTree"));
+        OpenAPI spec = generator.generate(routes);
+
+        Schema<?> bean = spec.getComponents().getSchemas().get("WithMapOfGsonTree");
+        Schema<?> attrs = (Schema<?>) bean.getProperties().get("attrs");
+        // additionalProperties is set (Map handling kicked in) and the value is opaque.
+        Schema<?> addProps = (Schema<?>) attrs.getAdditionalProperties();
+        assertThat(addProps).isNotNull();
+        assertThat(addProps.get$ref()).isNull();
+        assertThat(addProps.getProperties()).isNullOrEmpty();
+    }
+
+    @Test
+    public void jacksonJsonNodeFieldStaysOpaque() {
+        var routes = List.of(route("POST", "/jn", "OpenApiTestController.postWithJacksonTreeBase"));
+        OpenAPI spec = generator.generate(routes);
+
+        Map<String, Schema> schemas = spec.getComponents().getSchemas();
+        assertThat(schemas).doesNotContainKey("JsonNode");
+
+        Schema<?> bean = schemas.get("WithJacksonTreeBase");
+        Schema<?> payload = (Schema<?>) bean.getProperties().get("payload");
+        assertThat(payload.get$ref()).isNull();
+        assertThat(payload.getProperties()).isNullOrEmpty();
+    }
+
+    @Test
+    public void jacksonJsonNodeSubclassDetectedViaSuperclassWalk() {
+        // ObjectNode extends ContainerNode<...> extends JsonNode. The check must
+        // walk the superclass chain to find JsonNode and treat the subclass opaque.
+        var routes = List.of(route("POST", "/on", "OpenApiTestController.postWithJacksonTreeSubclass"));
+        OpenAPI spec = generator.generate(routes);
+
+        Map<String, Schema> schemas = spec.getComponents().getSchemas();
+        assertThat(schemas).doesNotContainKeys("ObjectNode", "ContainerNode", "JsonNode");
+
+        Schema<?> bean = schemas.get("WithJacksonTreeSubclass");
+        Schema<?> payload = (Schema<?>) bean.getProperties().get("payload");
+        assertThat(payload.get$ref()).isNull();
+        assertThat(payload.getProperties()).isNullOrEmpty();
+    }
 }
