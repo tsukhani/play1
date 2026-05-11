@@ -22,10 +22,17 @@ import io.swagger.v3.oas.models.responses.ApiResponses;
 import play.Logger;
 import play.mvc.Router;
 
+import java.lang.annotation.Annotation;
+import java.lang.reflect.AnnotatedElement;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -70,6 +77,13 @@ public class OpenApiGenerator {
     private final String version;
     private final OpenApiAnnotationReader annotationReader;
 
+    // Per-generate() state. Reset at the start of each generate() call so the
+    // generator is reusable across multiple spec builds. Not thread-safe;
+    // OpenApiPlugin creates a fresh generator per spec request anyway.
+    private OpenAPI currentSpec;
+    private Map<Class<?>, String> componentNames;
+    private Set<String> namesInUse;
+
     public OpenApiGenerator(ClassLoader classLoader, String title, String version) {
         this.classLoader = classLoader;
         this.title = title;
@@ -81,12 +95,15 @@ public class OpenApiGenerator {
      * Build an OpenAPI document from the supplied list of routes.
      */
     public OpenAPI generate(List<Router.Route> routes) {
-        OpenAPI openApi = new OpenAPI();
-        openApi.setInfo(new Info()
+        currentSpec = new OpenAPI();
+        componentNames = new HashMap<>();
+        namesInUse = new HashSet<>();
+
+        currentSpec.setInfo(new Info()
                 .title(title == null || title.isBlank() ? "Play Application API" : title)
                 .version(version == null || version.isBlank() ? "1.0.0" : version)
                 .description("Generated from Play's routes file."));
-        openApi.setComponents(new Components());
+        currentSpec.setComponents(new Components());
 
         Paths paths = new Paths();
         for (Router.Route route : routes) {
@@ -102,8 +119,8 @@ public class OpenApiGenerator {
             Operation op = buildOperation(route);
             assignOperation(pathItem, route.method, op);
         }
-        openApi.setPaths(paths);
-        return openApi;
+        currentSpec.setPaths(paths);
+        return currentSpec;
     }
 
     private boolean isActionRoute(Router.Route route) {
@@ -317,9 +334,10 @@ public class OpenApiGenerator {
     }
 
     /**
-     * Map a Java type to a basic OpenAPI Schema. Nested/generic types collapse to
-     * their raw form; we don't recurse into bean properties (annotation-driven
-     * enrichment is out of scope for this initial cut).
+     * Map a Java type to an OpenAPI Schema. Beans recurse into their public,
+     * non-static, non-transient fields (PF-97) and are registered as components
+     * with a $ref returned in their place. Collections preserve their element
+     * type; maps and unrecognized parameterized types degrade to ObjectSchema.
      */
     Schema<?> schemaFor(Type type) {
         if (type instanceof Class<?> cls) {
@@ -341,7 +359,7 @@ public class OpenApiGenerator {
         return new ObjectSchema();
     }
 
-    private static Schema<?> classSchema(Class<?> cls) {
+    private Schema<?> classSchema(Class<?> cls) {
         if (cls == String.class || cls == Character.class || cls == char.class) {
             return new StringSchema();
         }
@@ -374,8 +392,199 @@ public class OpenApiGenerator {
             }
             return enumSchema;
         }
-        // Generic Java bean — no annotation-driven recursion in this cut.
-        return new ObjectSchema();
+        // PF-97: recurse into bean properties and register the result under
+        // components/schemas so subsequent references share one definition.
+        return beanSchema(cls);
+    }
+
+    /**
+     * Build (and cache under {@code components/schemas/<name>}) a schema for a
+     * Java bean. Iterates public, non-static, non-transient fields and recurses
+     * via {@link #schemaFor(Type)} so generics and nested beans are preserved.
+     *
+     * <p>Cycle break: the component name is reserved in {@code componentNames}
+     * <em>before</em> descending into fields, so a recursive reference to the
+     * same class short-circuits to a $ref instead of looping.
+     *
+     * <p>Simple-name collisions: the first class with a given simple name claims
+     * that key; later classes register under their canonical (package-qualified)
+     * name to disambiguate.
+     *
+     * <p>Stdlib types ({@code java.*}, {@code javax.*}, {@code jakarta.*}) and
+     * anonymous classes degrade to a plain {@link ObjectSchema} — registering
+     * them under components would just be noise.
+     */
+    private Schema<?> beanSchema(Class<?> cls) {
+        if (isStdLib(cls) || cls.getSimpleName().isEmpty()) {
+            return new ObjectSchema();
+        }
+        String existingName = componentNames.get(cls);
+        if (existingName != null) {
+            return refSchema(existingName);
+        }
+
+        String name = pickComponentName(cls);
+        componentNames.put(cls, name);
+        namesInUse.add(name);
+
+        ObjectSchema bean = buildObjectSchema(cls);
+        currentSpec.getComponents().addSchemas(name, bean);
+        return refSchema(name);
+    }
+
+    private String pickComponentName(Class<?> cls) {
+        String simple = cls.getSimpleName();
+        if (!namesInUse.contains(simple)) {
+            return simple;
+        }
+        String canonical = cls.getCanonicalName();
+        return canonical != null ? canonical : cls.getName();
+    }
+
+    private ObjectSchema buildObjectSchema(Class<?> cls) {
+        ObjectSchema obj = new ObjectSchema();
+        List<String> required = new ArrayList<>();
+
+        for (Field field : cls.getFields()) {
+            if (shouldSkipField(field)) {
+                continue;
+            }
+            String propertyName = pickPropertyName(field);
+            Schema<?> propSchema = schemaFor(field.getGenericType());
+            applyFieldSchemaAnnotation(propSchema, field, required, propertyName);
+            applyJsonPropertyRequired(field, required, propertyName);
+            obj.addProperty(propertyName, propSchema);
+        }
+
+        if (!required.isEmpty()) {
+            obj.setRequired(required);
+        }
+        return obj;
+    }
+
+    private static boolean shouldSkipField(Field f) {
+        int mod = f.getModifiers();
+        if (Modifier.isStatic(mod) || Modifier.isTransient(mod)) {
+            return true;
+        }
+        String name = f.getName();
+        // EclipseLink JPA enhancement leaks `_persistence_*`; ASM-generated
+        // accessors leak `__*`. Both are runtime artefacts, never part of the
+        // intended serialization shape.
+        if (name.startsWith("_persistence_") || name.startsWith("__")) {
+            return true;
+        }
+        if (findAnnotationBySimpleName(f, "Transient") != null) {
+            return true;
+        }
+        if (findAnnotationBySimpleName(f, "JsonIgnore") != null) {
+            return true;
+        }
+        Annotation expose = findAnnotationBySimpleName(f, "Expose");
+        if (expose != null) {
+            Object serialize = readAnnotationAttribute(expose, "serialize");
+            if (serialize instanceof Boolean b && !b) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String pickPropertyName(Field f) {
+        Annotation jsonProperty = findAnnotationBySimpleName(f, "JsonProperty");
+        if (jsonProperty != null) {
+            Object val = readAnnotationAttribute(jsonProperty, "value");
+            if (val instanceof String s && !s.isEmpty()) {
+                return s;
+            }
+        }
+        Annotation serializedName = findAnnotationBySimpleName(f, "SerializedName");
+        if (serializedName != null) {
+            Object val = readAnnotationAttribute(serializedName, "value");
+            if (val instanceof String s && !s.isEmpty()) {
+                return s;
+            }
+        }
+        return f.getName();
+    }
+
+    private static void applyFieldSchemaAnnotation(Schema<?> schema, Field f,
+                                                    List<String> required, String propName) {
+        io.swagger.v3.oas.annotations.media.Schema ann =
+                f.getAnnotation(io.swagger.v3.oas.annotations.media.Schema.class);
+        if (ann == null) {
+            return;
+        }
+        if (!ann.description().isEmpty()) schema.setDescription(ann.description());
+        if (!ann.example().isEmpty()) schema.setExample(ann.example());
+        if (!ann.format().isEmpty()) schema.setFormat(ann.format());
+        if (!ann.pattern().isEmpty()) schema.setPattern(ann.pattern());
+        if (ann.nullable()) schema.setNullable(true);
+        if (ann.deprecated()) schema.setDeprecated(true);
+        if (!ann.minimum().isEmpty()) {
+            try {
+                schema.setMinimum(new BigDecimal(ann.minimum()));
+            } catch (NumberFormatException ignored) {
+                // Malformed numeric constraint: leave the inferred value alone.
+            }
+        }
+        if (!ann.maximum().isEmpty()) {
+            try {
+                schema.setMaximum(new BigDecimal(ann.maximum()));
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        if (ann.required()
+                || ann.requiredMode() == io.swagger.v3.oas.annotations.media.Schema.RequiredMode.REQUIRED) {
+            if (!required.contains(propName)) {
+                required.add(propName);
+            }
+        }
+    }
+
+    private static void applyJsonPropertyRequired(Field f, List<String> required, String propName) {
+        Annotation ann = findAnnotationBySimpleName(f, "JsonProperty");
+        if (ann == null) {
+            return;
+        }
+        Object req = readAnnotationAttribute(ann, "required");
+        if (req instanceof Boolean b && b && !required.contains(propName)) {
+            required.add(propName);
+        }
+    }
+
+    private static Schema<?> refSchema(String name) {
+        return new Schema<Object>().$ref("#/components/schemas/" + name);
+    }
+
+    private static boolean isStdLib(Class<?> cls) {
+        String pkg = cls.getPackageName();
+        return pkg.startsWith("java.") || pkg.equals("java")
+                || pkg.startsWith("javax.") || pkg.equals("javax")
+                || pkg.startsWith("jakarta.") || pkg.equals("jakarta");
+    }
+
+    /**
+     * Find an annotation on {@code element} by its simple name (so detection
+     * works without the annotation's defining library on the compile-time
+     * classpath — used for Jackson/Gson interop).
+     */
+    private static Annotation findAnnotationBySimpleName(AnnotatedElement element, String simpleName) {
+        for (Annotation a : element.getAnnotations()) {
+            if (a.annotationType().getSimpleName().equals(simpleName)) {
+                return a;
+            }
+        }
+        return null;
+    }
+
+    private static Object readAnnotationAttribute(Annotation a, String name) {
+        try {
+            Method m = a.annotationType().getMethod(name);
+            return m.invoke(a);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private static void assignOperation(PathItem pathItem, String method, Operation op) {
