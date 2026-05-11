@@ -2,7 +2,9 @@ package play.plugins.openapi;
 
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.Operation;
+import io.swagger.v3.oas.models.media.ArraySchema;
 import io.swagger.v3.oas.models.media.MediaType;
+import io.swagger.v3.oas.models.media.Schema;
 import io.swagger.v3.oas.models.parameters.Parameter;
 import io.swagger.v3.oas.models.parameters.RequestBody;
 import io.swagger.v3.oas.models.responses.ApiResponse;
@@ -134,6 +136,47 @@ public class OpenApiAnnotationsTest {
                 .as("class @Tag + method @Operation(tags) — union, deduped")
                 .contains("users", "admin")
                 .doesNotHaveDuplicates();
+    }
+
+    // -- PF-101 @Content(array = @ArraySchema(...)) -------------------------
+
+    @Test
+    public void contentArrayFormProducesArraySchema() {
+        var routes = List.of(route("GET", "/users", "OpenApiTestController.annotatedListResponseArrayForm"));
+        OpenAPI spec = generator.generate(routes);
+
+        MediaType mt = spec.getPaths().get("/users").getGet()
+                .getResponses().get("200").getContent().get("application/json");
+        assertThat(mt.getSchema())
+                .as("@Content(array=...) must produce a non-null array schema")
+                .isInstanceOf(ArraySchema.class);
+        Schema<?> items = ((ArraySchema) mt.getSchema()).getItems();
+        // items resolves through the same $ref path used by the singular form.
+        assertThat(items.get$ref()).isEqualTo("#/components/schemas/User");
+    }
+
+    @Test
+    public void contentSingularBeatsArrayWhenBothPresent() {
+        var routes = List.of(route("GET", "/users", "OpenApiTestController.annotatedBothFormsSingularWins"));
+        OpenAPI spec = generator.generate(routes);
+
+        MediaType mt = spec.getPaths().get("/users").getGet()
+                .getResponses().get("200").getContent().get("application/json");
+        // Singular @Schema wins: schema is a $ref directly, not an ArraySchema wrapping one.
+        assertThat(mt.getSchema()).isNotInstanceOf(ArraySchema.class);
+        assertThat(mt.getSchema().get$ref()).isEqualTo("#/components/schemas/User");
+    }
+
+    @Test
+    public void contentEmptyStaysEmpty() {
+        var routes = List.of(route("GET", "/users", "OpenApiTestController.annotatedEmptyContent"));
+        OpenAPI spec = generator.generate(routes);
+
+        MediaType mt = spec.getPaths().get("/users").getGet()
+                .getResponses().get("200").getContent().get("application/json");
+        // No regression: an empty @Content still produces a MediaType with no schema.
+        assertThat(mt).isNotNull();
+        assertThat(mt.getSchema()).isNull();
     }
 
     @Test

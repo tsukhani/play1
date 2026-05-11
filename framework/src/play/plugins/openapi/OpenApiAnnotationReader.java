@@ -227,6 +227,12 @@ final class OpenApiAnnotationReader {
             String mediaType = c.mediaType().isEmpty() ? "application/json" : c.mediaType();
             MediaType mt = new MediaType();
             Schema<?> schema = schemaFromAnnotation(c.schema());
+            // PF-101: when the singular @Schema is absent, fall back to @Content.array()
+            // so list-endpoint responses annotated with the array form produce an
+            // ArraySchema(items = $ref) instead of an empty MediaType.
+            if (schema == null) {
+                schema = schemaFromArrayAnnotation(c.array());
+            }
             if (schema != null) {
                 mt.setSchema(schema);
             }
@@ -234,6 +240,23 @@ final class OpenApiAnnotationReader {
             any = true;
         }
         return any ? content : null;
+    }
+
+    /**
+     * Produce an ArraySchema from a {@code @ArraySchema} annotation, or null if
+     * the inner {@code schema()} is empty / placeholder. The inner schema is
+     * resolved by the same {@link #schemaFromAnnotation} path used for singular
+     * {@code @Schema}, so $ref-to-component output is identical.
+     */
+    private Schema<?> schemaFromArrayAnnotation(io.swagger.v3.oas.annotations.media.ArraySchema arr) {
+        if (arr == null) {
+            return null;
+        }
+        Schema<?> inner = schemaFromAnnotation(arr.schema());
+        if (inner == null) {
+            return null;
+        }
+        return new io.swagger.v3.oas.models.media.ArraySchema().items(inner);
     }
 
     /**

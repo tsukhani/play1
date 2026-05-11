@@ -6,6 +6,7 @@ import com.google.gson.annotations.Expose;
 import com.google.gson.annotations.SerializedName;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.ArraySchema;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.parameters.RequestBody;
@@ -98,6 +99,23 @@ public class OpenApiTestController extends Controller {
 
     @Operation(tags = {"admin"})
     public static void annotatedMethodTag() {
+    }
+
+    // -- PF-101 @Content(array=...) fixtures --------------------------------
+
+    @ApiResponse(responseCode = "200",
+            content = @Content(array = @ArraySchema(schema = @Schema(implementation = User.class))))
+    public static void annotatedListResponseArrayForm() {
+    }
+
+    @ApiResponse(responseCode = "200", content = @Content(
+            schema = @Schema(implementation = User.class),
+            array = @ArraySchema(schema = @Schema(implementation = User.class))))
+    public static void annotatedBothFormsSingularWins() {
+    }
+
+    @ApiResponse(responseCode = "200", content = @Content)
+    public static void annotatedEmptyContent() {
     }
 
     // -- PF-97 bean-introspection fixtures ----------------------------------
