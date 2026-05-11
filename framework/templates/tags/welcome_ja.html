@@ -10,8 +10,8 @@
 
         <h2>閲覧</h2>
         <ul>
-            <li id="gotoc"><a href="/@documentation/home">ローカルドキュメント</a></li>
-            <li id="gotoc"><a href="/@api/index.html">Java API</a></li>
+            <li id="gotoc"><a href="/@docs/home">ローカルドキュメント</a></li>
+            <li id="gotoc"><a href="/@docs/api/index.html">Java API</a></li>
         </ul>
 
         <h2>コンテンツ</h2>
@@ -24,7 +24,7 @@
                     <li>
                         <a href="modules/${module}/home">${module}</a>
                         #{if apis.contains(module)}
-                            — <a href="/@api/-${module}/index.html">Browse API</a>
+                            — <a href="/@docs/api/-${module}/index.html">Browse API</a>
                         #{/if}
                     </li>
                 #{/list}
@@ -71,7 +71,7 @@ GET     /         Application.index</code></pre>
                 あなたは任意のテキストエディタを使って、今すぐにアプリケーションのハックを始めることができます。Java ソースファイルに加えられた更新を含むすべての変更は、次回のページ更新時に自動的に再度読み込まれます。
             </p>
             <p>
-                <strong>Eclipse</strong>, <strong>Netbeans</strong> またはその他の Java IDE にてアプリケーションをセットアップしたい場合は、<a href="/@documentation/ide">お好みの IDE を設定しよう</a> ページを確認してください。
+                <strong>Eclipse</strong>, <strong>Netbeans</strong> またはその他の Java IDE にてアプリケーションをセットアップしたい場合は、<a href="/@docs/ide">お好みの IDE を設定しよう</a> ページを確認してください。
             </p>
             <h2><a name="db">データベースに接続する必要がありますか?</a></h2>
             <p>
@@ -95,7 +95,7 @@ db.user=root
 db.pass=secret</code></pre>
             <h2><a name="doc">もっとヘルプが必要ですか?</a></h2>
             <p>
-                アプリケーションを <strong>DEV</strong> モードで実行している場合は <a href="/@documentation">/@documentation</a> という URL で最新のドキュメントに直接アクセスすることができます。あるいは <a href="https://www.playframework.com">https://www.playframework.com</a> を訪問してください。
+                アプリケーションを <strong>DEV</strong> モードで実行している場合は <a href="/@docs">/@docs</a> という URL で最新のドキュメントに直接アクセスすることができます。あるいは <a href="https://www.playframework.com">https://www.playframework.com</a> を訪問してください。
             </p>
             <p>
                 Play ユーザは <a href="http://groups.google.com/group/play-framework">Play Google Group</a> でヘルプを検索し、プロジェクトを発表し、議論します。もし google アカウントを持っていない場合でも、<strong>play-framework+subscribe@googlegroups.com</strong> にメールを送ってメーリングリストに参加することができます。

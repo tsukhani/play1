@@ -49,7 +49,7 @@ public class Play {
 
         /**
          * Enable development-specific features, e.g. view the documentation at the URL
-         * {@literal "/@documentation"}.
+         * {@literal "/@docs"}.
          */
         DEV,
         /**

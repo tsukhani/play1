@@ -50,7 +50,7 @@ cd ~/projects/myFirstApp && play run
 
 6. Start developing your new application:
 
-* [Documentation](documentation/manual/home.textile) — also browseable at `/@documentation` while a dev-mode app is running (served by the bundled docviewer module).
+* [Documentation](documentation/manual/home.textile) — also browseable at `/@docs` while a dev-mode app is running (served by the bundled docviewer module).
 
 ## TLS, HTTP/2, and HTTP/3
 

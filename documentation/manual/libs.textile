@@ -4,22 +4,22 @@ The @play.libs@ package contains several useful libraries that will help you to 
 
 Most of these libraries are simple helpers that are really straightforward to use: 
 
-* "Codec":/@api/play/libs/Codec.html: Utilities to encode and decode data.
-* "Crypto":/@api/play/libs/Crypto.html: Cryptographics utilities.
-* "Expression":/@api/play/libs/Expression.html: Evaluate dynamic expressions.
-* "F":/@api/play/libs/F.html: Functional programming with Java.
-* "Files":/@api/play/libs/Files.html: File system manipulation helpers.
-* "I18N":/@api/play/libs/I18N.html: Internationalization helpers.
-* "IO":/@api/play/libs/IO.html: Stream manipulation helpers.
-* "Images":/@api/play/libs/Images.html: Image manipulation utilities.
-* "Mail":/@api/play/libs/Mail.html: E-mail functions.
-* "MimeTypes":/@api/play/libs/MimeTypes.html: Dealing with MIME types.
-* "OAuth2":/@api/play/libs/OAuth2.html: OAuth 2.0 client protocol.
-* "OpenID":/@api/play/libs/OpenID.html: OpenID client protocol.
-* "Time":/@api/play/libs/Time.html: Time and duration utilities.
-* "WS":/@api/play/libs/WS.html: Powerful Web Service client.
-* "XML":/@api/play/libs/XML.html: Loading XML structures.
-* "XPath":/@api/play/libs/XPath.html: Parsing XML using XPath.
+* "Codec":/@docs/api/play/libs/Codec.html: Utilities to encode and decode data.
+* "Crypto":/@docs/api/play/libs/Crypto.html: Cryptographics utilities.
+* "Expression":/@docs/api/play/libs/Expression.html: Evaluate dynamic expressions.
+* "F":/@docs/api/play/libs/F.html: Functional programming with Java.
+* "Files":/@docs/api/play/libs/Files.html: File system manipulation helpers.
+* "I18N":/@docs/api/play/libs/I18N.html: Internationalization helpers.
+* "IO":/@docs/api/play/libs/IO.html: Stream manipulation helpers.
+* "Images":/@docs/api/play/libs/Images.html: Image manipulation utilities.
+* "Mail":/@docs/api/play/libs/Mail.html: E-mail functions.
+* "MimeTypes":/@docs/api/play/libs/MimeTypes.html: Dealing with MIME types.
+* "OAuth2":/@docs/api/play/libs/OAuth2.html: OAuth 2.0 client protocol.
+* "OpenID":/@docs/api/play/libs/OpenID.html: OpenID client protocol.
+* "Time":/@docs/api/play/libs/Time.html: Time and duration utilities.
+* "WS":/@docs/api/play/libs/WS.html: Powerful Web Service client.
+* "XML":/@docs/api/play/libs/XML.html: Loading XML structures.
+* "XPath":/@docs/api/play/libs/XPath.html: Parsing XML using XPath.
 
 The following sections provide more information about the most important libraries.
 

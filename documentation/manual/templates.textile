@@ -359,15 +359,15 @@ bc. renderArgs.put("user", user );
 When you render a template from an action, the framework also adds implicit objects:
 
 || Variable || Description || API documentation || See also ||
-| @errors@ | Validation errors | "play.data.validation.Validation.errors()":/@api/play/data/validation/Validation.html#errors%28%29 | "Validating HTTP data":validation |
-| @flash@ | Flash scope | "play.mvc.Scope.Flash":/@api/play/mvc/Scope.Flash.html  | "Controllers - Session & Flash Scope":controllers#session |
-| @lang@ | The current language | "play.i18n.Lang":/@api/play/i18n/Lang.html | "Setting up I18N - Define languages":i18n#languages |
-| @messages@ | The messages map | "play.i18n.Messages":/@api/play/i18n/Messages.html | "Setting up I18N - Externalize messages":i18n#messages |
+| @errors@ | Validation errors | "play.data.validation.Validation.errors()":/@docs/api/play/data/validation/Validation.html#errors%28%29 | "Validating HTTP data":validation |
+| @flash@ | Flash scope | "play.mvc.Scope.Flash":/@docs/api/play/mvc/Scope.Flash.html  | "Controllers - Session & Flash Scope":controllers#session |
+| @lang@ | The current language | "play.i18n.Lang":/@docs/api/play/i18n/Lang.html | "Setting up I18N - Define languages":i18n#languages |
+| @messages@ | The messages map | "play.i18n.Messages":/@docs/api/play/i18n/Messages.html | "Setting up I18N - Externalize messages":i18n#messages |
 | @out@ | The output stream writer | java.io.PrintWriter |  |
-| @params@ | Current parameters | "play.mvc.Scope.Params":/@api/play/mvc/Scope.Params.html  | "Controllers - HTTP parameters":controllers#params |
-| @play@ | Main framework class | "play.Play":/@api/play/Play.html |  |
-| @request@ | The current HTTP request | "play.mvc.Http.Request":/@api/play/mvc/Http.Request.html  |  |
-| @session@ | Session scope | "play.mvc.Scope.Session":/@api/play/mvc/Scope.Session.html  | "Controllers - Session & Flash Scope":controllers#session |
+| @params@ | Current parameters | "play.mvc.Scope.Params":/@docs/api/play/mvc/Scope.Params.html  | "Controllers - HTTP parameters":controllers#params |
+| @play@ | Main framework class | "play.Play":/@docs/api/play/Play.html |  |
+| @request@ | The current HTTP request | "play.mvc.Http.Request":/@docs/api/play/mvc/Http.Request.html  |  |
+| @session@ | Session scope | "play.mvc.Scope.Session":/@docs/api/play/mvc/Scope.Session.html  | "Controllers - Session & Flash Scope":controllers#session |
 
 In addition to the list above the names @owner@, @delegate@ and @it@ are reserved in Groovy and shouldn't be used as variable names in templates.
 

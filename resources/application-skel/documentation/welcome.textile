@@ -10,4 +10,4 @@ You can customize the way it looks by editing @template.html@ file, but it's not
 
 h2. Browsing the documentation
 
-The documentation viewer is mounted automatically in dev mode at "/@documentation":/@documentation. Each textile file becomes a page in the sidebar.
+The documentation viewer is mounted automatically in dev mode at "/@docs":/@docs. Each textile file becomes a page in the sidebar.

@@ -359,15 +359,15 @@ bc. renderArgs.put("user", user );
 アクションからテンプレートをレンダリングするとき、フレームワークは以下の暗黙オブジェクトも追加します:
 
 || 変数 || 説明 || API ドキュメント || 参考 ||
-| @errors@ | バリデーションエラー | "play.data.validation.Validation.errors()":/@api/play/data/validation/Validation.html#errors%28%29 | "HTTP フォームデータのバリデーション":validation |
-| @flash@ | フラッシュスコープ | "play.mvc.Scope.Flash":/@api/play/mvc/Scope.Flash.html  | "コントローラ - セッションとフラッシュのスコープ":controllers#session |
-| @lang@ | 現在の言語 | "play.i18n.Lang":/@api/play/i18n/Lang.html | "I18N の設定 - 言語の定義":i18n#languages |
-| @messages@ | メッセージのマップ | "play.i18n.Messages":/@api/play/i18n/Messages.html | "I18N の設定 - メッセージの外部化":i18n#messages |
+| @errors@ | バリデーションエラー | "play.data.validation.Validation.errors()":/@docs/api/play/data/validation/Validation.html#errors%28%29 | "HTTP フォームデータのバリデーション":validation |
+| @flash@ | フラッシュスコープ | "play.mvc.Scope.Flash":/@docs/api/play/mvc/Scope.Flash.html  | "コントローラ - セッションとフラッシュのスコープ":controllers#session |
+| @lang@ | 現在の言語 | "play.i18n.Lang":/@docs/api/play/i18n/Lang.html | "I18N の設定 - 言語の定義":i18n#languages |
+| @messages@ | メッセージのマップ | "play.i18n.Messages":/@docs/api/play/i18n/Messages.html | "I18N の設定 - メッセージの外部化":i18n#messages |
 | @out@ | 出力ストリーム | java.io.PrintWriter |  |
-| @params@ | 現在のパラメータ | "play.mvc.Scope.Params":/@api/play/mvc/Scope.Params.html  | "コントローラ - HTTP パラメータ":controllers#params |
-| @play@ | フレームワークの中心クラス | "play.Play":/@api/play/Play.html |  |
-| @request@ | 現在の HTTP リクエスト | "play.mvc.Http.Request":/@api/play/mvc/Http.Request.html  |  |
-| @session@ | セッションスコープ | "play.mvc.Scope.Session":/@api/play/mvc/Scope.Session.html  | "コントローラ - セッションとフラッシュのスコープ":controllers#session |
+| @params@ | 現在のパラメータ | "play.mvc.Scope.Params":/@docs/api/play/mvc/Scope.Params.html  | "コントローラ - HTTP パラメータ":controllers#params |
+| @play@ | フレームワークの中心クラス | "play.Play":/@docs/api/play/Play.html |  |
+| @request@ | 現在の HTTP リクエスト | "play.mvc.Http.Request":/@docs/api/play/mvc/Http.Request.html  |  |
+| @session@ | セッションスコープ | "play.mvc.Scope.Session":/@docs/api/play/mvc/Scope.Session.html  | "コントローラ - セッションとフラッシュのスコープ":controllers#session |
 
 上記のリストに加えて @owner@, @delegate@ そして @it@ は Groovy で予約されており、テンプレート内の変数名として使うべきではありません。
 

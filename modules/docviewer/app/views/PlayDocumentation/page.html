@@ -56,7 +56,7 @@
                 <h2 class="font-bold text-gray-500 text-sm mb-1 mt-5">Browse ${module ? '('+module.capitalizeWords()+')' : ''}</h2>
                 <ul class="list-square text-gray-400 leading-tight pl-4">
                     #{if module}
-                         <li class="py-0.5" id="gotoc"><a class="text-[#568C00]" href="/@documentation">Documentation home</a></li>
+                         <li class="py-0.5" id="gotoc"><a class="text-[#568C00]" href="/@docs">Documentation home</a></li>
                     #{/if}
                     <li class="py-0.5" id="gotoc"><a class="text-[#568C00]" href="home">${module ?  module.capitalizeWords() + ' — ' : ''}Table of contents</a></li>
                 </ul>
@@ -68,7 +68,7 @@
                             <li class="py-0.5">
                                 <a class="text-[#568C00]" href="modules/${module}/home">${module.capitalizeWords()}</a>
                                 #{if apis.contains(module)}
-                                    — <a class="text-[#568C00]" href="/@api/-${module}/index.html">Browse API</a>
+                                    — <a class="text-[#568C00]" href="/@docs/api/-${module}/index.html">Browse API</a>
                                 #{/if}
                             </li>
                         #{/list}

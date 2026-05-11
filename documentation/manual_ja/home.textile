@@ -159,7 +159,7 @@ h2. <a name="references">リファレンス</a>
 日々のハックのための広範囲なリファレンスです。
 
 # <a class="navigation" href="index">クイックインデックス</a>
-# <a class="navigation" href="/@api/index.html">API ドキュメント (Javadoc)</a>
+# <a class="navigation" href="/@docs/api/index.html">API ドキュメント (Javadoc)</a>
 # "チートシート":cheatsheet/commandLine
 ## "コマンドライン":cheatsheet/commandLine
 ## "コントローラ":cheatsheet/controllers

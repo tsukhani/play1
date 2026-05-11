@@ -10,8 +10,8 @@
         <div class="bg-white rounded shadow-sm p-4 text-xs">
             <h3 class="font-semibold text-gray-500 uppercase tracking-wide text-[10px] mb-2">Browse</h3>
             <ul class="space-y-1 text-[#568C00]">
-                <li id="gotoc"><a href="/@documentation/home" class="hover:underline">Local documentation</a></li>
-                <li id="goapi"><a href="/@api/index.html" class="hover:underline">Browse Java API</a></li>
+                <li id="gotoc"><a href="/@docs/home" class="hover:underline">Local documentation</a></li>
+                <li id="goapi"><a href="/@docs/api/index.html" class="hover:underline">Browse Java API</a></li>
             </ul>
 
             <h3 class="font-semibold text-gray-500 uppercase tracking-wide text-[10px] mt-5 mb-2">Contents</h3>
@@ -24,7 +24,7 @@
                 <li>
                     <a href="modules/${module}/home" class="hover:underline">${module}</a>
                     #{if apis.contains(module)}
-                        &mdash; <a href="/@api/-${module}/index.html" class="hover:underline">API</a>
+                        &mdash; <a href="/@docs/api/-${module}/index.html" class="hover:underline">API</a>
                     #{/if}
                 </li>
             #{/list}
@@ -65,7 +65,7 @@ GET     /         Application.index</code></pre>
         </p>
         <p class="text-sm text-gray-600 mb-3">
             If you want to set up your application in <strong>Eclipse</strong>, <strong>Netbeans</strong> or any other Java IDE, check
-            the <a href="/@documentation/ide" class="text-[#568C00] hover:underline">Setting up your preferred IDE</a> page.
+            the <a href="/@docs/ide" class="text-[#568C00] hover:underline">Setting up your preferred IDE</a> page.
         </p>
 
         <h2 id="db" class="text-lg font-semibold text-gray-800 mt-8 mb-2">Need to connect to a database?</h2>
@@ -94,7 +94,7 @@ db.pass=secret</code></pre>
         <h2 id="doc" class="text-lg font-semibold text-gray-800 mt-8 mb-2">Need more help?</h2>
         <p class="text-sm text-gray-600 mb-3">
             When your application runs in <strong>DEV</strong> mode, you can access the current documentation at
-            <a href="/@documentation" class="text-[#568C00] hover:underline">/@documentation</a> or go to
+            <a href="/@docs" class="text-[#568C00] hover:underline">/@docs</a> or go to
             <a href="https://www.playframework.com" class="text-[#568C00] hover:underline">playframework.com</a>.
         </p>
 

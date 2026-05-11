@@ -48,14 +48,14 @@ h2. <a name="documentation">Add documentation to a module</a>
 
 You can add a documentation page to a module simply by adding a file @documentation/manual/home.textile@ to the module. Use the same Textile syntax as the Play documentation itself, in @${play.path}/documentation/manual/@.
 
-If you are running a Play application that uses one or more modules with documentation, then the local Play documentation at "http://localhost:9000/@documentation":http://localhost:9000/@documentation will include links to their documentation pages under *Installed Modules* in the side bar.
+If you are running a Play application that uses one or more modules with documentation, then the local Play documentation at "http://localhost:9000/@docs":http://localhost:9000/@docs will include links to their documentation pages under *Installed Modules* in the side bar.
 
 h2. <a name="bundled">Bundled modules</a>
 
 This fork ships two built-in modules:
 
 * @testrunner@ — @/@tests@ web UI used by @play test@ and @play autotest@; auto-loaded under @play.id=test@
-* @docviewer@ — local @/@documentation@ browser; auto-loaded in dev mode
+* @docviewer@ — local @/@docs@ browser; auto-loaded in dev mode
 
 Both modules are auto-loaded — explicit declaration is not required.
 

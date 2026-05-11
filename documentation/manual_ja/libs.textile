@@ -4,23 +4,23 @@ h1. Play ライブラリ
 
 これらライブラリのほとんどは本当に直感的に使うことのできるシンプルなヘルパです:
 
-* "Codec":/@api/play/libs/Codec.html: データをエンコードまたはデコードするユーティリティ
-* "Crypto":/@api/play/libs/Crypto.html: 暗号化に関するユーティリティ
-* "Expression":/@api/play/libs/Expression.html: 動的な式の評価
-* "F":/@api/play/libs/F.html: Java による関数プログラミング
-* "ファイル":/@api/play/libs/Files.html: ファイルシステム操作ヘルパ
-* "I18N":/@api/play/libs/I18N.html: 国際化ヘルパ
-* "IO":/@api/play/libs/IO.html: ストリーム操作ヘルパ
-* "Images":/@api/play/libs/Images.html: イメージ操作ヘルパ
-* "Mail":/@api/play/libs/Mail.html: e メール関数
-* "MimeTypes":/@api/play/libs/MimeTypes.html: MIME タイプの取扱い
-* "OAuth":/@api/play/libs/OAuth.html: OAuth クライアントプロトコル
-* "OAuth2":/@api/play/libs/OAuth2.html: OAuth2 クライアントプロトコル
-* "OpenID":/@api/play/libs/OpenID.html: OpenID クライアントプロトコル
-* "Time":/@api/play/libs/Time.html: 時間と期間のユーティリティ
-* "WS":/@api/play/libs/WS.html: 強力な Web サービスクライアント
-* "XML":/@api/play/libs/XML.html: XML 構造のロード
-* "XPath":/@api/play/libs/XPath.html: XPath による XML の解析
+* "Codec":/@docs/api/play/libs/Codec.html: データをエンコードまたはデコードするユーティリティ
+* "Crypto":/@docs/api/play/libs/Crypto.html: 暗号化に関するユーティリティ
+* "Expression":/@docs/api/play/libs/Expression.html: 動的な式の評価
+* "F":/@docs/api/play/libs/F.html: Java による関数プログラミング
+* "ファイル":/@docs/api/play/libs/Files.html: ファイルシステム操作ヘルパ
+* "I18N":/@docs/api/play/libs/I18N.html: 国際化ヘルパ
+* "IO":/@docs/api/play/libs/IO.html: ストリーム操作ヘルパ
+* "Images":/@docs/api/play/libs/Images.html: イメージ操作ヘルパ
+* "Mail":/@docs/api/play/libs/Mail.html: e メール関数
+* "MimeTypes":/@docs/api/play/libs/MimeTypes.html: MIME タイプの取扱い
+* "OAuth":/@docs/api/play/libs/OAuth.html: OAuth クライアントプロトコル
+* "OAuth2":/@docs/api/play/libs/OAuth2.html: OAuth2 クライアントプロトコル
+* "OpenID":/@docs/api/play/libs/OpenID.html: OpenID クライアントプロトコル
+* "Time":/@docs/api/play/libs/Time.html: 時間と期間のユーティリティ
+* "WS":/@docs/api/play/libs/WS.html: 強力な Web サービスクライアント
+* "XML":/@docs/api/play/libs/XML.html: XML 構造のロード
+* "XPath":/@docs/api/play/libs/XPath.html: XPath による XML の解析
 
 以下の節では、特に重要なライブラリについて、より詳細な情報を提供します。
 

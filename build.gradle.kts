@@ -141,7 +141,7 @@ abstract class PlayNewAppTask : DefaultTask() {
                 frameworkPath.set(file("$fwPath"))
                 frameworkVersion.set("$fwVer")
 
-                // Docviewer powers the welcome page, /@documentation, and /@api browsers
+                // Docviewer powers the welcome page and the /@docs (user docs + Javadoc) browser
                 // in dev mode. Remove if you want a slimmer setup.
                 modules("docviewer")
             }

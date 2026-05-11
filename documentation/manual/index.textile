@@ -5,15 +5,15 @@ Use this page to navigate quickly to a specific Play framework function.
 h2. Implicit template variables
 
 <div class="index">
-# "errors":/@api/play/data/validation/Validation.html#errors%28%29
-# "flash":/@api/play/mvc/Scope.Flash.html
-# "lang":/@api/play/i18n/Lang.html
-# "messages":/@api/play/i18n/Messages.html
+# "errors":/@docs/api/play/data/validation/Validation.html#errors%28%29
+# "flash":/@docs/api/play/mvc/Scope.Flash.html
+# "lang":/@docs/api/play/i18n/Lang.html
+# "messages":/@docs/api/play/i18n/Messages.html
 # "out":http://download.oracle.com/javase/1.5.0/docs/api/java/io/PrintWriter.html
-# "params":/@api/play/mvc/Scope.Params.html
-# "play":/@api/play/Play.html
-# "request":/@api/play/mvc/Http.Request.html
-# "session":/@api/play/mvc/Scope.Session.html
+# "params":/@docs/api/play/mvc/Scope.Params.html
+# "play":/@docs/api/play/Play.html
+# "request":/@docs/api/play/mvc/Http.Request.html
+# "session":/@docs/api/play/mvc/Scope.Session.html
 </div>
 
 h2. Built-in tags

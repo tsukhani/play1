@@ -42,14 +42,14 @@ h2. <a name="documentation">モジュールにドキュメントを追加する<
 
 モジュールに @documentation/manual/home.textile@ ファイルを追加するだけで、モジュールにドキュメントを追加することができます。 @${play.path}/documentation/manual/@ にある Play 自身のドキュメントと同じ Textile 文法を使ってください。
 
-ドキュメントを持つひとつまたはそれ以上のモジュールを使って Play アプリケーションを実行している場合、 "http://localhost:9000/@documentation":http://localhost:9000/@documentation にあるローカルの Play ドキュメントは、サイドバーの *Installed Modules* の下にそれらドキュメントへのリンクを含みます。
+ドキュメントを持つひとつまたはそれ以上のモジュールを使って Play アプリケーションを実行している場合、 "http://localhost:9000/@docs":http://localhost:9000/@docs にあるローカルの Play ドキュメントは、サイドバーの *Installed Modules* の下にそれらドキュメントへのリンクを含みます。
 
 h2. <a name="bundled">同梱モジュール</a>
 
 このフォークには 2 つの組み込みモジュールが同梱されています:
 
 * @testrunner@ — @play test@ と @play autotest@ で使用される @/@tests@ Web UI; @play.id=test@ で実行する際に自動ロード
-* @docviewer@ — ローカルの @/@documentation@ ブラウザ; 開発モードで自動ロード
+* @docviewer@ — ローカルの @/@docs@ ブラウザ; 開発モードで自動ロード
 
 両モジュールとも自動的に読み込まれるため、明示的な宣言は不要です。
 
