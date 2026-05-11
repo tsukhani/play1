@@ -18,7 +18,21 @@ import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
+import java.math.BigDecimal;
+import java.math.BigInteger;
+import java.net.URI;
+import java.net.URL;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.OffsetDateTime;
+import java.util.Date;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
 
 /**
  * Fake controller used by {@code play.plugins.openapi.OpenApiGeneratorTest}.
@@ -184,4 +198,145 @@ public class OpenApiTestController extends Controller {
     public static void postJpaPolluted(JpaPolluted body) { _ignore(body); }
     public static void postAnnotated(AnnotatedFields body) { _ignore(body); }
     public static void postJsonAnnotated(JsonAnnotated body) { _ignore(body); }
+
+    // -- PF-98 getter-reflection fixtures -----------------------------------
+
+    /** Models the play.data.Upload pattern: public interface with getter methods. */
+    public interface UploadLike {
+        String getContentType();
+        String getFileName();
+        long getSize();
+        boolean isFinished();
+    }
+
+    /** JavaBean-style class: private fields, public getters. */
+    public static class JavaBeanish {
+        private Long id;
+        private String name;
+        public Long getId() { return id; }
+        public String getName() { return name; }
+    }
+
+    /** Acronym preservation: getURL() should produce the property name `URL`. */
+    public static class WithAcronym {
+        public String getURL() { return null; }
+    }
+
+    /** Boolean getter with isX naming. */
+    public static class WithIsAccessor {
+        public boolean isActive() { return false; }
+    }
+
+    /** Field and getter for the same property — field should win on dedup. */
+    public static class FieldAndGetter {
+        public String name;
+        public String getName() { return name; }
+    }
+
+    /** Superclass with a getter — should be inherited into the subclass schema. */
+    public static class GetterParent {
+        public String getInherited() { return null; }
+    }
+    public static class GetterChild extends GetterParent {
+        public String getOwn() { return null; }
+    }
+
+    /** Annotation interaction on getters. */
+    public static class AnnotatedGetters {
+        @JsonIgnore public String getHidden() { return null; }
+        @JsonProperty("created_at") public Long getCreatedAt() { return null; }
+        @Schema(description = "the canonical label", example = "hello") public String getLabel() { return null; }
+        @JsonProperty(value = "kind", required = true) public String getKind() { return null; }
+    }
+
+    public static void postUploadLike(UploadLike body) { _ignore(body); }
+    public static void postJavaBeanish(JavaBeanish body) { _ignore(body); }
+    public static void postWithAcronym(WithAcronym body) { _ignore(body); }
+    public static void postWithIsAccessor(WithIsAccessor body) { _ignore(body); }
+    public static void postFieldAndGetter(FieldAndGetter body) { _ignore(body); }
+    public static void postGetterChild(GetterChild body) { _ignore(body); }
+    public static void postAnnotatedGetters(AnnotatedGetters body) { _ignore(body); }
+
+    // -- PF-99 record fixtures ----------------------------------------------
+
+    /** Plain record with primitive components. */
+    public record RecAgent(Long id, String name, boolean enabled) {}
+
+    /** Record with a parameterized-type component. */
+    public record RecPage(List<Integer> items, int total) {}
+
+    /** Self-referential record — exercises cycle detection. */
+    public record RecTree(String id, List<RecTree> children) {}
+
+    /** Record with nested record component (composition). */
+    public record RecOwner(String label, RecAgent owner) {}
+
+    /** Component annotations placed on the canonical constructor parameter. */
+    public record RecAnnotated(
+            @Schema(description = "the entry id") Long id,
+            @JsonProperty("created_at") Long createdAt,
+            @JsonIgnore String hidden,
+            @JsonProperty(value = "kind", required = true) String kind) {}
+
+    /** Component annotation placed on the accessor instead of the param. */
+    public record RecAccessorAnnotated(String value) {
+        @Override
+        @Schema(description = "annotated via accessor")
+        public String value() { return value; }
+    }
+
+    /** Top-level Dup for same-simple-name collision test. */
+    public record RecDup(String a) {}
+    public static class Bag {
+        public record RecDup(String b) {}
+    }
+
+    public static void postRecAgent(RecAgent body) { _ignore(body); }
+    public static void postRecPage(RecPage body) { _ignore(body); }
+    public static void postRecTree(RecTree body) { _ignore(body); }
+    public static void postRecOwner(RecOwner body) { _ignore(body); }
+    public static void postRecAnnotated(RecAnnotated body) { _ignore(body); }
+    public static void postRecAccessorAnnotated(RecAccessorAnnotated body) { _ignore(body); }
+    public static void postRecDup(RecDup body) { _ignore(body); }
+    public static void postRecDupNested(Bag.RecDup body) { _ignore(body); }
+
+    // -- PF-100 stdlib / Optional / Map fixtures ----------------------------
+
+    /** All stdlib value types in one bean. */
+    public static class StdlibBean {
+        public Instant created;
+        public OffsetDateTime updated;
+        public LocalDateTime localDateTime;
+        public LocalDate due;
+        public LocalTime startTime;
+        public Date oldDate;
+        public UUID id;
+        public URI homepage;
+        public URL fallback;
+        public BigDecimal amount;
+        public BigInteger huge;
+        public Duration timeout;
+    }
+
+    /** Optional-typed fields. */
+    public static class OptionalBean {
+        public Optional<String> nickname;
+        public Optional<Agent> agent;
+        public Optional<List<String>> tags;
+        @SuppressWarnings("rawtypes")
+        public Optional rawOpt;
+    }
+
+    /** Map-typed fields. */
+    public static class MapBean {
+        public Map<String, Long> counters;
+        public Map<String, Agent> byKey;
+        public Map<String, List<Agent>> grouped;
+        @SuppressWarnings("rawtypes")
+        public Map rawMap;
+    }
+
+    public static void postStdlib(StdlibBean body) { _ignore(body); }
+    public static void postOptional(OptionalBean body) { _ignore(body); }
+    public static void postMap(MapBean body) { _ignore(body); }
 }

@@ -22,12 +22,14 @@ import io.swagger.v3.oas.models.responses.ApiResponses;
 import play.Logger;
 import play.mvc.Router;
 
+import java.beans.Introspector;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.AnnotatedElement;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.RecordComponent;
 import java.lang.reflect.Type;
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -37,6 +39,7 @@ import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -346,11 +349,25 @@ public class OpenApiGenerator {
         if (type instanceof ParameterizedType pt) {
             Type raw = pt.getRawType();
             if (raw instanceof Class<?> rawCls) {
+                // PF-100: Optional<T> unwraps to schemaFor(T) with nullable: true.
+                // The nullable sibling on a $ref is OpenAPI-3.1 clean and tolerated by
+                // 3.0 consumers per the spec's "additional properties on $ref" allowance.
+                if (rawCls == Optional.class) {
+                    Schema<?> inner = schemaFor(pt.getActualTypeArguments()[0]);
+                    inner.setNullable(true);
+                    return inner;
+                }
                 if (Collection.class.isAssignableFrom(rawCls)) {
                     Type elem = pt.getActualTypeArguments()[0];
                     return new ArraySchema().items(schemaFor(elem));
                 }
                 if (Map.class.isAssignableFrom(rawCls)) {
+                    // PF-100: preserve V through additionalProperties. K is intentionally
+                    // ignored — OpenAPI 3 treats map keys as strings by default.
+                    Type[] args = pt.getActualTypeArguments();
+                    if (args.length >= 2) {
+                        return new ObjectSchema().additionalProperties(schemaFor(args[1]));
+                    }
                     return new ObjectSchema();
                 }
                 return classSchema(rawCls);
@@ -375,6 +392,13 @@ public class OpenApiGenerator {
         if (cls == Float.class || cls == float.class
                 || cls == Double.class || cls == double.class) {
             return new NumberSchema();
+        }
+        // PF-100: common stdlib value types — explicit OpenAPI mapping before the
+        // bean-recursion fall-through (which would otherwise short-circuit them
+        // via isStdLib and emit a useless `{type: object}`).
+        Schema<?> stdlib = stdlibTypeSchema(cls);
+        if (stdlib != null) {
+            return stdlib;
         }
         if (cls.isArray()) {
             return new ArraySchema().items(classSchema(cls.getComponentType()));
@@ -444,22 +468,139 @@ public class OpenApiGenerator {
     private ObjectSchema buildObjectSchema(Class<?> cls) {
         ObjectSchema obj = new ObjectSchema();
         List<String> required = new ArrayList<>();
+        Set<String> seen = new LinkedHashSet<>();
 
-        for (Field field : cls.getFields()) {
-            if (shouldSkipField(field)) {
-                continue;
+        if (cls.isRecord()) {
+            // PF-99: records are fully described by their components; skip field/getter passes
+            // so we don't double-up via the synthetic private field + accessor a record exposes.
+            // Annotations may live on either the component itself (canonical constructor param)
+            // or the accessor method — both are consulted via the secondary AnnotatedElement.
+            for (RecordComponent rc : cls.getRecordComponents()) {
+                addProperty(obj, required, seen, rc.getName(), rc.getGenericType(), rc, rc.getAccessor());
             }
-            String propertyName = pickPropertyName(field);
-            Schema<?> propSchema = schemaFor(field.getGenericType());
-            applyFieldSchemaAnnotation(propSchema, field, required, propertyName);
-            applyJsonPropertyRequired(field, required, propertyName);
-            obj.addProperty(propertyName, propSchema);
+        } else {
+            // PF-97: public field reflection — runs first so fields win on dedup against getters.
+            for (Field field : cls.getFields()) {
+                if (shouldSkipField(field)) {
+                    continue;
+                }
+                addProperty(obj, required, seen, field.getName(), field.getGenericType(), field, null);
+            }
+            // PF-98: JavaBean getter reflection — fills gaps left by the field pass. Applies
+            // to both classes and interfaces (the latter have no fields by definition).
+            for (Method method : cls.getMethods()) {
+                String derived = deriveGetterPropertyName(method);
+                if (derived == null) {
+                    continue;
+                }
+                addProperty(obj, required, seen, derived, method.getGenericReturnType(), method, null);
+            }
         }
 
         if (!required.isEmpty()) {
             obj.setRequired(required);
         }
         return obj;
+    }
+
+    /**
+     * Add a property to {@code obj}, applying rename annotations (JsonProperty,
+     * SerializedName) and skip annotations (JsonIgnore) before the lookup, then
+     * Schema enrichment + required-tracking on top.
+     *
+     * @param primary   the property's primary annotation source (Field, Method, or RecordComponent)
+     * @param secondary optional second source consulted for annotations; used for records to also
+     *                  inspect the accessor method when the component itself isn't annotated.
+     *                  null for fields and getters.
+     */
+    private void addProperty(ObjectSchema obj, List<String> required, Set<String> seen,
+                              String baseName, Type valueType,
+                              AnnotatedElement primary, AnnotatedElement secondary) {
+        if (findAnnotationBySimpleName(primary, "JsonIgnore") != null) {
+            return;
+        }
+        if (secondary != null && findAnnotationBySimpleName(secondary, "JsonIgnore") != null) {
+            return;
+        }
+
+        String name = baseName;
+        String renamed = readRename(primary);
+        if (renamed == null && secondary != null) {
+            renamed = readRename(secondary);
+        }
+        if (renamed != null) {
+            name = renamed;
+        }
+        if (seen.contains(name)) {
+            return;
+        }
+
+        Schema<?> propSchema = schemaFor(valueType);
+        applySchemaAnnotation(propSchema, primary, required, name);
+        if (secondary != null) {
+            applySchemaAnnotation(propSchema, secondary, required, name);
+        }
+        applyJsonPropertyRequired(primary, required, name);
+        if (secondary != null) {
+            applyJsonPropertyRequired(secondary, required, name);
+        }
+
+        obj.addProperty(name, propSchema);
+        seen.add(name);
+    }
+
+    private static String readRename(AnnotatedElement e) {
+        Annotation jp = findAnnotationBySimpleName(e, "JsonProperty");
+        if (jp != null) {
+            Object val = readAnnotationAttribute(jp, "value");
+            if (val instanceof String s && !s.isEmpty()) {
+                return s;
+            }
+        }
+        Annotation sn = findAnnotationBySimpleName(e, "SerializedName");
+        if (sn != null) {
+            Object val = readAnnotationAttribute(sn, "value");
+            if (val instanceof String s && !s.isEmpty()) {
+                return s;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Derive a JavaBean property name from a getter method, or return null if
+     * the method is not a JavaBean getter. Uses {@link Introspector#decapitalize}
+     * so {@code getURL()} maps to {@code URL} (acronym preserved) while
+     * {@code getName()} maps to {@code name}.
+     */
+    private static String deriveGetterPropertyName(Method m) {
+        // Exclude getClass() and other Object-inherited methods. getClass() is the
+        // only one that actually matches the getX-pattern checks below; the rest
+        // (hashCode, toString, equals, wait, notify, notifyAll) fail the name or
+        // signature checks. The declaring-class check is the cleanest guard.
+        if (m.getDeclaringClass() == Object.class) {
+            return null;
+        }
+        int mod = m.getModifiers();
+        if (!Modifier.isPublic(mod) || Modifier.isStatic(mod)) {
+            return null;
+        }
+        if (m.getParameterCount() != 0) {
+            return null;
+        }
+        Class<?> ret = m.getReturnType();
+        if (ret == void.class) {
+            return null;
+        }
+        String name = m.getName();
+        if (name.startsWith("get") && name.length() > 3) {
+            return Introspector.decapitalize(name.substring(3));
+        }
+        if (name.startsWith("is") && name.length() > 2
+                && (ret == boolean.class || ret == Boolean.class)) {
+            return Introspector.decapitalize(name.substring(2));
+        }
+        return null;
     }
 
     private static boolean shouldSkipField(Field f) {
@@ -490,28 +631,10 @@ public class OpenApiGenerator {
         return false;
     }
 
-    private static String pickPropertyName(Field f) {
-        Annotation jsonProperty = findAnnotationBySimpleName(f, "JsonProperty");
-        if (jsonProperty != null) {
-            Object val = readAnnotationAttribute(jsonProperty, "value");
-            if (val instanceof String s && !s.isEmpty()) {
-                return s;
-            }
-        }
-        Annotation serializedName = findAnnotationBySimpleName(f, "SerializedName");
-        if (serializedName != null) {
-            Object val = readAnnotationAttribute(serializedName, "value");
-            if (val instanceof String s && !s.isEmpty()) {
-                return s;
-            }
-        }
-        return f.getName();
-    }
-
-    private static void applyFieldSchemaAnnotation(Schema<?> schema, Field f,
-                                                    List<String> required, String propName) {
+    private static void applySchemaAnnotation(Schema<?> schema, AnnotatedElement e,
+                                                List<String> required, String propName) {
         io.swagger.v3.oas.annotations.media.Schema ann =
-                f.getAnnotation(io.swagger.v3.oas.annotations.media.Schema.class);
+                e.getAnnotation(io.swagger.v3.oas.annotations.media.Schema.class);
         if (ann == null) {
             return;
         }
@@ -542,8 +665,8 @@ public class OpenApiGenerator {
         }
     }
 
-    private static void applyJsonPropertyRequired(Field f, List<String> required, String propName) {
-        Annotation ann = findAnnotationBySimpleName(f, "JsonProperty");
+    private static void applyJsonPropertyRequired(AnnotatedElement e, List<String> required, String propName) {
+        Annotation ann = findAnnotationBySimpleName(e, "JsonProperty");
         if (ann == null) {
             return;
         }
@@ -555,6 +678,47 @@ public class OpenApiGenerator {
 
     private static Schema<?> refSchema(String name) {
         return new Schema<Object>().$ref("#/components/schemas/" + name);
+    }
+
+    /**
+     * Map common stdlib value types to typed-string / typed-number schemas.
+     * Returns null when the class isn't in the table — the caller continues
+     * through the usual array / collection / bean-recursion path.
+     *
+     * <p>Format strings follow OpenAPI 3 conventions: {@code uuid}, {@code uri},
+     * {@code date}, {@code date-time}, {@code time}. ISO-8601 durations and
+     * arbitrary-precision numbers have no standard OpenAPI format string, so
+     * they emit the base type only.
+     */
+    private static Schema<?> stdlibTypeSchema(Class<?> cls) {
+        if (cls == java.util.UUID.class) {
+            return new StringSchema().format("uuid");
+        }
+        if (cls == java.net.URI.class || cls == java.net.URL.class) {
+            return new StringSchema().format("uri");
+        }
+        if (cls == java.util.Date.class
+                || cls == java.sql.Date.class
+                || cls == java.sql.Timestamp.class
+                || cls == java.time.Instant.class
+                || cls == java.time.OffsetDateTime.class
+                || cls == java.time.ZonedDateTime.class
+                || cls == java.time.LocalDateTime.class) {
+            return new StringSchema().format("date-time");
+        }
+        if (cls == java.time.LocalDate.class) {
+            return new StringSchema().format("date");
+        }
+        if (cls == java.time.LocalTime.class || cls == java.time.OffsetTime.class) {
+            return new StringSchema().format("time");
+        }
+        if (cls == java.time.Duration.class || cls == java.time.Period.class) {
+            return new StringSchema();
+        }
+        if (cls == java.math.BigDecimal.class || cls == java.math.BigInteger.class) {
+            return new NumberSchema();
+        }
+        return null;
     }
 
     private static boolean isStdLib(Class<?> cls) {
