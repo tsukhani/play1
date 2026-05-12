@@ -45,6 +45,14 @@ jobs:
         working-directory: ./framework
         run: ant test -Dbuild-release=${{ matrix.target }}
 
+      - name: Upload tests-results on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: tests-results-${{ matrix.os }}
+          if-no-files-found: ignore
+          path: ./framework/tests-results/
+
   build:
     needs:
       - testing
