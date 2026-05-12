@@ -1,12 +1,6 @@
 package integration;
 
-import java.io.File;
-import java.io.FileOutputStream;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.KeyStore;
-import java.security.cert.Certificate;
-import java.security.cert.CertificateFactory;
 import java.time.Duration;
 
 import org.junit.jupiter.api.BeforeAll;
@@ -48,13 +42,13 @@ public class WSAsyncFunctionalTest {
     static void startServer() throws Exception {
         IntegrationServer.ensureStarted();
 
-        // Generate a JKS containing the test cert and point WS at it. Has to
+        // Point WS at a JKS truststore containing the fixture cert. Has to
         // happen after Play.init (configuration is loaded from application.conf
         // there) but before any WS.url() call (WSAsync's static sslCTX caches
         // on first construction).
-        Path keystore = buildTrustStoreFromFixture();
+        Path keystore = IntegrationTrustStore.fixtureHostJks();
         Play.configuration.setProperty("ssl.keyStore", keystore.toAbsolutePath().toString());
-        Play.configuration.setProperty("ssl.keyStorePassword", "changeit");
+        Play.configuration.setProperty("ssl.keyStorePassword", IntegrationTrustStore.PASSWORD);
         Play.configuration.setProperty("ssl.cavalidation", "false");
     }
 
@@ -147,28 +141,4 @@ public class WSAsyncFunctionalTest {
         assertNotNull(r.getHeader("Location"), "302 response must carry a Location header");
     }
 
-    // ------------------------------------------------------------------------
-    // JKS truststore for the test cert. WSSSLContext requires a JKS keystore
-    // file (not raw PEM), so we transcode the fixture PEM into a JKS once per
-    // JVM and hand WSAsync the path.
-    // ------------------------------------------------------------------------
-
-    private static Path buildTrustStoreFromFixture() throws Exception {
-        File testApp = new File(System.getProperty("user.dir"), "test-src/integration/testapp");
-        File pem = new File(testApp, "certs/host.cert");
-        CertificateFactory cf = CertificateFactory.getInstance("X.509");
-        Certificate cert;
-        try (var in = Files.newInputStream(pem.toPath())) {
-            cert = cf.generateCertificate(in);
-        }
-        KeyStore ks = KeyStore.getInstance("JKS");
-        ks.load(null, "changeit".toCharArray());
-        ks.setCertificateEntry("integration-test-host", cert);
-        Path out = Files.createTempFile("pf107-truststore", ".jks");
-        try (FileOutputStream fos = new FileOutputStream(out.toFile())) {
-            ks.store(fos, "changeit".toCharArray());
-        }
-        out.toFile().deleteOnExit();
-        return out;
-    }
 }
