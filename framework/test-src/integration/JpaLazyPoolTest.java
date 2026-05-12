@@ -71,12 +71,8 @@ public class JpaLazyPoolTest {
     @Test
     void pingNeverLeasesConnection() throws Exception {
         HikariPoolMXBean pool = pool();
-        // Wait for any prior test's connection-return to settle. Netty can flush the HTTP
-        // response before the server-side JPAPlugin.afterInvocation hook closes the EM and
-        // returns the connection — sub-millisecond on Linux/macOS but observably slow on
-        // Windows runners. Without this wait, the baseline assertion races with the previous
-        // test's cleanup when JUnit orders count* before ping*.
-        waitForActiveToSettle(pool, 0);
+        // Baseline after boot. With db.pool.minSize=1 in the testapp config Hikari warms a single
+        // idle connection at startup; active is 0 because nothing has run yet.
         int baselineActive = pool.getActiveConnections();
         assertEquals(0, baselineActive,
                 "no active connections expected pre-load; if non-zero a prior test in the same JVM "
@@ -100,7 +96,6 @@ public class JpaLazyPoolTest {
 
         // /pingRo exercises the readOnly=true branch of withTransaction — same lazy behavior
         // expected because the placeholder is installed regardless of readonly.
-        waitForActiveToSettle(pool, 0);
         WatchedMax roWatcher = WatchedMax.start(pool);
         try {
             fireConcurrent("/pingRo", CONCURRENCY);
@@ -119,7 +114,6 @@ public class JpaLazyPoolTest {
         // /count calls JPA.em() and runs a query, which forces materialization on both PF-106
         // and pre-PF-106 code paths. Under 50-way concurrency multiple connections must be
         // checked out simultaneously — that's the false-positive guard for the /ping test.
-        waitForActiveToSettle(pool, 0);
         WatchedMax watcher = WatchedMax.start(pool);
         try {
             fireConcurrent("/count", CONCURRENCY);
@@ -131,29 +125,14 @@ public class JpaLazyPoolTest {
                         + "If this is 0 something has decoupled JPA.em() from connection acquisition and the "
                         + "/ping test's assertion is no longer meaningful.");
 
-        // /countRo exercises the readOnly=true materialize() path. Pool state observation
-        // is unreliable here: HikariCP is warmed by the prior /count load, and the readonly
-        // lease/return cycle is microseconds — too brief to catch reliably on Windows CI
-        // runners regardless of sampling rate. Verify materialization the direct way: the
-        // SQL "select count(n) from Note n" cannot return a value without a JDBC connection,
-        // so a response body of "count-ro:0" (Note table is empty) proves both that the
-        // readonly tx materialized the EM and that a connection was leased. This is what
-        // the pool-active assertion was a proxy for.
-        waitForActiveToSettle(pool, 0);
+        // /countRo exercises the readOnly=true materialize() path. Pool-state observation is
+        // unreliable here on Windows CI runners: by this point HikariCP is warmed by the prior
+        // /count load and the warm-pool lease/return cycle is too brief to catch. Verify
+        // materialization directly via the response body — "select count(n) from Note n"
+        // cannot return a value without a JDBC connection, so "count-ro:0" (Note table is empty)
+        // proves both materialization and a connection lease, which is what the pool-active
+        // assertion was a proxy for.
         fireConcurrentExpectingBody("/countRo", CONCURRENCY, "count-ro:0");
-    }
-
-    /**
-     * Spin-wait until {@code HikariPoolMXBean.getActiveConnections()} reaches {@code target}
-     * or 5 seconds elapse. Used between tests and between load phases to absorb the brief
-     * window where Netty has already replied to the test client but the server-side request
-     * cleanup (JPA EM close → HikariCP connection return) hasn't completed yet.
-     */
-    private static void waitForActiveToSettle(HikariPoolMXBean pool, int target) throws InterruptedException {
-        long deadline = System.currentTimeMillis() + 5000;
-        while (pool.getActiveConnections() != target && System.currentTimeMillis() < deadline) {
-            Thread.sleep(10);
-        }
     }
 
     private static HikariPoolMXBean pool() {
@@ -219,13 +198,6 @@ public class JpaLazyPoolTest {
      * connection at end-of-request — by the time {@code fireConcurrent} returns, active is
      * back to zero, so a single post-load read would always show 0 and the /count test would
      * be a false positive.
-     *
-     * <p>Uses {@link java.util.concurrent.locks.LockSupport#parkNanos(long)} with a 10μs delay
-     * rather than {@code Thread.sleep(1)}. The first load (/count) is on a cold pool — HikariCP
-     * physically opens connections, taking ms per request and giving the sampler plenty of
-     * windows. The second load (/countRo) hits a warm pool: lease/return is microseconds and
-     * {@code Thread.sleep(1)}'s ~15ms quantum on Windows runners misses the window entirely.
-     * parkNanos has true sub-millisecond resolution across platforms.
      */
     private static final class WatchedMax {
         private final AtomicInteger max = new AtomicInteger();
@@ -237,7 +209,12 @@ public class JpaLazyPoolTest {
                 while (running) {
                     int a = pool.getActiveConnections();
                     max.accumulateAndGet(a, Math::max);
-                    java.util.concurrent.locks.LockSupport.parkNanos(10_000L);
+                    try {
+                        Thread.sleep(1);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
                 }
             }, "pf108-pool-watcher");
             this.thread.setDaemon(true);
