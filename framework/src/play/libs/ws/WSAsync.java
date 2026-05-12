@@ -4,17 +4,11 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UnsupportedEncodingException;
-import java.net.Authenticator;
 import java.net.InetSocketAddress;
-import java.net.PasswordAuthentication;
 import java.net.Proxy;
 import java.net.ProxySelector;
 import java.net.SocketAddress;
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest.BodyPublisher;
-import java.net.http.HttpRequest.BodyPublishers;
-import java.net.http.HttpResponse.BodyHandlers;
 import java.nio.charset.Charset;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -22,11 +16,31 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
+import javax.net.ssl.HostnameVerifier;
 import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSession;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.TrustManagerFactory;
+import javax.net.ssl.X509TrustManager;
 
+import java.security.KeyStore;
 
 import org.apache.commons.lang3.NotImplementedException;
+
+import okhttp3.Call;
+import okhttp3.Callback;
+import okhttp3.ConnectionPool;
+import okhttp3.Dispatcher;
+import okhttp3.MediaType;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
+import okhttp3.Route;
 
 import play.Logger;
 import play.Play;
@@ -38,13 +52,32 @@ import play.mvc.Http.Header;
 
 /**
  * Simple HTTP client to make webservices requests.
- * Uses java.net.http.HttpClient (Java 11+).
+ *
+ * <p>Transport: OkHttp 5 (PF-104). Two clients share a single connection pool
+ * and dispatcher; the only difference between them is the redirect policy.
+ * OkHttp's dispatcher runs callbacks on a virtual-thread executor — blocking
+ * socket reads through Okio 3 unmount during the read (no synchronized blocks
+ * on the read path), so concurrent WS calls scale with the JDK's virtual-thread
+ * scheduler instead of pinning carrier threads.
+ *
+ * <p>Why not the JDK java.net.http.HttpClient: it sends `Upgrade: h2c` on
+ * cleartext HTTP, which hangs against servers that advertise the header but
+ * never deliver the upgrade preface (e.g. LM Studio's Express front-end).
+ * OkHttp does not send the upgrade on cleartext.
  */
 public class WSAsync implements WS.WSImpl {
 
-    private final HttpClient httpClientFollowRedirects;
-    private final HttpClient httpClientNoRedirects;
+    /** Default connection pool: 32 idle routes, 5-minute keep-alive. */
+    private static final int CONNECTION_POOL_MAX_IDLE = 32;
+    private static final long CONNECTION_POOL_KEEP_ALIVE_MIN = 5;
+
+    private final OkHttpClient httpClientFollowRedirects;
+    private final OkHttpClient httpClientNoRedirects;
+    private final ConnectionPool connectionPool;
+    private final Dispatcher dispatcher;
+    private final ExecutorService dispatcherExecutor;
     private static SSLContext sslCTX = null;
+    private static boolean sslSkipVerify = false;
 
     private final String userAgent;
 
@@ -60,7 +93,7 @@ public class WSAsync implements WS.WSImpl {
         boolean CAValidation = Boolean.parseBoolean(Play.configuration.getProperty("ssl.cavalidation", "true"));
 
         ProxySelector proxySelector = null;
-        Authenticator proxyAuthenticator = null;
+        okhttp3.Authenticator proxyAuthenticator = null;
 
         if (proxyHost != null) {
             int proxyPort;
@@ -74,15 +107,7 @@ public class WSAsync implements WS.WSImpl {
             }
             proxySelector = new NonProxyHostSelector(proxyHost, proxyPort, nonProxyHosts);
             if (proxyUser != null && proxyPassword != null) {
-                proxyAuthenticator = new Authenticator() {
-                    @Override
-                    protected PasswordAuthentication getPasswordAuthentication() {
-                        if (getRequestorType() == RequestorType.PROXY) {
-                            return new PasswordAuthentication(proxyUser, proxyPassword.toCharArray());
-                        }
-                        return null;
-                    }
-                };
+                proxyAuthenticator = new ProxyBasicAuthenticator(proxyUser, proxyPassword);
             }
         }
 
@@ -90,33 +115,77 @@ public class WSAsync implements WS.WSImpl {
             Logger.info("Keystore configured, loading from '%s', CA validation enabled : %s", keyStore, CAValidation);
             if (sslCTX == null) {
                 sslCTX = WSSSLContext.getSslContext(keyStore, keyStorePass, CAValidation);
+                sslSkipVerify = !CAValidation;
             }
         }
 
-        httpClientFollowRedirects = buildClient(HttpClient.Redirect.NORMAL, proxySelector, proxyAuthenticator);
-        httpClientNoRedirects = buildClient(HttpClient.Redirect.NEVER, proxySelector, proxyAuthenticator);
+        // One shared connection pool + dispatcher across both clients. The
+        // OkHttpClient.Builder.build() default would create independent pools
+        // and dispatchers per client; sharing them via withConfig keeps idle
+        // connections reusable regardless of whether a caller wanted redirect
+        // following or not.
+        this.connectionPool = new ConnectionPool(
+                CONNECTION_POOL_MAX_IDLE,
+                CONNECTION_POOL_KEEP_ALIVE_MIN,
+                TimeUnit.MINUTES);
+        this.dispatcherExecutor = Executors.newVirtualThreadPerTaskExecutor();
+        this.dispatcher = new Dispatcher(dispatcherExecutor);
+
+        httpClientFollowRedirects = buildClient(true, proxySelector, proxyAuthenticator);
+        httpClientNoRedirects = buildClient(false, proxySelector, proxyAuthenticator);
     }
 
-    private static HttpClient buildClient(HttpClient.Redirect redirectPolicy, ProxySelector proxySelector, Authenticator authenticator) {
-        HttpClient.Builder builder = HttpClient.newBuilder()
-                .followRedirects(redirectPolicy);
+    private OkHttpClient buildClient(boolean followRedirects, ProxySelector proxySelector, okhttp3.Authenticator proxyAuthenticator) {
+        OkHttpClient.Builder builder = new OkHttpClient.Builder()
+                .followRedirects(followRedirects)
+                .followSslRedirects(followRedirects)
+                .connectionPool(connectionPool)
+                .dispatcher(dispatcher);
 
         if (proxySelector != null) {
-            builder.proxy(proxySelector);
+            builder.proxySelector(proxySelector);
         }
-        if (authenticator != null) {
-            builder.authenticator(authenticator);
+        if (proxyAuthenticator != null) {
+            builder.proxyAuthenticator(proxyAuthenticator);
         }
         if (sslCTX != null) {
-            builder.sslContext(sslCTX);
+            X509TrustManager trustManager = extractTrustManager(sslCTX, sslSkipVerify);
+            builder.sslSocketFactory(sslCTX.getSocketFactory(), trustManager);
+            if (sslSkipVerify) {
+                builder.hostnameVerifier(new TrustAllHostnameVerifier());
+            }
         }
 
         return builder.build();
     }
 
+    private static X509TrustManager extractTrustManager(SSLContext context, boolean trustAll) {
+        if (trustAll) {
+            return WSSSLContext.TRUST_ALL_MANAGER;
+        }
+        try {
+            // Re-derive the JVM-default trust manager. We can't introspect the
+            // already-initialized SSLContext for its trust managers, but OkHttp
+            // only needs one for ALPN/SNI bookkeeping — the SSLContext itself
+            // is what actually drives validation.
+            TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+            tmf.init((KeyStore) null);
+            for (TrustManager tm : tmf.getTrustManagers()) {
+                if (tm instanceof X509TrustManager x) {
+                    return x;
+                }
+            }
+            throw new IllegalStateException("No X509TrustManager found in default TrustManagerFactory");
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to derive X509TrustManager for OkHttp", e);
+        }
+    }
+
     @Override
     public void stop() {
         Logger.trace("Releasing http client connections...");
+        dispatcher.executorService().shutdown();
+        connectionPool.evictAll();
     }
 
     @Override
@@ -156,6 +225,42 @@ public class WSAsync implements WS.WSImpl {
         @Override
         public void connectFailed(URI uri, SocketAddress sa, IOException ioe) {
             delegate.connectFailed(uri, sa, ioe);
+        }
+    }
+
+    /**
+     * OkHttp Authenticator that responds to 407 Proxy Authentication Required
+     * with HTTP Basic credentials. Mirrors the JDK java.net.Authenticator behavior
+     * used by the previous JDK-HttpClient transport.
+     */
+    private static class ProxyBasicAuthenticator implements okhttp3.Authenticator {
+        private final String credential;
+
+        ProxyBasicAuthenticator(String user, String password) {
+            // okhttp3.Credentials.basic() also pulls in Kotlin null-checks and
+            // ISO-8859-1 encoding rules; preserving java.net.PasswordAuthentication
+            // semantics (UTF-8 friendly) by hand is trivial.
+            this.credential = "Basic " + java.util.Base64.getEncoder().encodeToString(
+                    (user + ":" + password).getBytes(java.nio.charset.StandardCharsets.ISO_8859_1));
+        }
+
+        @Override
+        public Request authenticate(Route route, Response response) {
+            // Avoid retry loops if the proxy keeps challenging.
+            if (response.request().header("Proxy-Authorization") != null) {
+                return null;
+            }
+            return response.request().newBuilder()
+                    .header("Proxy-Authorization", credential)
+                    .build();
+        }
+    }
+
+    /** Permissive hostname verifier, only installed when ssl.cavalidation=false. */
+    private static class TrustAllHostnameVerifier implements HostnameVerifier {
+        @Override
+        public boolean verify(String hostname, SSLSession session) {
+            return true;
         }
     }
 
@@ -263,14 +368,18 @@ public class WSAsync implements WS.WSImpl {
             throw new NotImplementedException();
         }
 
-        private java.net.http.HttpRequest buildRequest() {
-            BodyPublisher bodyPublisher = buildBody();
+        private Request buildRequest() {
+            RequestBody bodyContent = buildBody();
             String targetUrl = buildUrl();
 
-            java.net.http.HttpRequest.Builder requestBuilder = java.net.http.HttpRequest.newBuilder()
-                    .uri(URI.create(targetUrl))
-                    .timeout(Duration.ofSeconds(this.timeout))
-                    .method(this.type, bodyPublisher);
+            // OkHttp forbids a body on GET/HEAD; ensure null in those cases.
+            // PATCH/POST/PUT/DELETE/OPTIONS all permit a body.
+            boolean bodyForbidden = "GET".equals(this.type) || "HEAD".equals(this.type);
+            RequestBody methodBody = bodyForbidden ? null : (bodyContent != null ? bodyContent : RequestBody.create(new byte[0], null));
+
+            Request.Builder requestBuilder = new Request.Builder()
+                    .url(targetUrl)
+                    .method(this.type, methodBody);
 
             // Authentication
             if (this.username != null && this.password != null && this.scheme != null) {
@@ -279,7 +388,7 @@ public class WSAsync implements WS.WSImpl {
                         this.headers.put("Authorization", basicAuthHeader());
                         break;
                     default:
-                        throw new RuntimeException("Scheme " + this.scheme + " not supported by the java.net.http WS backend.");
+                        throw new RuntimeException("Scheme " + this.scheme + " not supported by the OkHttp WS backend.");
                 }
             }
 
@@ -335,7 +444,7 @@ public class WSAsync implements WS.WSImpl {
             return urlBuilder.toString();
         }
 
-        private BodyPublisher buildBody() {
+        private RequestBody buildBody() {
             // File uploads - multipart
             if (this.fileParams != null) {
                 MultipartFormData multipart = new MultipartFormData();
@@ -370,7 +479,7 @@ public class WSAsync implements WS.WSImpl {
                     }
                 }
                 this.headers.put("Content-Type", multipart.getContentType());
-                return BodyPublishers.ofByteArray(multipart.toByteArray());
+                return RequestBody.create(multipart.toByteArray(), MediaType.parse(multipart.getContentType()));
             }
 
             // Form parameters for POST/PUT
@@ -402,7 +511,10 @@ public class WSAsync implements WS.WSImpl {
                         if (!headers.containsKey("Content-Type") && this.mimeType == null) {
                             this.headers.put("Content-Type", "application/x-www-form-urlencoded; charset=" + encoding);
                         }
-                        return BodyPublishers.ofByteArray(bodyBytes);
+                        String formContentType = this.mimeType != null
+                                ? this.mimeType
+                                : this.headers.getOrDefault("Content-Type", "application/x-www-form-urlencoded; charset=" + encoding);
+                        return RequestBody.create(bodyBytes, MediaType.parse(formContentType));
                     } catch (UnsupportedEncodingException e) {
                         throw new RuntimeException(e);
                     }
@@ -417,27 +529,29 @@ public class WSAsync implements WS.WSImpl {
                 if (this.mimeType != null) {
                     this.headers.put("Content-Type", this.mimeType);
                 }
-                if (this.body instanceof InputStream) {
-                    return BodyPublishers.ofInputStream(() -> (InputStream) this.body);
+                MediaType mediaType = this.mimeType != null ? MediaType.parse(this.mimeType) : null;
+                if (this.body instanceof InputStream is) {
+                    return new InputStreamRequestBody(is, mediaType);
                 } else {
                     try {
                         byte[] bodyBytes = this.body.toString().getBytes(this.encoding);
-                        return BodyPublishers.ofByteArray(bodyBytes);
+                        return RequestBody.create(bodyBytes, mediaType);
                     } catch (UnsupportedEncodingException e) {
                         throw new RuntimeException(e);
                     }
                 }
             }
 
-            return BodyPublishers.noBody();
+            return null;
         }
 
         private WS.HttpResponse executeSync() {
             try {
-                java.net.http.HttpRequest request = buildRequest();
-                HttpClient client = this.followRedirects ? httpClientFollowRedirects : httpClientNoRedirects;
-                java.net.http.HttpResponse<byte[]> response = client.send(request, BodyHandlers.ofByteArray());
-                return new HttpJdkResponse(response);
+                Request request = buildRequest();
+                OkHttpClient client = clientForRequest();
+                Call call = client.newCall(request);
+                Response response = call.execute();
+                return new HttpAsyncResponse(response);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -446,52 +560,117 @@ public class WSAsync implements WS.WSImpl {
         private Promise<WS.HttpResponse> executeAsync() {
             try {
                 final Promise<WS.HttpResponse> promise = new Promise<>();
-                java.net.http.HttpRequest request = buildRequest();
-                HttpClient client = this.followRedirects ? httpClientFollowRedirects : httpClientNoRedirects;
-                client.sendAsync(request, BodyHandlers.ofByteArray())
-                        .whenComplete((response, throwable) -> {
-                            if (throwable != null) {
-                                promise.invokeWithException(throwable);
-                            } else {
-                                promise.invoke(new HttpJdkResponse(response));
-                            }
-                        });
+                Request request = buildRequest();
+                OkHttpClient client = clientForRequest();
+                client.newCall(request).enqueue(new Callback() {
+                    @Override
+                    public void onFailure(Call call, IOException e) {
+                        promise.invokeWithException(e);
+                    }
+
+                    @Override
+                    public void onResponse(Call call, Response response) {
+                        promise.invoke(new HttpAsyncResponse(response));
+                    }
+                });
                 return promise;
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
         }
+
+        private OkHttpClient clientForRequest() {
+            OkHttpClient base = this.followRedirects ? httpClientFollowRedirects : httpClientNoRedirects;
+            if (this.timeout != null && this.timeout > 0) {
+                Duration t = Duration.ofSeconds(this.timeout);
+                return base.newBuilder()
+                        .callTimeout(t)
+                        .readTimeout(t)
+                        .writeTimeout(t)
+                        .connectTimeout(t)
+                        .build();
+            }
+            return base;
+        }
     }
 
     /**
-     * An HTTP response wrapper for java.net.http.HttpResponse
+     * RequestBody wrapping a one-shot InputStream. OkHttp may write the body
+     * more than once during retries/redirects; the JDK transport had the same
+     * one-shot semantics via BodyPublishers.ofInputStream so we keep parity.
      */
-    public static class HttpJdkResponse extends WS.HttpResponse {
+    private static class InputStreamRequestBody extends RequestBody {
+        private final InputStream in;
+        private final MediaType mediaType;
 
-        private final java.net.http.HttpResponse<byte[]> response;
+        InputStreamRequestBody(InputStream in, MediaType mediaType) {
+            this.in = in;
+            this.mediaType = mediaType;
+        }
 
-        public HttpJdkResponse(java.net.http.HttpResponse<byte[]> response) {
-            this.response = response;
+        @Override
+        public MediaType contentType() {
+            return mediaType;
+        }
+
+        @Override
+        public boolean isOneShot() {
+            return true;
+        }
+
+        @Override
+        public void writeTo(okio.BufferedSink sink) throws IOException {
+            try (okio.Source source = okio.Okio.source(in)) {
+                sink.writeAll(source);
+            }
+        }
+    }
+
+    /**
+     * An HTTP response wrapper for okhttp3.Response.
+     */
+    public static class HttpAsyncResponse extends WS.HttpResponse {
+
+        private final int statusCode;
+        private final String statusMessage;
+        private final okhttp3.Headers headers;
+        private final byte[] body;
+
+        public HttpAsyncResponse(Response response) {
+            this.statusCode = response.code();
+            this.statusMessage = response.message();
+            this.headers = response.headers();
+            try (Response r = response) {
+                this.body = r.body() != null ? r.body().bytes() : new byte[0];
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
         }
 
         @Override
         public Integer getStatus() {
-            return response.statusCode();
+            return statusCode;
         }
 
         @Override
         public String getStatusText() {
-            return reasonPhrase(response.statusCode());
+            // OkHttp surfaces the wire reason phrase via Response.message(); fall back
+            // to a canonical phrase if the server sent an empty one (HTTP/2 has no
+            // reason phrase on the wire, so OkHttp synthesizes "" there).
+            if (statusMessage != null && !statusMessage.isEmpty()) {
+                return statusMessage;
+            }
+            return reasonPhrase(statusCode);
         }
 
         @Override
         public String getHeader(String key) {
-            return response.headers().firstValue(key).orElse(null);
+            return headers.get(key);
         }
 
         @Override
         public List<Header> getHeaders() {
-            Map<String, List<String>> hdrs = response.headers().map();
+            Map<String, List<String>> hdrs = headers.toMultimap();
             List<Header> result = new ArrayList<>();
             for (Map.Entry<String, List<String>> entry : hdrs.entrySet()) {
                 result.add(new Header(entry.getKey(), entry.getValue()));
@@ -502,7 +681,7 @@ public class WSAsync implements WS.WSImpl {
         @Override
         public String getString() {
             try {
-                return new String(response.body(), getEncoding());
+                return new String(body, getEncoding());
             } catch (UnsupportedEncodingException e) {
                 throw new RuntimeException(e);
             }
@@ -511,7 +690,7 @@ public class WSAsync implements WS.WSImpl {
         @Override
         public String getString(String encoding) {
             try {
-                return new String(response.body(), encoding);
+                return new String(body, encoding);
             } catch (UnsupportedEncodingException e) {
                 throw new RuntimeException(e);
             }
@@ -519,7 +698,7 @@ public class WSAsync implements WS.WSImpl {
 
         @Override
         public InputStream getStream() {
-            return new ByteArrayInputStream(response.body());
+            return new ByteArrayInputStream(body);
         }
 
         private static String reasonPhrase(int statusCode) {

@@ -46,7 +46,7 @@ for(Node event: XPath.selectNodes("events//event", xmlDoc)) {
 
 h2. Web Service client
 
-The @play.libs.WS@ provides a powerful HTTP client. Under the hood it uses "Async HTTP client":https://github.com/AsyncHttpClient/async-http-client. 
+The @play.libs.WS@ provides a powerful HTTP client. Under the hood it uses "OkHttp 5":https://square.github.io/okhttp/, with the dispatcher pointed at a virtual-thread executor so blocking calls scale with carrier threads.
 
 Making a request is easy:
 

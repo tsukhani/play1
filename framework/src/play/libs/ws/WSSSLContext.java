@@ -12,7 +12,9 @@ import play.Logger;
 
 public final class WSSSLContext {
 
-    private static final TrustManager TRUST_ALL_MANAGER = new X509TrustManager() {
+    // PF-104: package-accessible so the OkHttp-backed WSAsync can plug the same
+    // permissive trust manager into OkHttpClient.Builder.sslSocketFactory().
+    static final X509TrustManager TRUST_ALL_MANAGER = new X509TrustManager() {
         private static final X509Certificate[] EMPTY_ACCEPTED_ISSUERS = {};
 
         @Override

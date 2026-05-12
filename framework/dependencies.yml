@@ -216,6 +216,21 @@ require:    &allDependencies
     - io.prometheus -> prometheus-metrics-shaded-protobuf 1.2.1
     - org.hdrhistogram -> HdrHistogram 2.2.2
     - org.latencyutils -> LatencyUtils 2.0.3
+    # PF-104: OkHttp 5 replaces java.net.http.HttpClient as the WSAsync transport.
+    # Square publishes 5.x with the KMP layout — `okhttp:5.x` is a 767-byte alias
+    # POM that redirects (via Gradle metadata) to the real jar at
+    # `okhttp-jvm:5.x`. Ivy reads POMs, not Gradle metadata, so we declare both
+    # coordinates explicitly: `okhttp` for the canonical name, `okhttp-jvm` for
+    # the bytecode. Same shape for okio:3.x (real classes live in `okio-jvm`).
+    # okhttp-sse ships a single jar without the -jvm split. kotlin-stdlib is a
+    # mandatory runtime peer (OkHttp 5 is implemented in Kotlin) — Ivy can't
+    # discover it transitively under transitiveDependencies: false.
+    - com.squareup.okhttp3 -> okhttp 5.3.2
+    - com.squareup.okhttp3 -> okhttp-jvm 5.3.2
+    - com.squareup.okhttp3 -> okhttp-sse 5.3.2
+    - com.squareup.okio -> okio 3.16.4
+    - com.squareup.okio -> okio-jvm 3.16.4
+    - org.jetbrains.kotlin -> kotlin-stdlib 2.2.21
 
 # Default repositories, used for all projects
 repositories:
