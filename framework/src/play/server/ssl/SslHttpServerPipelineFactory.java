@@ -14,9 +14,11 @@ import io.netty.handler.ssl.ApplicationProtocolConfig.Protocol;
 import io.netty.handler.ssl.ApplicationProtocolConfig.SelectedListenerFailureBehavior;
 import io.netty.handler.ssl.ApplicationProtocolConfig.SelectorFailureBehavior;
 import io.netty.handler.ssl.ClientAuth;
+import io.netty.handler.ssl.OpenSsl;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.ssl.SslHandler;
+import io.netty.handler.ssl.SslProvider;
 
 import play.Logger;
 import play.Play;
@@ -120,6 +122,28 @@ public class SslHttpServerPipelineFactory extends HttpServerPipelineFactory {
         }
 
         SslContextBuilder builder = SslContextBuilder.forServer(certFile, keyFile, keyPassword);
+
+        // PF-105: prefer the BoringSSL-backed Netty provider over the JDK SSLEngine.
+        // OPENSSL_REFCNT is the refcounted variant of OPENSSL — required for SslContext
+        // instances cached for the lifetime of the JVM (the volatile DCL above keeps a
+        // single SslContext alive across every accept). isAvailable() returns false
+        // when the matching native lib for this platform isn't on the classpath, in
+        // which case we fall back to the JDK provider with a warn log so operators
+        // notice and ship the right classifier. Single info log on the happy path
+        // tells the operator which provider is in use without spamming per-connection.
+        SslProvider provider;
+        if (OpenSsl.isAvailable()) {
+            provider = SslProvider.OPENSSL_REFCNT;
+            Logger.info("TLS provider: OpenSSL/BoringSSL (%s, ALPN=%s)",
+                    OpenSsl.versionString(), OpenSsl.isAlpnSupported());
+        } else {
+            provider = SslProvider.JDK;
+            Throwable cause = OpenSsl.unavailabilityCause();
+            Logger.warn(cause, "TLS provider: JDK SSLEngine (OpenSSL/BoringSSL native lib unavailable — "
+                    + "expected for PF-105 to select OPENSSL_REFCNT; check that the "
+                    + "netty-tcnative-boringssl-static classifier matching this platform is on the classpath)");
+        }
+        builder.sslProvider(provider);
 
         builder.applicationProtocolConfig(new ApplicationProtocolConfig(
                 Protocol.ALPN,

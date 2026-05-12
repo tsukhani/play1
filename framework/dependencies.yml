@@ -123,6 +123,26 @@ require:    &allDependencies
     - io.netty -> netty-codec-native-quic 4.2.12.Final linux-aarch_64
     - io.netty -> netty-codec-native-quic 4.2.12.Final linux-x86_64
     - io.netty -> netty-codec-native-quic 4.2.12.Final windows-x86_64
+    # PF-105: BoringSSL-backed Netty TLS provider. OpenSslContext beats the JDK
+    # SSLEngine on handshake throughput (2-3x) and bulk symmetric crypto (AES-NI
+    # via the native lib, not via JDK intrinsics). SslHttpServerPipelineFactory
+    # selects SslProvider.OPENSSL_REFCNT when OpenSsl.isAvailable() reports true
+    # and falls back to the JDK provider with a warn log otherwise.
+    # netty-tcnative-classes carries the io.netty.internal.tcnative.* Java API
+    # (SSL, SSLContext, Buffer, CertificateVerifier...) that OpenSsl loads at
+    # static-init time; without it Netty's OpenSsl probe throws CNFE before
+    # isAvailable() can return false. Same per-classifier pattern as
+    # netty-codec-native-quic above — boringssl-static ships its native libs
+    # per platform. Shipping all five classifiers keeps the framework portable
+    # across the platforms users run Play on (macOS arm64/x86_64, Linux
+    # arm64/x86_64, Windows x86_64). tcnative selects the matching native at
+    # runtime; unused ones are dead weight but don't load.
+    - io.netty -> netty-tcnative-classes 2.0.71.Final
+    - io.netty -> netty-tcnative-boringssl-static 2.0.71.Final osx-aarch_64
+    - io.netty -> netty-tcnative-boringssl-static 2.0.71.Final osx-x86_64
+    - io.netty -> netty-tcnative-boringssl-static 2.0.71.Final linux-aarch_64
+    - io.netty -> netty-tcnative-boringssl-static 2.0.71.Final linux-x86_64
+    - io.netty -> netty-tcnative-boringssl-static 2.0.71.Final windows-x86_64
     # com.aayushatharva.brotli4j is the JNI wrapper around the Brotli C lib that
     # StandardCompressionOptions.brotli() loads. brotli4j publishes per-platform
     # natives as separate artifactIds (NOT Ivy classifiers); the `service` jar is
