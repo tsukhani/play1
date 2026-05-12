@@ -5,6 +5,7 @@ framework/test-classes
 framework/out
 .DS_Store
 .claude/worktrees/
+.claude/*.lock
 
 # bmad: installer-managed personal configs and generated outputs
 _bmad/config.user.toml
