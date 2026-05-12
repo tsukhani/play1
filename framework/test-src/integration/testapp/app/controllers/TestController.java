@@ -2,6 +2,9 @@ package controllers;
 
 import java.util.Map;
 
+import models.Note;
+import play.db.jpa.JPA;
+import play.db.jpa.Transactional;
 import play.mvc.Controller;
 import play.mvc.SseStream;
 import play.libs.Codec;
@@ -49,5 +52,46 @@ public class TestController extends Controller {
 
     public static void boom() {
         throw new RuntimeException("integration-test 500 trigger");
+    }
+
+    /**
+     * PF-108: handler that deliberately does NOT touch JPA.em(). With the lazy
+     * acquisition in PF-106, withTransaction installs only a placeholder
+     * JPAContext and no HikariCP connection is leased. Drives the read-write
+     * (readOnly=false) branch of JPA.withTransaction — the default.
+     */
+    public static void ping() {
+        renderText("pong");
+    }
+
+    /**
+     * PF-108: same shape as {@link #ping()} but routes through the
+     * {@code readOnly=true} branch of {@link JPA#withTransaction}. Coverage
+     * gate from the ticket's acceptance criteria.
+     */
+    @Transactional(readOnly = true)
+    public static void pingReadonly() {
+        renderText("pong-ro");
+    }
+
+    /**
+     * PF-108: handler that calls JPA.em() and forces materialization. Drives
+     * the read-write branch — the EM is acquired, the transaction begins, and
+     * HikariCP leases a connection for the request's lifetime.
+     */
+    public static void count() {
+        long n = (long) JPA.em().createQuery("select count(n) from Note n").getSingleResult();
+        renderText("count:" + n);
+    }
+
+    /**
+     * PF-108: same shape as {@link #count()} but on the {@code readOnly=true}
+     * branch. Read-only contexts skip {@code begin()} during materialization,
+     * so this also exercises the alternative materialize() path.
+     */
+    @Transactional(readOnly = true)
+    public static void countReadonly() {
+        long n = (long) JPA.em().createQuery("select count(n) from Note n").getSingleResult();
+        renderText("count-ro:" + n);
     }
 }

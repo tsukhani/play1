@@ -5,4 +5,8 @@ GET     /redirect                  TestController.redirect
 GET     /json                      TestController.json
 GET     /events                    TestController.events
 GET     /boom                      TestController.boom
+GET     /ping                      TestController.ping
+GET     /pingRo                    TestController.pingReadonly
+GET     /count                     TestController.count
+GET     /countRo                   TestController.countReadonly
 GET     /public/                   staticDir:public
