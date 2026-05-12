@@ -202,6 +202,13 @@ public class JpaLazyPoolTest {
      * connection at end-of-request — by the time {@code fireConcurrent} returns, active is
      * back to zero, so a single post-load read would always show 0 and the /count test would
      * be a false positive.
+     *
+     * <p>Uses {@link java.util.concurrent.locks.LockSupport#parkNanos(long)} with a 10μs delay
+     * rather than {@code Thread.sleep(1)}. The first load (/count) is on a cold pool — HikariCP
+     * physically opens connections, taking ms per request and giving the sampler plenty of
+     * windows. The second load (/countRo) hits a warm pool: lease/return is microseconds and
+     * {@code Thread.sleep(1)}'s ~15ms quantum on Windows runners misses the window entirely.
+     * parkNanos has true sub-millisecond resolution across platforms.
      */
     private static final class WatchedMax {
         private final AtomicInteger max = new AtomicInteger();
@@ -213,12 +220,7 @@ public class JpaLazyPoolTest {
                 while (running) {
                     int a = pool.getActiveConnections();
                     max.accumulateAndGet(a, Math::max);
-                    try {
-                        Thread.sleep(1);
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        return;
-                    }
+                    java.util.concurrent.locks.LockSupport.parkNanos(10_000L);
                 }
             }, "pf108-pool-watcher");
             this.thread.setDaemon(true);
