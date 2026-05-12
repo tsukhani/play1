@@ -1,5 +1,7 @@
 package controllers;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
 import models.Note;
@@ -93,5 +95,19 @@ public class TestController extends Controller {
     public static void countReadonly() {
         long n = (long) JPA.em().createQuery("select count(n) from Note n").getSingleResult();
         renderText("count-ro:" + n);
+    }
+
+    /**
+     * PF-107 integration: echo a raw JSON request body back to the caller along
+     * with the received Content-Type. Used by {@link integration.WSAsyncFunctionalTest}
+     * to verify that {@code WS.url(...).body(json).post()} round-trips a body
+     * through the OkHttp transport.
+     */
+    public static void postJson() throws IOException {
+        String received = new String(request.body.readAllBytes(), StandardCharsets.UTF_8);
+        JsonObject obj = new JsonObject();
+        obj.addProperty("contentType", request.contentType);
+        obj.addProperty("received", received);
+        renderJSON(obj.toString());
     }
 }

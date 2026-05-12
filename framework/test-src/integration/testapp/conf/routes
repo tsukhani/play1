@@ -1,6 +1,7 @@
 GET     /                          TestController.index
 GET     /hello/{name}              TestController.hello
 POST    /echo                      TestController.echo
+POST    /post-json                 TestController.postJson
 GET     /redirect                  TestController.redirect
 GET     /json                      TestController.json
 GET     /events                    TestController.events
