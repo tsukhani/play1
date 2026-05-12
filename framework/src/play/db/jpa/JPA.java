@@ -261,11 +261,23 @@ public class JPA {
 
     public static boolean isInsideTransaction(String name) {
         JPAContext jpaContext = get(name);
-        // PF-106: an unmaterialized placeholder is not "inside" a JDBC transaction — no
-        // connection has been leased and no EntityTransaction exists yet. Returning false here
-        // is what lets JPA.closeTx / JPA.rollbackTx skip the cleanup path entirely for handlers
-        // that never called em(), which is the whole point of the lazy acquisition.
-        return jpaContext != null && jpaContext.entityManager != null && jpaContext.entityManager.getTransaction() != null;
+        // PF-109 (regression fix on top of PF-106): treat an unmaterialized placeholder as
+        // "inside a transaction" for the purpose of this query. Callers like nesting-aware
+        // tx helpers (see services.Tx.run in jclaw) use isInsideTransaction to decide whether
+        // to start a fresh withTransaction or run inline. If we report `false` for a placeholder
+        // they'll start a nested withTransaction, and that inner wrapper's cleanup path
+        // (JPA.clearContext) wipes the outer placeholder out of the per-thread map — so the
+        // outer's next em() throws "No active EntityManager".
+        //
+        // Pre-PF-106 the EntityManager was always non-null inside withTransaction (eager
+        // acquisition), so the original {@code entityManager != null} check was effectively
+        // "is a withTransaction wrapper active for this name on this thread?". PF-106 made
+        // the EM null until materialization but kept the same condition, accidentally
+        // narrowing the meaning. Restoring the wrapper-active semantics fixes the regression
+        // without giving up laziness — {@link #closeTx} and {@link #rollbackTx} now check
+        // {@link JPAContext#materialized} directly before doing any work that would leak a
+        // HikariCP connection.
+        return jpaContext != null;
     }
 
     public static <T> T withinFilter(F.Function0<T> block) throws Throwable {
@@ -459,6 +471,15 @@ public class JPA {
     }
 
     public static void closeTx(String name) {
+        // PF-109: explicit materialized check (was previously folded into
+        // isInsideTransaction's strict semantics). Now that isInsideTransaction also
+        // reports true for unmaterialized placeholders, closeTx still has to early-exit
+        // when no real EM was acquired — otherwise em() would force a wasteful
+        // materialization just so we could close an empty transaction.
+        JPAContext jpaContext = get(name);
+        if (jpaContext == null || !jpaContext.materialized) {
+            return;
+        }
         if (JPA.isInsideTransaction(name)) {
             EntityManager manager = em(name);
             try {
@@ -506,6 +527,15 @@ public class JPA {
         // so calling rollbackTx("other") with an active transaction on `other`
         // returns false and skips cleanup — leaking the EntityManager + JDBC
         // connection until the thread dies.
+        //
+        // PF-109: explicit materialized check (was previously folded into
+        // isInsideTransaction's strict semantics). Without this, rollbackTx on an
+        // unmaterialized placeholder would force a wasteful materialization just to
+        // roll back an empty transaction.
+        JPAContext jpaContext = get(name);
+        if (jpaContext == null || !jpaContext.materialized) {
+            return;
+        }
         if (JPA.isInsideTransaction(name)) {
             EntityManager manager = em(name);
             try {
