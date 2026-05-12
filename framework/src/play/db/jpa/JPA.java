@@ -32,6 +32,16 @@ public class JPA {
         public EntityManager entityManager;
         public boolean readonly = true;
         public boolean autoCommit = false;
+        /**
+         * PF-106: true once {@link #entityManager} has been acquired from the EMF and (for
+         * non-readonly contexts) the resource-local transaction has been started. A placeholder
+         * registered by {@link JPA#withTransaction(String, boolean, play.libs.F.Function0)} has
+         * this flag false and {@link #entityManager} null until the first {@link JPA#em(String)}
+         * call on the current thread materializes it. Commit/close at end-of-request short-circuits
+         * for unmaterialized placeholders so a handler that never touches the DB never leases a
+         * HikariCP connection.
+         */
+        public boolean materialized = false;
     }
 
     public static boolean isInitialized() {
@@ -75,7 +85,13 @@ public class JPA {
     static void createContext(String dbName, EntityManager entityManager, boolean readonly) {
         if (isInitialized()) {
             try {
-                get(dbName).entityManager.close();
+                // PF-106: pre-existing context may be a placeholder with a null entityManager.
+                // The original close() raised NPE which the surrounding try swallowed; spell the
+                // guard out explicitly so the intent is clear instead of relying on the catch.
+                JPAContext existing = get(dbName);
+                if (existing != null && existing.entityManager != null) {
+                    existing.entityManager.close();
+                }
             } catch (Exception e) {
                 // Let's it fail
             }
@@ -99,17 +115,45 @@ public class JPA {
 
     /**
      * Get the EntityManager for specified persistence unit for this thread.
-     * 
+     *
+     * <p>PF-106: if the context is a placeholder (registered by
+     * {@link #withTransaction(String, boolean, play.libs.F.Function0)} but not yet backed by a real
+     * EntityManager), this call materializes the EM on demand — acquires it from the EMF, begins
+     * the resource-local transaction when the context is not readonly, and marks the context
+     * materialized. Callers see the same EntityManager contract as before; the laziness is
+     * invisible.
+     *
      * @param key
      *            The DB name
-     * 
+     *
      * @return The EntityManager
      */
     public static EntityManager em(String key) {
         JPAContext jpaContext = get(key);
         if (jpaContext == null)
             throw new JPAException("No active EntityManager for name [" + key + "], transaction not started?");
+        if (!jpaContext.materialized) {
+            materialize(jpaContext);
+        }
         return jpaContext.entityManager;
+    }
+
+    /**
+     * PF-106: acquire a real EntityManager for a placeholder context and start the transaction.
+     * Idempotent on the {@code materialized} flag — callers should check before invoking, but a
+     * double-call is safe (the second materialization is skipped). Not thread-safe with respect to
+     * the same JPAContext because contexts live in a per-thread map.
+     */
+    private static void materialize(JPAContext jpaContext) {
+        if (jpaContext.materialized) {
+            return;
+        }
+        EntityManager localEm = JPA.newEntityManager(jpaContext.dbName);
+        jpaContext.entityManager = localEm;
+        if (!jpaContext.readonly) {
+            localEm.getTransaction().begin();
+        }
+        jpaContext.materialized = true;
     }
 
     /**
@@ -127,6 +171,11 @@ public class JPA {
         context.dbName = name;
         context.entityManager = em;
         context.readonly = readonly;
+        // PF-106: an EM passed in here is already acquired (and, for non-readonly callers like
+        // JPA.startTx, the transaction has already been begun). Mark the context materialized so
+        // end-of-request cleanup and isInsideTransaction see it as a real EM rather than a
+        // placeholder waiting for first em() access.
+        context.materialized = (em != null);
 
         // Get all our context for our current thread
         get().put(name, context);
@@ -153,7 +202,10 @@ public class JPA {
     }
 
     public static void setRollbackOnly(String em) {
-        get(em).entityManager.getTransaction().setRollbackOnly();
+        // PF-106: route through em() so a placeholder materializes before we touch the
+        // transaction. setRollbackOnly() on an unmaterialized context would NPE on the
+        // null entityManager field; materializing here preserves the pre-PF-106 contract.
+        em(em).getTransaction().setRollbackOnly();
     }
 
     /**
@@ -209,6 +261,10 @@ public class JPA {
 
     public static boolean isInsideTransaction(String name) {
         JPAContext jpaContext = get(name);
+        // PF-106: an unmaterialized placeholder is not "inside" a JDBC transaction — no
+        // connection has been leased and no EntityTransaction exists yet. Returning false here
+        // is what lets JPA.closeTx / JPA.rollbackTx skip the cleanup path entirely for handlers
+        // that never called em(), which is the whole point of the lazy acquisition.
         return jpaContext != null && jpaContext.entityManager != null && jpaContext.entityManager.getTransaction() != null;
     }
 
@@ -265,16 +321,17 @@ public class JPA {
             // For each existing persistence unit
 
             try {
-                // we are starting a transaction for all known persistent unit
-                // this is probably not the best, but there is no way we can know where to go from
-                // at this stage
+                // PF-106: install a lightweight placeholder JPAContext per persistence unit instead
+                // of eagerly acquiring an EntityManager. The EM is materialized on the first
+                // JPA.em(name) call inside `block`; a handler that never touches the DB never
+                // leases a HikariCP connection, which is the single biggest concurrency-ceiling
+                // lift available on virtual-thread schedulers (the pool, not CPU, was the bottleneck).
                 for (String name : emfs.keySet()) {
-                    EntityManager localEm = JPA.newEntityManager(name);
-                    JPA.bindForCurrentThread(name, localEm, readOnly);
-
-                    if (!readOnly) {
-                        localEm.getTransaction().begin();
-                    }
+                    JPAContext placeholder = new JPAContext();
+                    placeholder.dbName = name;
+                    placeholder.readonly = readOnly;
+                    placeholder.materialized = false;
+                    get().put(name, placeholder);
                 }
 
                 T result = block.apply();
@@ -283,6 +340,11 @@ public class JPA {
                 // Get back our entity managers
                 // Because people might have mess up with the current entity managers
                 for (JPAContext jpaContext : get().values()) {
+                    // PF-106: skip unmaterialized placeholders — no EM was ever acquired so there
+                    // is no transaction to inspect.
+                    if (!jpaContext.materialized) {
+                        continue;
+                    }
                     EntityManager m = jpaContext.entityManager;
                     EntityTransaction localTx = m.getTransaction();
                     // The resource transaction must be in progress in order to determine if it has been marked for
@@ -293,6 +355,10 @@ public class JPA {
                 }
 
                 for (JPAContext jpaContext : get().values()) {
+                    // PF-106: nothing to commit/rollback on an unmaterialized placeholder.
+                    if (!jpaContext.materialized) {
+                        continue;
+                    }
                     EntityManager m = jpaContext.entityManager;
                     boolean ro = jpaContext.readonly;
                     EntityTransaction localTx = m.getTransaction();
@@ -306,6 +372,7 @@ public class JPA {
                     }
                 }
 
+                logLazyOutcome();
                 return result;
             } catch (Suspend e) {
                 // Nothing, transaction is in progress
@@ -314,6 +381,10 @@ public class JPA {
             } catch (Throwable t) {
                 // Because people might have mess up with the current entity managers
                 for (JPAContext jpaContext : get().values()) {
+                    // PF-106: unmaterialized placeholders have no tx to roll back.
+                    if (!jpaContext.materialized) {
+                        continue;
+                    }
                     EntityManager m = jpaContext.entityManager;
                     EntityTransaction localTx = m.getTransaction();
                     try {
@@ -329,6 +400,10 @@ public class JPA {
             } finally {
                 if (closeEm) {
                     for (JPAContext jpaContext : get().values()) {
+                        // PF-106: only materialized contexts hold an EM to close.
+                        if (!jpaContext.materialized) {
+                            continue;
+                        }
                         EntityManager localEm = jpaContext.entityManager;
                         if (localEm.isOpen()) {
                             localEm.close();
@@ -343,6 +418,28 @@ public class JPA {
         } else {
             return block.apply();
         }
+    }
+
+    /**
+     * PF-106: emit a single info-level line at request completion summarising whether the EM was
+     * materialised on this thread, gated behind {@code jpa.lazy.log=true} in {@code application.conf}
+     * so normal runs stay quiet. Off by default — operators turn it on to verify which routes are
+     * truly DB-free under the new lazy model.
+     */
+    private static void logLazyOutcome() {
+        if (!"true".equalsIgnoreCase(Play.configuration.getProperty("jpa.lazy.log", "false"))) {
+            return;
+        }
+        int materialized = 0;
+        int placeholders = 0;
+        for (JPAContext jpaContext : get().values()) {
+            if (jpaContext.materialized) {
+                materialized++;
+            } else {
+                placeholders++;
+            }
+        }
+        Logger.info("JPA -> tx completed: materialized=%d placeholder=%d", materialized, placeholders);
     }
 
     /**
