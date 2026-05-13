@@ -735,11 +735,20 @@ abstract class PlayAutotestTask : DefaultTask() {
         }
 
         val confText = confFile.readText()
+        // Load certs/.env up front so PLAY_TEST_PORT (and any other vars)
+        // can influence Gradle-side port resolution as well as the spawned
+        // Play subprocess. Without this, parallel `play autotest` runs across
+        // git worktrees collide on a single conf-derived port; the kill-step
+        // below would HTTP-POST /@kill to sibling worktrees' live test servers.
+        val dotenv = loadDotEnv(File(appDir, "certs/.env"))
         // Resolve conf values with %test prefix priority — playAutotest always
         // runs with play.id=test, so %test.<key> overrides <key>. Without this,
         // FirePhoque would connect to the top-level http.port while the
-        // framework actually bound to %test.http.port (or vice versa).
+        // framework actually bound to %test.http.port (or vice versa). Env-var
+        // (PLAY_TEST_PORT) sits between explicit -PhttpPort and conf so an
+        // operator can pin a per-worktree port without editing application.conf.
         val port = httpPort.orNull
+            ?: (System.getenv("PLAY_TEST_PORT") ?: dotenv["PLAY_TEST_PORT"])?.toIntOrNull()
             ?: confValue(confText, "http.port", "test")?.toIntOrNull()
             ?: 9000
         val headlessBrowser = confValue(confText, "headlessBrowser", "test").orEmpty()
@@ -784,7 +793,6 @@ abstract class PlayAutotestTask : DefaultTask() {
             .directory(appDir)
             .redirectOutput(systemOut)
             .redirectErrorStream(true)
-        val dotenv = loadDotEnv(File(appDir, "certs/.env"))
         dotenv.forEach { (k, v) ->
             playPb.environment().putIfAbsent(k, v)
         }
