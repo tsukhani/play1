@@ -60,6 +60,20 @@ public class SslHttpServerPipelineFactory extends HttpServerPipelineFactory {
         // without making anything compatible for h1.1 clients.
         pipeline.addLast("ssl", buildSslHandler(ch));
 
+        // PF-109: during the TLS handshake window the pipeline tail is the catch-all,
+        // so a mid-handshake RST (browsers racing h3 vs h2/h1, six-per-host speculative
+        // connect tear-downs) lands at DefaultChannelPipeline tail and logs at WARN.
+        // ApplicationProtocolNegotiationHandler ALSO logs a WARN ("Failed to select
+        // the application-level protocol:") for any non-SSL exception it sees, so the
+        // suppressor sits BETWEEN ssl and alpn to intercept benign Connection-reset /
+        // Broken-pipe IOExceptions before ALPN ever sees them. Both noisy WARNs are
+        // suppressed in one shot. Self-removes on successful handshake — post-handshake
+        // the chain matches pre-PF-109 byte for byte so SslPlayHandler (or per-stream
+        // Http2StreamPlayHandler) remains the catch-all for normal traffic. One
+        // instance per channel: the handler is not @Sharable because its pipeline
+        // membership is mutated.
+        pipeline.addLast("handshake-exc-suppressor", new SslHandshakeExceptionSuppressor());
+
         // Defer protocol-specific pipeline construction to the ALPN negotiation handler.
         // The h2 branch installs the frame codec and multiplex handler; the http/1.1
         // branch calls back into installHttp1Chain so the configurable
