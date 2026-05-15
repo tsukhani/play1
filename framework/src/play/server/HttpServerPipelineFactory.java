@@ -112,6 +112,15 @@ public class HttpServerPipelineFactory extends ChannelInitializer<Channel> {
     protected void initChannel(Channel ch) throws Exception {
         ChannelPipeline pipeline = ch.pipeline();
 
+        // PF-110: install BEFORE any decoder so a read-side IOException ("Connection
+        // reset" / "Broken pipe") is consumed before HttpRequestDecoder or any later
+        // handler can let it propagate to DefaultChannelPipeline's tail (which logs
+        // the unhelpful "reached at the tail of the pipeline" WARN). One instance per
+        // channel — not @Sharable. Unlike the SSL counterpart (PF-109) this stays in
+        // the pipeline for the channel lifetime because steady-state RSTs are exactly
+        // the case we want to keep silent and there is no handshake event to remove on.
+        pipeline.addLast("plain-exc-suppressor", new PlainHttpExceptionSuppressor());
+
         String[] handlers = pipelineConfig.split(",");
         if (handlers.length <= 0) {
             Logger.error("You must defined at least the playHandler in \"play.netty.pipeline\"");
