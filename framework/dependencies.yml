@@ -81,32 +81,32 @@ require:    &allDependencies
     - com.fasterxml -> classmate 1.7.0
     - org.hibernate.orm -> hibernate-jcache 7.2.0.Final
     - org.javassist -> javassist 3.30.2-GA
-    - io.netty -> netty-buffer 4.2.12.Final
-    - io.netty -> netty-codec-base 4.2.12.Final
+    - io.netty -> netty-buffer 4.2.13.Final
+    - io.netty -> netty-codec-base 4.2.13.Final
     # netty-codec-compression carries the gzip/deflate/brotli/zstd encoder
     # classes that Netty 4.2 split out of netty-codec-http. HttpContentCompressor
     # static-references them via StandardCompressionOptions, so without this jar
     # the no-arg ctor blows up with NoClassDefFoundError: BrotliEncoder. Brings
     # com.aayushatharva.brotli4j + native classifiers transitively, which lets
     # HttpServerPipelineFactory wire brotli when it constructs the compressor.
-    - io.netty -> netty-codec-compression 4.2.12.Final
-    - io.netty -> netty-codec-http 4.2.12.Final
+    - io.netty -> netty-codec-compression 4.2.13.Final
+    - io.netty -> netty-codec-http 4.2.13.Final
     # PF-58: HTTP/2 codec + multiplex handler. Always active when HTTPS is configured;
     # SslHttpServerPipelineFactory installs Http2FrameCodec + Http2MultiplexHandler in the
     # ALPN h2 branch (h1.1 fallback handled by Http2OrHttp1Negotiator). Same Netty version
     # as the other codec-* artifacts.
-    - io.netty -> netty-codec-http2 4.2.12.Final
-    - io.netty -> netty-common 4.2.12.Final
-    - io.netty -> netty-handler 4.2.12.Final
-    - io.netty -> netty-resolver 4.2.12.Final
-    - io.netty -> netty-transport 4.2.12.Final
+    - io.netty -> netty-codec-http2 4.2.13.Final
+    - io.netty -> netty-common 4.2.13.Final
+    - io.netty -> netty-handler 4.2.13.Final
+    - io.netty -> netty-resolver 4.2.13.Final
+    - io.netty -> netty-transport 4.2.13.Final
     # PF-58: Netty 4.2 SslHandler.handlerAdded -> setOpensslEngineSocketFd loads
     # io.netty.channel.unix.UnixChannel unconditionally (not guarded behind an
     # OpenSSL-only branch). Without this artifact every HTTPS connection fails
     # at pipeline init with NoClassDefFoundError. The fork's HTTPS path was
     # latently broken since the Netty 4.2 migration (PF-31); surfaced when PF-58
     # added the first integration test that opens a real TLS socket.
-    - io.netty -> netty-transport-native-unix-common 4.2.12.Final
+    - io.netty -> netty-transport-native-unix-common 4.2.13.Final
     # PF-57: HTTP/3 over QUIC. Activated automatically when https.port is set
     # (subject to native QUIC availability — see Http3SslContextFactory).
     # netty-codec-http3 ships the Http3* frame codec + Http3ServerConnectionHandler;
@@ -116,13 +116,13 @@ require:    &allDependencies
     # gates QuicServer.start() at boot so unsupported platforms (e.g. linux-riscv64,
     # which has no upstream native) get an actionable IllegalStateException instead of
     # a silent UDP bind failure.
-    - io.netty -> netty-codec-http3 4.2.12.Final
-    - io.netty -> netty-codec-classes-quic 4.2.12.Final
-    - io.netty -> netty-codec-native-quic 4.2.12.Final osx-aarch_64
-    - io.netty -> netty-codec-native-quic 4.2.12.Final osx-x86_64
-    - io.netty -> netty-codec-native-quic 4.2.12.Final linux-aarch_64
-    - io.netty -> netty-codec-native-quic 4.2.12.Final linux-x86_64
-    - io.netty -> netty-codec-native-quic 4.2.12.Final windows-x86_64
+    - io.netty -> netty-codec-http3 4.2.13.Final
+    - io.netty -> netty-codec-classes-quic 4.2.13.Final
+    - io.netty -> netty-codec-native-quic 4.2.13.Final osx-aarch_64
+    - io.netty -> netty-codec-native-quic 4.2.13.Final osx-x86_64
+    - io.netty -> netty-codec-native-quic 4.2.13.Final linux-aarch_64
+    - io.netty -> netty-codec-native-quic 4.2.13.Final linux-x86_64
+    - io.netty -> netty-codec-native-quic 4.2.13.Final windows-x86_64
     # PF-105: BoringSSL-backed Netty TLS provider. OpenSslContext beats the JDK
     # SSLEngine on handshake throughput (2-3x) and bulk symmetric crypto (AES-NI
     # via the native lib, not via JDK intrinsics). SslHttpServerPipelineFactory
@@ -257,9 +257,9 @@ repositories:
                 type:       local
                 # PF-57: the (-[classifier]) optional segment is Ivy syntax for "include only if
                 # the classifier extra-attribute is set". Lets entries declare native artifacts
-                # via "io.netty -> netty-codec-native-quic 4.2.12.Final osx-aarch_64" and the
+                # via "io.netty -> netty-codec-native-quic 4.2.13.Final osx-aarch_64" and the
                 # resolver looks up the classifier-suffixed jar on disk; classifier-less entries
-                # like "io.netty -> netty-codec-http 4.2.12.Final" continue to resolve to plain
+                # like "io.netty -> netty-codec-http 4.2.13.Final" continue to resolve to plain
                 # name-revision.jar. YamlParser already populates the classifier extra-attribute
                 # via the regex at YamlParser.java:173-181.
                 artifact:   "${play.path}/framework/lib/[artifact]-[revision](-[classifier]).jar"
