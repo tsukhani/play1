@@ -4,6 +4,7 @@ import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.lang.annotation.Annotation;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -276,7 +277,13 @@ public class ApplicationClasses {
                     Play.pluginCollection.enhance(this);
                 }
             }
-            if (System.getProperty("precompile") != null) {
+            // precompile compiles test/ sources too (so a broken test fails the
+            // build), but test classes must NOT land in precompiled/java/ — that
+            // dir is packaged into the prod dist/bundle and force-loaded at startup
+            // (-Dprecompiled=true). Shipping + loading test bytecode in prod is wrong
+            // and pins JUnit onto the prod classpath. So skip the write for test-rooted
+            // classes; they're still compiled and loaded in this precompile JVM.
+            if (System.getProperty("precompile") != null && !isTestSource()) {
                 try {
                     // emit bytecode to standard class layout as well
                     File f = Play.getFile("precompiled/java/" + name.replace('.', '/') + ".class");
@@ -290,6 +297,26 @@ public class ApplicationClasses {
             }
             return this.enhancedByteCode;
 
+        }
+
+        /**
+         * True if this class's source lives under a {@code test/} source root (the
+         * application's or any module's). Such classes are compiled during precompile
+         * to surface compile errors, but are excluded from the {@code precompiled/java/}
+         * output so they never reach the production dist/bundle.
+         */
+        private boolean isTestSource() {
+            if (javaFile == null) {
+                return false;
+            }
+            Path src = javaFile.getRealFile().toPath().toAbsolutePath().normalize();
+            for (VirtualFile root : Play.roots) {
+                Path testRoot = root.child("test").getRealFile().toPath().toAbsolutePath().normalize();
+                if (src.startsWith(testRoot)) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         /**

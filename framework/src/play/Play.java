@@ -996,7 +996,17 @@ public class Play {
 
         // Auto add special modules
         if (Play.runningInTestMode()) {
-            addModule(appRoot, "_testrunner", new File(Play.frameworkPath, "modules/testrunner"));
+            // Precompile runs in test mode (for %test config + secret resolution) but
+            // produces the *deployable* artifact. The testrunner module is the /@tests
+            // web UI + FirePhoque — pure test tooling, not part of the app. Mounting it
+            // adds its controllers to javaPath and its views to templatesPath, baking
+            // both into precompiled/ and shipping test tooling to prod. Skip the mount
+            // when precompiling: TestRunnerPlugin still loads from play-testrunner.jar
+            // (on the classpath) and its onLoad() adds the app's test/ to javaPath, so
+            // the compile gate for test sources is unaffected.
+            if (System.getProperty("precompile") == null) {
+                addModule(appRoot, "_testrunner", new File(Play.frameworkPath, "modules/testrunner"));
+            }
         }
     }
 

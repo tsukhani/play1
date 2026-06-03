@@ -1574,6 +1574,24 @@ abstract class PlayBundleTask : DefaultTask() {
             }
         }
 
+        // Module non-jar resources (play.plugins descriptors, public/ assets,
+        // conf/) — modules/ is gitignored so the git-based source collection
+        // skips it, and these are neither classes nor templates so precompiled/
+        // doesn't carry them. Without them a module's plugin never registers at
+        // prod startup (getResources("play.plugins") finds nothing) and its
+        // static assets 404. Lib jars are handled separately above (excluded here).
+        val moduleResourceFiles = mutableListOf<Pair<File, String>>()
+        File(projDir, "modules").let { modulesDir ->
+            if (modulesDir.isDirectory) {
+                modulesDir.walkTopDown()
+                    .filter { it.isFile && !it.name.endsWith(".jar") }
+                    .forEach { f ->
+                        val rel = f.relativeTo(projDir).path.replace(File.separatorChar, '/')
+                        moduleResourceFiles.add(f to rel)
+                    }
+            }
+        }
+
         // Compute classpath entries (relative to bundle root, one per line in
         // .classpath). The bundled `play` script reads this at startup to
         // assemble the runtime classpath.
@@ -1680,6 +1698,13 @@ abstract class PlayBundleTask : DefaultTask() {
             //    untracked, so source file collection wouldn't include them).
             moduleLibJars.forEach { (jar, rel) ->
                 copyToZipfs(jar.toPath(), zipfs.getPath("/$appName/$rel"))
+            }
+
+            // 6b. Module non-jar resources (play.plugins descriptors, public/
+            //     assets, conf/). Respects .distignore like the source copy above.
+            moduleResourceFiles.forEach { (f, rel) ->
+                if (ignorePrefixes.any { rel.startsWith(it) }) return@forEach
+                copyToZipfs(f.toPath(), zipfs.getPath("/$appName/$rel"))
             }
 
             // 7. .classpath — one entry per line, used by the bundled `play`
