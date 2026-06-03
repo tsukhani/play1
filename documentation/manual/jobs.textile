@@ -59,7 +59,15 @@ You don’t need to return a result. Even if you do it, the result will be lost.
 
 The default is that all jobs annotated with <code>@OnApplicationStart</code> will be executed in sequence. When all jobs are finished, your application is ready to start processing incoming requests.
 
-If you want your jobs to start when your application starts, but you want to start processing incoming requests immediately, you can annotate your job like this: <code>@OnApplicationStart(async=true)</code>. Then your job will be started in the background when the application starts. All async jobs will be started at the same time.
+You can control the order of synchronous bootstrap jobs with the <code>priority</code> element: lower values run first (0 is the highest priority and the default), matching the <code>@Before</code>/<code>@After</code> interceptor convention. Jobs with the same priority keep their natural order. This is handy when one job must complete before another — for example applying a schema migration before warming a cache:
+
+bc. @OnApplicationStart(priority = 0)
+public class MigrateSchema extends Job { ... }
+
+@OnApplicationStart(priority = 10)
+public class WarmCaches extends Job { ... }
+
+If you want your jobs to start when your application starts, but you want to start processing incoming requests immediately, you can annotate your job like this: <code>@OnApplicationStart(async=true)</code>. Then your job will be started in the background when the application starts. All async jobs will be started at the same time. <code>priority</code> only orders the synchronous jobs; async jobs are submitted in priority order but, running concurrently, may still finish in any order.
 
 p(note). **Warning**
  

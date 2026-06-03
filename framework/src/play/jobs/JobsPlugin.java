@@ -16,6 +16,7 @@ import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.LinkedList;
 import java.util.List;
@@ -100,6 +101,11 @@ public class JobsPlugin extends PlayPlugin {
                 jobs.add(clazz);
             }
         }
+        // @OnApplicationStart jobs run in ascending priority order (0 = highest, runs
+        // first), mirroring the @Before/@After/@Catch interceptor convention. Equal
+        // priorities keep classloader order (alphabetical in dev). @On/@Every are
+        // time-scheduled, so their position is irrelevant — non-start jobs sort last.
+        jobs.sort(Comparator.comparingInt(JobsPlugin::startPriority));
         for (Class<?> clazz : jobs) {
             // @OnApplicationStart
             if (clazz.isAnnotationPresent(OnApplicationStart.class)) {
@@ -174,6 +180,14 @@ public class JobsPlugin extends PlayPlugin {
         }
         scheduledJobs.add(job);
         return job;
+    }
+
+    // Start-up priority of a job class: its @OnApplicationStart priority, or MAX_VALUE
+    // for classes without the annotation (@On/@Every-only) so they sort after start jobs.
+    // Package-private so OnApplicationStartPriorityTest can exercise the ordering key directly.
+    static int startPriority(Class<?> clazz) {
+        OnApplicationStart a = clazz.getAnnotation(OnApplicationStart.class);
+        return a == null ? Integer.MAX_VALUE : a.priority();
     }
 
     @Override

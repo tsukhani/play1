@@ -2,6 +2,9 @@ h2. Controller - Jobs
 
 *==@OnApplicationStart==*
 
+*==@OnApplicationStart(priority = 0)==*
+Lower priority runs first (0 = highest); orders synchronous bootstrap jobs
+
 *==@On("0 0 12 &lowast; &lowast; ?")==*
 Every day at 12:01pm
 

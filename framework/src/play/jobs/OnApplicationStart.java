@@ -23,4 +23,15 @@ public @interface OnApplicationStart {
      * @return true if job will be executed async on program start
      */
     boolean async() default false;
+
+    /**
+     * Execution priority among {@code @OnApplicationStart} jobs: lower runs first
+     * (0 is highest priority), matching the {@code @Before}/{@code @After}/{@code @Catch}
+     * interceptor convention. Jobs with equal priority keep classloader order. Async
+     * jobs ({@code async = true}) are <em>submitted</em> in priority order, but since
+     * they run concurrently they may still finish in any order.
+     *
+     * @return the start-up priority (default 0)
+     */
+    int priority() default 0;
 }
