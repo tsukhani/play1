@@ -250,8 +250,21 @@ public class FirePhoque {
             httpClient.send(request, HttpResponse.BodyHandlers.discarding());
             resultStatus = pollResultFile(root, test, ok);
         } catch (Exception e) {
-            ok.set(false);
-            resultStatus = "ERROR   ?  ";
+            // PF-118: the HTTP response can lag the result file. Under CPU contention the
+            // server-side suspend/resume render hop tail-latencies past the 5-minute client
+            // ceiling (and the connection may be RST'd), so send() throws even though the
+            // test already finished server-side. TestRunner.run writes the authoritative
+            // .passed/.failed marker BEFORE rendering the response, so the file — not the
+            // response — is the source of truth: poll it before declaring ERROR. Only when
+            // no marker is present after the retry budget does pollResultFile keep ERROR
+            // (and set ok=false), preserving the genuine-failure behaviour.
+            try {
+                resultStatus = pollResultFile(root, test, ok);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                ok.set(false);
+                resultStatus = "ERROR   ?  ";
+            }
         }
         emitResultLine(testName, maxLength, resultStatus, System.currentTimeMillis() - start);
     }
