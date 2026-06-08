@@ -32,6 +32,13 @@ public class JobsPlugin extends PlayPlugin {
     // CopyOnWriteArrayList: writes happen at app start/stop only; reads come from getStatus()
     // and afterInvocation() while requests are in flight. Plain ArrayList is unsafe under VT.
     public static final List<Job<?>> scheduledJobs = new CopyOnWriteArrayList<>();
+    // PF-119: @OnApplicationStop Job classes captured at afterApplicationStart() so
+    // onApplicationStop() never re-scans the classloader at shutdown. The old re-scan
+    // (getAssignableClasses(Job.class) -> getAllClasses()) took the ApplicationClassloader
+    // instance monitor while Play.stop() held the Play.class monitor — the lock-order
+    // inversion that deadlocked shutdown against an in-flight class load. The job-class set
+    // is fixed between start and stop, so this snapshot stays correct.
+    private static volatile List<Class<?>> applicationStopJobs = List.of();
     private static final ThreadLocal<List<Callable<?>>> afterInvocationActions = new ThreadLocal<>();
 
     @Override
@@ -106,6 +113,11 @@ public class JobsPlugin extends PlayPlugin {
         // priorities keep classloader order (alphabetical in dev). @On/@Every are
         // time-scheduled, so their position is irrelevant — non-start jobs sort last.
         jobs.sort(Comparator.comparingInt(JobsPlugin::startPriority));
+        // PF-119: snapshot the @OnApplicationStop subset now, while we already hold the full
+        // job-class list, so onApplicationStop() can iterate it at shutdown instead of
+        // re-scanning the classloader. Captured before the start-job run loop below so the
+        // snapshot survives even if an @OnApplicationStart job throws.
+        applicationStopJobs = List.copyOf(selectApplicationStopJobs(jobs));
         for (Class<?> clazz : jobs) {
             // @OnApplicationStart
             if (clazz.isAnnotationPresent(OnApplicationStart.class)) {
@@ -190,6 +202,19 @@ public class JobsPlugin extends PlayPlugin {
         return a == null ? Integer.MAX_VALUE : a.priority();
     }
 
+    // PF-119: the @OnApplicationStop subset of a job-class list, preserving order.
+    // Package-private so JobsPluginApplicationStopTest can exercise the selection directly,
+    // mirroring startPriority's hermetic-test approach (no booted app required).
+    static List<Class<?>> selectApplicationStopJobs(List<Class<?>> jobs) {
+        List<Class<?>> stopJobs = new ArrayList<>();
+        for (Class<?> clazz : jobs) {
+            if (clazz.isAnnotationPresent(OnApplicationStop.class)) {
+                stopJobs.add(clazz);
+            }
+        }
+        return stopJobs;
+    }
+
     @Override
     public void onApplicationStart() {
         scheduler = new VirtualThreadScheduledExecutor("jobs");
@@ -240,28 +265,28 @@ public class JobsPlugin extends PlayPlugin {
     @Override
     public void onApplicationStop() {
 
-        List<Class> jobs = Play.classloader.getAssignableClasses(Job.class);
-
-        for (Class<?> clazz : jobs) {
-            // @OnApplicationStop
-            if (clazz.isAnnotationPresent(OnApplicationStop.class)) {
-                try {
-                    Job<?> job = createJob(clazz);
-                    job.run();
-                    if (job.wasError) {
-                        if (job.lastException != null) {
-                            throw job.lastException;
-                        }
-                        throw new RuntimeException("@OnApplicationStop Job has failed");
+        // PF-119: iterate the @OnApplicationStop subset captured at afterApplicationStart()
+        // instead of re-scanning the classloader. The old getAssignableClasses(Job.class)
+        // call funneled into the synchronized getAllClasses(), taking the classloader
+        // instance monitor while Play.stop() holds the Play.class monitor — and a request
+        // thread mid class-load holds that same instance monitor, wedging shutdown forever.
+        for (Class<?> clazz : applicationStopJobs) {
+            try {
+                Job<?> job = createJob(clazz);
+                job.run();
+                if (job.wasError) {
+                    if (job.lastException != null) {
+                        throw job.lastException;
                     }
-                } catch (InstantiationException | IllegalAccessException e) {
-                    throw new UnexpectedException("Job could not be instantiated", e);
-                } catch (Throwable ex) {
-                    if (ex instanceof PlayException) {
-                        throw (PlayException) ex;
-                    }
-                    throw new UnexpectedException(ex);
+                    throw new RuntimeException("@OnApplicationStop Job has failed");
                 }
+            } catch (InstantiationException | IllegalAccessException e) {
+                throw new UnexpectedException("Job could not be instantiated", e);
+            } catch (Throwable ex) {
+                if (ex instanceof PlayException) {
+                    throw (PlayException) ex;
+                }
+                throw new UnexpectedException(ex);
             }
         }
 

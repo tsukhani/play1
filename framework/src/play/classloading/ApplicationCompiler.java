@@ -1,9 +1,9 @@
 package play.classloading;
 
-import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.StringTokenizer;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
 
 import org.eclipse.jdt.core.compiler.IProblem;
@@ -41,7 +41,11 @@ public class ApplicationCompiler {
         Map.entry("25", CompilerOptions.VERSION_25)
     );
 
-    final Map<String, Boolean> packagesCache = new HashMap<>();
+    // PF-119: ConcurrentHashMap, not HashMap. Once ApplicationClassloader is parallel-capable,
+    // distinct-class loads run concurrently and so do their compile() calls in DEV, which read
+    // and write this package-resolution cache via the JDT name environment's isPackage(). A
+    // plain HashMap races (and can spin on resize) under that concurrency.
+    final Map<String, Boolean> packagesCache = new ConcurrentHashMap<>();
     final ApplicationClasses applicationClasses;
     final Map<String, String> settings;
 

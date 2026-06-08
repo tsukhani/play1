@@ -80,6 +80,16 @@ public class Play {
      */
     private static boolean shutdownHookEnabled = false;
     /**
+     * PF-119: optional drain action a server implementation registers via
+     * {@link #registerShutdownDrain(Runnable)}. The standalone JVM-shutdown hook runs it
+     * immediately before {@link #stop()} so the HTTP server stops accepting connections and
+     * finishes in-flight I/O <em>before</em> {@code pluginCollection.onApplicationStop()} tears
+     * the application (and classloader) down — closing the window where requests are still
+     * served during plugin shutdown. It is deliberately NOT run by {@link #stop()} itself,
+     * because {@code stop()} also runs on DEV hot-reload, where the listener must stay bound.
+     */
+    private static volatile Runnable shutdownDrain;
+    /**
      * Retired threading-config keys observed in raw form during {@code readConfiguration()},
      * preserving any {@code %<id>.} profile prefix. The {@link #init(File, String)} warn
      * block reports each so an operator can grep the offending line out of
@@ -641,7 +651,7 @@ public class Play {
                     // our plugins that we're going down when some calls ctrl+c or just kills our
                     // process..
                     shutdownHookEnabled = true;
-                    Thread hook = new Thread(Play::stop);
+                    Thread hook = new Thread(Play::shutdownHook);
                     hook.setContextClassLoader(ClassLoader.getSystemClassLoader());
                     Runtime.getRuntime().addShutdownHook(hook);
                 }
@@ -782,6 +792,43 @@ public class Play {
             Invoker.resetClassloaders();
             Invoker.stop();
         }
+    }
+
+    /**
+     * PF-119: body of the standalone JVM-shutdown hook. Drains the HTTP server first (stop
+     * accepting connections + finish in-flight I/O), then {@link #stop()}. Running the drain
+     * here — not inside {@code stop()} — keeps DEV hot-reload (which also calls {@code stop()})
+     * from killing the listener, while ensuring real shutdown never runs
+     * {@code pluginCollection.onApplicationStop()} against a still-live request pipeline. This
+     * replaces the previous arrangement where the Netty drain was an independent, unordered
+     * JVM hook that raced {@code stop()}.
+     */
+    private static void shutdownHook() {
+        Runnable drain = shutdownDrain;
+        if (drain != null) {
+            try {
+                drain.run();
+            } catch (Throwable t) {
+                Logger.warn(t, "Server drain during shutdown failed");
+            }
+        }
+        stop();
+    }
+
+    /**
+     * Register a drain action run by the standalone shutdown hook immediately before
+     * {@link #stop()} (PF-119). Used by {@link play.server.Server} to gracefully close its
+     * Netty event loops ahead of plugin shutdown. Only the most recently registered action runs.
+     *
+     * @param drain
+     *            the drain action (e.g. {@code Server::shutdownEventLoops})
+     * @return {@code true} if the standalone {@code Play::shutdownHook} is active and will run
+     *         the drain at JVM exit; {@code false} if no Play shutdown hook is registered (the
+     *         caller should then arrange its own drain — e.g. an independent JVM hook)
+     */
+    public static boolean registerShutdownDrain(Runnable drain) {
+        shutdownDrain = drain;
+        return shutdownHookEnabled;
     }
 
     /**

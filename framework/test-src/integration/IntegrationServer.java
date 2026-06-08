@@ -13,9 +13,10 @@ import play.server.Server;
  * twice. Centralizing the bootstrap behind {@link #ensureStarted()} makes the
  * second call a no-op.
  *
- * <p>No matching {@code shutdown()} — the JVM shutdown hook registered in
- * {@code Server.registerForShutdown} drains the EventLoopGroups when the test JVM
- * exits, which is when the integration target finishes anyway.
+ * <p>No matching {@code shutdown()} — the standalone JVM shutdown hook drains the
+ * EventLoopGroups (via the drain {@code Server.registerForShutdown} registers with
+ * {@code Play.registerShutdownDrain}) when the test JVM exits, which is when the
+ * integration target finishes anyway.
  */
 final class IntegrationServer {
 

@@ -41,6 +41,18 @@ import play.vfs.VirtualFile;
  */
 public class ApplicationClassloader extends ClassLoader {
 
+    static {
+        // PF-119: register parallel-capable so getClassLoadingLock(name) returns a genuine
+        // per-name lock instead of `this`. Without this, loadClass below collapses onto the
+        // instance monitor and shares it with the synchronized getAllClasses(), producing the
+        // shutdown lock-order inversion (a request thread loading a template class holds the
+        // instance monitor that Play.stop() -> JobsPlugin.onApplicationStop() needs). Per-name
+        // locks also finally deliver the parallel different-class loading the loadClass comment
+        // promises. Safe because the load path (compile/enhance/define) never re-enters the
+        // instance monitor, so name locks never invert against getAllClasses's synchronized(this).
+        registerAsParallelCapable();
+    }
+
     private final ClassStateHashCreator classStateHashCreator = new ClassStateHashCreator();
 
     /**
@@ -104,6 +116,20 @@ public class ApplicationClassloader extends ClassLoader {
     }
 
     public Class<?> loadApplicationClass(String name) {
+        // PF-119: serialize all define/compile/enhance work for a given name on its per-name
+        // lock (a real per-name lock now that the loader is parallel-capable). loadClass already
+        // holds this lock for request-driven loads; getAllClasses(), getClassIgnoreCase() and
+        // loadPackage() call us directly, so taking it here is what stops a getAllClasses scan
+        // and a concurrent request's loadClass from calling defineClass twice for the same name.
+        // The lock is reentrant (loadClass's own acquisition is harmless) and the nested work
+        // never waits on the instance monitor, so this cannot invert against getAllClasses's
+        // synchronized(this).
+        synchronized (getClassLoadingLock(name)) {
+            return doLoadApplicationClass(name);
+        }
+    }
+
+    private Class<?> doLoadApplicationClass(String name) {
 
         if (ApplicationClass.isClass(name)) {
             Class<?> maybeAlreadyLoaded = findLoadedClass(name);

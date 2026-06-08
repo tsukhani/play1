@@ -9,6 +9,7 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.LockSupport;
 
 import com.jamonapi.Monitor;
 import com.jamonapi.MonitorFactory;
@@ -126,6 +127,35 @@ public class Invoker {
                 retry = true;
             }
         }
+    }
+
+    /**
+     * PF-119 follow-up: block (lock-free) until no request invocation is in flight, or until
+     * {@code timeoutMs} elapses. Polls {@link #inflightInvocations} and holds <em>no</em>
+     * monitor, so the standalone shutdown hook can call it to drain in-flight requests before
+     * {@code pluginCollection.onApplicationStop()} without risking the shutdown lock-order
+     * inversion this whole change set exists to prevent.
+     *
+     * <p>Counts actively-running invocations only. A request parked on an async future (SSE,
+     * long-poll, {@code await}) is not counted while suspended, so this drains active work, not
+     * open streams — those are closed by the subsequent hard shutdown.</p>
+     *
+     * @param timeoutMs
+     *            maximum time to wait, in milliseconds; {@code <= 0} polls once without waiting
+     * @return {@code true} if the in-flight count reached zero, {@code false} on timeout
+     */
+    public static boolean awaitQuiescence(long timeoutMs) {
+        if (timeoutMs <= 0) {
+            return inflightInvocations.get() == 0;
+        }
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs);
+        while (inflightInvocations.get() > 0) {
+            if (System.nanoTime() - deadline >= 0) {
+                return false;
+            }
+            LockSupport.parkNanos(2_000_000L); // 2ms poll; no lock held
+        }
+        return true;
     }
 
     static void resetClassloaders() {
