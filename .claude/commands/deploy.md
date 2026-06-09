@@ -61,9 +61,10 @@ Run the full Play Framework release deployment:
      ```
      fix: <short description of what changed> (release {VERSION})
      ```
-     Append the trailer:
+     Append a `Co-Authored-By` trailer crediting the model that actually authored the
+     commit (do not hardcode a stale model — use whichever Claude model is running). E.g.:
      ```
-     Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+     Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
      ```
    - Always use `/usr/bin/git` for all git commands.
 
