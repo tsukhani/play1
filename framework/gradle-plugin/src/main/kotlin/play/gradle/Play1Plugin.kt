@@ -23,11 +23,14 @@ import org.gradle.api.tasks.JavaExec
 import org.gradle.api.tasks.Optional
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.OutputFile
+import org.gradle.api.tasks.PathSensitive
+import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
 import org.gradle.kotlin.dsl.create
 import org.gradle.kotlin.dsl.getByType
 import org.gradle.kotlin.dsl.register
 import org.gradle.process.ExecOperations
+import org.gradle.work.DisableCachingByDefault
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.net.HttpURLConnection
@@ -533,11 +536,14 @@ class Play1Plugin : Plugin<Project> {
     }
 }
 
+@DisableCachingByDefault(because = "Local extraction of bundled module archives into the project tree; reproduced cheaply from the framework install, so the build cache adds no value")
 abstract class ExtractPlayModulesTask : DefaultTask() {
     @get:InputFiles
+    @get:PathSensitive(PathSensitivity.RELATIVE)
     abstract val moduleZips: ConfigurableFileCollection
 
     @get:InputFiles
+    @get:PathSensitive(PathSensitivity.RELATIVE)
     abstract val frameworkModules: ConfigurableFileCollection
 
     @get:OutputDirectory
@@ -609,6 +615,7 @@ abstract class ExtractPlayModulesTask : DefaultTask() {
     }
 }
 
+@DisableCachingByDefault(because = "Packaging task whose inputs are resolved at execution time from the framework install and project tree, not declared as cacheable inputs")
 abstract class PlayDistTask : DefaultTask() {
     @get:Internal
     abstract val projectDir: DirectoryProperty
@@ -705,6 +712,7 @@ abstract class PlayDistTask : DefaultTask() {
     }
 }
 
+@DisableCachingByDefault(because = "Boots the app and runs its test suite as a side effect; produces no cacheable output")
 abstract class PlayAutotestTask : DefaultTask() {
     @get:Internal abstract val frameworkPath: DirectoryProperty
     @get:Internal abstract val frameworkVersion: Property<String>
@@ -896,6 +904,7 @@ abstract class PlayAutotestTask : DefaultTask() {
     }
 }
 
+@DisableCachingByDefault(because = "Generates and writes an application secret as a side effect; not a cacheable transform")
 abstract class PlaySecretTask : DefaultTask() {
     @get:Internal abstract val applicationPath: DirectoryProperty
 
@@ -1177,6 +1186,7 @@ private fun bundlePlayScript(fwVersion: String): String {
     return resource.readText().replace("__FW_VERSION__", fwVersion)
 }
 
+@DisableCachingByDefault(because = "Spawns the application process as a side effect; produces no cacheable output")
 abstract class PlayStartTask : DefaultTask() {
     @get:Internal abstract val applicationPath: DirectoryProperty
     @get:Internal abstract val frameworkPath: DirectoryProperty
@@ -1213,6 +1223,7 @@ abstract class PlayStartTask : DefaultTask() {
     }
 }
 
+@DisableCachingByDefault(because = "Process lifecycle task (sends SIGTERM); produces no cacheable output")
 abstract class PlayStopTask : DefaultTask() {
     @get:Internal abstract val applicationPath: DirectoryProperty
     @get:Internal abstract val pidFileOverride: Property<String>
@@ -1246,6 +1257,7 @@ abstract class PlayStopTask : DefaultTask() {
     }
 }
 
+@DisableCachingByDefault(because = "Process lifecycle task (stop + respawn); produces no cacheable output")
 abstract class PlayRestartTask : DefaultTask() {
     @get:Internal abstract val applicationPath: DirectoryProperty
     @get:Internal abstract val frameworkPath: DirectoryProperty
@@ -1292,6 +1304,7 @@ abstract class PlayRestartTask : DefaultTask() {
     }
 }
 
+@DisableCachingByDefault(because = "Diagnostic task that prints the running pid; produces no cacheable output")
 abstract class PlayPidTask : DefaultTask() {
     @get:Internal abstract val applicationPath: DirectoryProperty
     @get:Internal abstract val pidFileOverride: Property<String>
@@ -1308,6 +1321,7 @@ abstract class PlayPidTask : DefaultTask() {
     }
 }
 
+@DisableCachingByDefault(because = "Diagnostic task that tails the app's stdout; produces no cacheable output")
 abstract class PlayOutTask : DefaultTask() {
     @get:Internal abstract val applicationPath: DirectoryProperty
     @get:Internal abstract val pidFileOverride: Property<String>
@@ -1332,6 +1346,7 @@ abstract class PlayOutTask : DefaultTask() {
     }
 }
 
+@DisableCachingByDefault(because = "Diagnostic task that reports running state; produces no cacheable output")
 abstract class PlayStatusTask : DefaultTask() {
     @get:Internal abstract val applicationPath: DirectoryProperty
     @get:Internal abstract val pidFileOverride: Property<String>
@@ -1427,6 +1442,7 @@ private fun spawnPlay(
     return pb.start()
 }
 
+@DisableCachingByDefault(because = "Generates Javadoc by shelling out with execution-time inputs, not declared as cacheable inputs")
 abstract class PlayJavadocTask : DefaultTask() {
     @get:Internal abstract val applicationPath: DirectoryProperty
     @get:Internal abstract val frameworkPath: DirectoryProperty
@@ -1523,6 +1539,7 @@ abstract class PlayJavadocTask : DefaultTask() {
     }
 }
 
+@DisableCachingByDefault(because = "Packaging task whose inputs are resolved at execution time from the framework install and project tree, not declared as cacheable inputs")
 abstract class PlayBundleTask : DefaultTask() {
     @get:Internal abstract val projectDir: DirectoryProperty
     @get:Internal abstract val projectName: Property<String>
@@ -1755,6 +1772,7 @@ abstract class PlayBundleTask : DefaultTask() {
 }
 
 
+@DisableCachingByDefault(because = "Diagnostic task that prints resolved module info; produces no cacheable output")
 abstract class PlayModulesInfoTask : DefaultTask() {
     @get:Internal abstract val applicationPath: DirectoryProperty
     @get:Internal abstract val frameworkPath: DirectoryProperty
