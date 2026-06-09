@@ -37,6 +37,7 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.SecureRandom
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import javax.inject.Inject
@@ -1230,7 +1231,15 @@ abstract class PlayStopTask : DefaultTask() {
             logger.lifecycle("~ Play was not running (pid $pid not found); removing stale pid file")
         } else {
             handle.destroy()
-            handle.onExit().get(10, TimeUnit.SECONDS)
+            try {
+                // Wait past the jobs drain budget (play.jobs.stopTimeout, default 30s) so a
+                // clean-but-slow shutdown is observed as a real exit rather than tripping a
+                // wrapper deadline and surfacing as BUILD FAILED on a successful stop (PF-120).
+                handle.onExit().get(35, TimeUnit.SECONDS)
+            } catch (e: TimeoutException) {
+                logger.lifecycle("~ SIGTERM sent; process (pid $pid) still draining after 35s. Leaving it to the OS to reap.")
+                return
+            }
         }
         pidFile.delete()
         logger.lifecycle("~ OK, ${appDir.absolutePath} is stopped")
@@ -1257,7 +1266,13 @@ abstract class PlayRestartTask : DefaultTask() {
             if (pid != null) {
                 ProcessHandle.of(pid).ifPresent { h ->
                     h.destroy()
-                    h.onExit().get(10, TimeUnit.SECONDS)
+                    try {
+                        // Match playStop: wait past the jobs drain budget (default 30s) so a
+                        // clean-but-slow shutdown is not reported as BUILD FAILED (PF-120).
+                        h.onExit().get(35, TimeUnit.SECONDS)
+                    } catch (e: TimeoutException) {
+                        logger.lifecycle("~ Previous process (pid $pid) still draining after 35s; starting new instance anyway.")
+                    }
                 }
             }
         } else {
