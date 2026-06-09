@@ -136,9 +136,10 @@ public class Invoker {
      * {@code pluginCollection.onApplicationStop()} without risking the shutdown lock-order
      * inversion this whole change set exists to prevent.
      *
-     * <p>Counts actively-running invocations only. A request parked on an async future (SSE,
-     * long-poll, {@code await}) is not counted while suspended, so this drains active work, not
-     * open streams — those are closed by the subsequent hard shutdown.</p>
+     * <p>Counts actively-running invocations only. A request parked in {@code Controller.await(...)}
+     * (SSE, long-poll, await-on-future) brackets its wait with {@link #suspendInflight()} /
+     * {@link #resumeInflight()} (PF-121), so it is not counted while suspended; this drains active
+     * work, not open streams — those are closed by the subsequent hard shutdown.</p>
      *
      * @param timeoutMs
      *            maximum time to wait, in milliseconds; {@code <= 0} polls once without waiting
@@ -156,6 +157,41 @@ public class Invoker {
             LockSupport.parkNanos(2_000_000L); // 2ms poll; no lock held
         }
         return true;
+    }
+
+    /**
+     * PF-121: drop the current invocation from the in-flight count for the duration of a
+     * suspended wait (the virtual-thread equivalent of throwing {@link Suspend}), pairing with
+     * {@link #resumeInflight()} on resume.
+     *
+     * <p>In the classic model {@code Controller.await(...)} threw {@link Suspend}, so
+     * {@link Invocation#run()} returned — releasing {@link #submitTracked}'s decrement — while
+     * the request was parked, and the resume re-submitted it (re-incrementing). The "suspended
+     * requests are not counted" invariant {@link #awaitQuiescence} relies on fell out for free.</p>
+     *
+     * <p>Under the virtual-thread migration {@code await(...)} instead BLOCKS the invocation VT
+     * ({@code future.get()} / {@code Thread.sleep} / latch park), so {@code run()} never returns
+     * while parked and that decrement never happens — a long-lived SSE / long-poll await stays
+     * counted as active in-flight work, making the shutdown drain wait the full
+     * {@code play.shutdown.drain.timeout} every time. {@code Controller.await(...)} brackets its
+     * blocking section with {@code suspendInflight()} / {@link #resumeInflight()} to restore the
+     * invariant: the request is uncounted while parked, re-counted the instant it wakes.</p>
+     *
+     * <p>Strictly paired in a {@code finally} at each call site, the pair is net-zero on the
+     * counter — it only lowers the count for the span of the wait — so it stays balanced with
+     * {@link #submitTracked}'s single decrement no matter how the wait ends (normal return,
+     * timeout, interrupt).</p>
+     */
+    public static void suspendInflight() {
+        inflightInvocations.decrementAndGet();
+    }
+
+    /**
+     * Re-count an invocation as active in-flight work after a suspended wait. Always invoke from
+     * a {@code finally} block paired with {@link #suspendInflight()}; see its javadoc (PF-121).
+     */
+    public static void resumeInflight() {
+        inflightInvocations.incrementAndGet();
     }
 
     static void resetClassloaders() {

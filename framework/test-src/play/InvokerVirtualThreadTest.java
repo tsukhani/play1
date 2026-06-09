@@ -213,4 +213,70 @@ public class InvokerVirtualThreadTest {
         assertThat(Invoker.inflightInvocations.get()).isEqualTo(initialInflight);
         assertThat(Invoker.totalInvocations.get()).isEqualTo(initialTotal + 1);
     }
+
+    /**
+     * PF-121: an invocation parked in a suspended wait — the virtual-thread equivalent of the
+     * classic {@code Suspend} (e.g. {@code Controller.await} on an open SSE / long-poll) — must
+     * NOT be counted as active in-flight work. Before the fix, the VT blocked inside
+     * {@code Invocation.run()} without returning, so {@code inflightInvocations} stayed
+     * incremented and {@link Invoker#awaitQuiescence(long)} waited the full drain timeout for
+     * every open stream. Bracketing the wait with {@code suspendInflight()} / {@code resumeInflight()}
+     * restores the "suspended requests are not counted" invariant.
+     */
+    @Test
+    void suspendedAwaitIsNotCountedAsInflight() throws Exception {
+        Invoker.init();
+        long initialInflight = Invoker.inflightInvocations.get();
+
+        CountDownLatch parked = new CountDownLatch(1);   // execute() reached the suspended wait
+        CountDownLatch release = new CountDownLatch(1);   // test releases the wait
+
+        Invoker.Invocation invocation = new Invoker.Invocation() {
+            @Override
+            public void execute() throws Exception {
+                // Model Controller.await(...) under the VT model: block the invocation VT while
+                // bracketing the wait as suspended.
+                Invoker.suspendInflight();
+                try {
+                    parked.countDown();
+                    release.await();
+                } finally {
+                    Invoker.resumeInflight();
+                }
+            }
+
+            @Override
+            public boolean init() {
+                InvocationContext.current.set(getInvocationContext());
+                return true;
+            }
+
+            @Override
+            public InvocationContext getInvocationContext() {
+                return new InvocationContext("SuspendDrainTest");
+            }
+
+            @Override
+            public void before() {}
+
+            @Override
+            public void after() {}
+
+            @Override
+            public void onSuccess() {}
+        };
+
+        java.util.concurrent.Future<?> future = Invoker.invoke(invocation);
+        assertThat(parked.await(5, TimeUnit.SECONDS)).isTrue();
+
+        // While the request is parked in await(), the submit-time increment is offset by the
+        // suspend, so the drain sees no active in-flight work and reaches quiescence at once.
+        assertThat(Invoker.inflightInvocations.get()).isEqualTo(initialInflight);
+        assertThat(Invoker.awaitQuiescence(0)).isTrue();
+
+        // Release: the invocation resumes (re-counted), completes, and rebalances to baseline.
+        release.countDown();
+        future.get(5, TimeUnit.SECONDS);
+        assertThat(Invoker.inflightInvocations.get()).isEqualTo(initialInflight);
+    }
 }

@@ -19,6 +19,7 @@ import org.w3c.dom.Document;
 import com.google.gson.Gson;
 import com.google.gson.JsonSerializer;
 
+import play.Invoker;
 import play.Invoker.Suspend;
 import play.Logger;
 import play.Play;
@@ -1129,21 +1130,31 @@ public class Controller implements PlayController, ControllerSupport, LocalVaria
      */
     protected static void await(int millis) {
         Request.current().isNew = false;
+        // PF-121: a VT-blocking await is the virtual-thread equivalent of Suspend — drop it
+        // from the in-flight count for the duration of the wait so the shutdown drain doesn't
+        // miscount a parked request as active work.
+        Invoker.suspendInflight();
         try {
             Thread.sleep(millis);
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
             throw new UnexpectedException(ie);
+        } finally {
+            Invoker.resumeInflight();
         }
     }
 
     protected static void await(int millis, F.Action0 callback) {
         Request.current().isNew = false;
+        // PF-121: see await(int) — only the wait is suspended; the callback runs counted.
+        Invoker.suspendInflight();
         try {
             Thread.sleep(millis);
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
             throw new UnexpectedException(ie);
+        } finally {
+            Invoker.resumeInflight();
         }
         try {
             callback.invoke();
@@ -1158,6 +1169,9 @@ public class Controller implements PlayController, ControllerSupport, LocalVaria
             throw new UnexpectedException("Lost promise for " + Http.Request.current() + "!");
         }
         Request.current().isNew = false;
+        // PF-121: see await(int) — the VT blocks on future.get(); don't count it as active
+        // in-flight work while suspended so the shutdown drain can reach quiescence.
+        Invoker.suspendInflight();
         try {
             return future.get();
         } catch (InterruptedException ie) {
@@ -1167,12 +1181,16 @@ public class Controller implements PlayController, ControllerSupport, LocalVaria
             Throwable cause = ee.getCause() != null ? ee.getCause() : ee;
             if (cause instanceof RuntimeException re) throw re;
             throw new UnexpectedException(cause);
+        } finally {
+            Invoker.resumeInflight();
         }
     }
 
     protected static <T> void await(Future<T> future, F.Action<T> callback) {
         Request.current().isNew = false;
         T result;
+        // PF-121: see await(Future) — only the wait is suspended; the callback runs counted.
+        Invoker.suspendInflight();
         try {
             result = future.get();
         } catch (InterruptedException ie) {
@@ -1182,6 +1200,8 @@ public class Controller implements PlayController, ControllerSupport, LocalVaria
             Throwable cause = ee.getCause() != null ? ee.getCause() : ee;
             if (cause instanceof RuntimeException re) throw re;
             throw new UnexpectedException(cause);
+        } finally {
+            Invoker.resumeInflight();
         }
         try {
             callback.invoke(result);
