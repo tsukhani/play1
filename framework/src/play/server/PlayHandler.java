@@ -1283,9 +1283,31 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
      */
     static class LazyChunkedInput implements ChunkedInput<ByteBuf> {
 
+        // PF-134: backpressure watermarks (bytes, not element count — heap pressure scales with
+        // payload size, and SSE/chunk sizes vary by orders of magnitude, so an element cap is a
+        // poor proxy). When queuedBytes crosses HIGH, a writing virtual thread parks until the IO
+        // thread drains it below LOW; the hysteresis gap avoids wake/park thrashing at the boundary.
+        // 8 MiB / 4 MiB is generous for normal SSE (KB-scale events) yet caps a runaway producer's
+        // uncollectable backlog at a bounded figure per stalled stream.
+        private static final long HIGH_WATERMARK_BYTES = 8L * 1024 * 1024;
+        private static final long LOW_WATERMARK_BYTES = 4L * 1024 * 1024;
+        // Bound the park so a missed notify (or a disconnect noticed only by the next readChunk
+        // returning the stream as ended) can never wedge a producer forever; we re-check state on
+        // each wake. 50ms is imperceptible against a stalled-client backlog but keeps liveness.
+        private static final long BACKPRESSURE_PARK_MS = 50L;
+
         private final ConcurrentLinkedQueue<byte[]> nextChunks = new ConcurrentLinkedQueue<>();
-        private boolean closed = false;
+        // closed is set by the invoker VT (close()) and read by the IO/event-loop thread
+        // (isEndOfInput) — volatile for visibility across the two threads.
+        private volatile boolean closed = false;
+        // served is touched only on the IO/event-loop thread (written in readChunk, read in
+        // progress, both driven by ChunkedWriteHandler) — single-threaded, so it stays non-volatile.
         private long served = 0L;
+        // Bytes currently queued and not yet drained by readChunk. Incremented by the writer VT,
+        // decremented by the IO thread — AtomicLong for the cross-thread read-modify-write. Drives
+        // the watermark; the monitor below parks/wakes the writer around it.
+        private final java.util.concurrent.atomic.AtomicLong queuedBytes = new java.util.concurrent.atomic.AtomicLong();
+        private final Object backpressureLock = new Object();
 
         @Override
         @Deprecated
@@ -1300,9 +1322,16 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
                 return null;
             }
             served += next.length;
-            ByteBuf buf = allocator.buffer(next.length);
-            buf.writeBytes(next);
-            return buf;
+            // Account the drain and wake a writer parked on backpressure once we dip under LOW.
+            // The byte[] is never mutated after enqueue (writeChunk hands off a fresh array from
+            // getBytes(), or the caller's array which SseStream/Response treat as immutable), so we
+            // wrap it zero-copy instead of allocating + copying a second buffer per chunk.
+            if (queuedBytes.addAndGet(-next.length) < LOW_WATERMARK_BYTES) {
+                synchronized (backpressureLock) {
+                    backpressureLock.notifyAll();
+                }
+            }
+            return Unpooled.wrappedBuffer(next);
         }
 
         @Override
@@ -1315,6 +1344,10 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
             // No need to enqueue a chunked-terminator (0\r\n\r\n); LastHttpContent.EMPTY_LAST_CONTENT
             // queued by copyResponse() drives the encoder to emit it.
             closed = true;
+            // Wake any writer parked on backpressure so it observes the close and stops waiting.
+            synchronized (backpressureLock) {
+                backpressureLock.notifyAll();
+            }
         }
 
         @Override
@@ -1327,7 +1360,13 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
             return served;
         }
 
-        public void writeChunk(Object chunk) throws Exception {
+        /**
+         * @param allowBlock whether the caller is allowed to park on backpressure. True only when
+         *     the writer runs on an invoker virtual thread; false when it could be the Netty
+         *     IO/event-loop thread, where parking would deadlock (the event loop is what drains the
+         *     queue via readChunk). See the outer {@link PlayHandler#writeChunk}.
+         */
+        public void writeChunk(Object chunk, boolean allowBlock) throws Exception {
             if (closed) {
                 throw new Exception("HTTP output stream closed");
             }
@@ -1346,7 +1385,27 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
                 return;
             }
 
+            // PF-134: bound the queue. If the backlog is already over HIGH and we're on a VT (never
+            // the event loop), park until the IO thread drains below LOW or the stream closes.
+            // Cheap on virtual threads under JEP 491 (no carrier pinning on synchronized/wait).
+            if (allowBlock) {
+                while (!closed && queuedBytes.get() >= HIGH_WATERMARK_BYTES) {
+                    synchronized (backpressureLock) {
+                        // Re-check inside the monitor to avoid missing a notify from readChunk/close.
+                        if (closed || queuedBytes.get() < HIGH_WATERMARK_BYTES) {
+                            break;
+                        }
+                        backpressureLock.wait(BACKPRESSURE_PARK_MS);
+                    }
+                }
+                // Client vanished while we were parked — surface it so SseStream's catch closes us.
+                if (closed) {
+                    throw new Exception("HTTP output stream closed");
+                }
+            }
+
             nextChunks.offer(bytes);
+            queuedBytes.addAndGet(bytes.length);
         }
     }
 
@@ -1373,7 +1432,13 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
                 playResponse.direct = new LazyChunkedInput();
                 copyResponse(ctx, playRequest, playResponse, nettyRequest);
             }
-            ((LazyChunkedInput) playResponse.direct).writeChunk(chunk);
+            // PF-134: only allow backpressure parking off the event loop. SSE/chunked writes come
+            // from controller code on an invoker VT (Invoker.invoke → VirtualThreadScheduledExecutor),
+            // never the IO thread — but a raw plugin could in principle stream synchronously from
+            // channelRead. Parking there would deadlock the loop that drains the queue, so we gate on
+            // inEventLoop() and skip the wait in that (non-SSE) case rather than risk a deadlock.
+            boolean allowBlock = !ctx.executor().inEventLoop();
+            ((LazyChunkedInput) playResponse.direct).writeChunk(chunk, allowBlock);
 
             resumeChunkedTransfer(ctx);
         } catch (Exception e) {
