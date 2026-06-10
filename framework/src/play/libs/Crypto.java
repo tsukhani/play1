@@ -198,6 +198,9 @@ public class Crypto {
      * @return The decrypted String
      */
     public static String decryptAES(String value) {
+        if (isLegacyCiphertext(value)) {
+            throw new UnexpectedException(new Exception(LEGACY_CIPHERTEXT_MESSAGE));
+        }
         try {
             byte[] keyBytes = deriveAesKey();
             SecretKeySpec skeySpec = new SecretKeySpec(keyBytes, "AES");
@@ -214,6 +217,48 @@ public class Crypto {
         } catch (Exception ex) {
             throw new UnexpectedException(ex);
         }
+    }
+
+    /**
+     * Actionable message thrown when {@link #decryptAES(String)} is handed ciphertext that looks
+     * like it was produced by the legacy (Play 1.12) AES path rather than the current one.
+     */
+    static final String LEGACY_CIPHERTEXT_MESSAGE =
+            "decryptAES received what looks like legacy (Play 1.12) ciphertext. The AES "
+          + "key derivation and cipher changed in 1.13: 1.12 used truncate/pad of the secret "
+          + "with hex-encoded AES/ECB output, while 1.13 uses HKDF-SHA256 (info "
+          + "\"play.encrypt.aes.v1\") with Base64 IV-prefixed AES/GCM. Old ciphertext is not "
+          + "decryptable with the new key. Remedy: re-encrypt this value during the upgrade "
+          + "window, or decrypt it with the deprecated two-arg decryptAES(value, oldKey) escape "
+          + "hatch keyed by the original 1.12 secret.";
+
+    /**
+     * Heuristic: does {@code value} look like legacy (1.12) AES ciphertext rather than the
+     * current {@code Base64(IV || ciphertext || GCM-tag)} format?
+     * <p>
+     * Legacy {@link #encryptAES(String, String)} hex-encodes AES/ECB output via
+     * {@link Codec#byteToHexString(byte[])}: the result is therefore a pure-hex string
+     * ({@code ^[0-9a-fA-F]+$}) whose length is a non-zero multiple of 32 chars (16-byte AES
+     * blocks, two hex chars per byte). The current format is Base64 of at least 28 bytes
+     * (12-byte IV + 16-byte GCM tag, even for empty plaintext) and uses the full Base64
+     * alphabet, so genuine new ciphertext does not match this shape.
+     */
+    private static boolean isLegacyCiphertext(String value) {
+        if (value == null || value.isEmpty()) {
+            return false;
+        }
+        int len = value.length();
+        if (len % 32 != 0) {
+            return false;
+        }
+        for (int i = 0; i < len; i++) {
+            char c = value.charAt(i);
+            boolean isHex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+            if (!isHex) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**

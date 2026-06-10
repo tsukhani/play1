@@ -8,6 +8,7 @@ import play.PlayBuilder;
 import java.util.Properties;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 public class CryptoTest {
 
@@ -46,6 +47,31 @@ public class CryptoTest {
         String first = Crypto.encryptAES("same input");
         String second = Crypto.encryptAES("same input");
         assertThat(first).isNotEqualTo(second);
+    }
+
+    @Test
+    public void testDecryptAESRejectsLegacyCiphertextWithMigrationMessage() {
+        // Produce genuine legacy (1.12-shaped) ciphertext: hex-encoded AES/ECB via the
+        // deprecated two-arg encryptAES. decryptAES(String) must detect this shape and refuse
+        // with an actionable migration message rather than a generic "Decryption failed".
+        String legacy = Crypto.encryptAES("legacy payload", "abcdefghijklmnop");
+        assertThat(legacy).matches("[0-9a-fA-F]+");
+
+        Throwable thrown = catchThrowable(() -> Crypto.decryptAES(legacy));
+        assertThat(thrown).isNotNull();
+        String message = thrown.getMessage() + " " + String.valueOf(thrown.getCause());
+        assertThat(message)
+                .contains("1.13")
+                .contains("legacy")
+                .containsIgnoringCase("re-encrypt");
+    }
+
+    @Test
+    public void testDecryptAESLegacyDetectionDoesNotBreakRoundTrip() {
+        // Regression guard: the legacy-detection short-circuit must not affect the happy path.
+        String original = "fresh secret message";
+        String encrypted = Crypto.encryptAES(original);
+        assertThat(Crypto.decryptAES(encrypted)).isEqualTo(original);
     }
 
     @Test
