@@ -1,5 +1,7 @@
 package play.server;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
 import io.netty.buffer.ByteBufInputStream;
@@ -223,10 +225,15 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
         }
     }
 
-    // PF-43: ConcurrentHashMap so the IO-thread containsKey/get pair (line ~195) and the worker-
-    // thread put on the RenderStatic catch path don't race on the underlying HashMap. The previous
-    // code synchronized only the get/put sites, leaving the unguarded containsKey check exposed.
-    private static final Map<String, RenderStatic> staticPathsCache = new ConcurrentHashMap<>();
+    // PF-43: a concurrent cache so the IO-thread get (line ~195) and the worker-thread put on the
+    // RenderStatic catch path don't race on the underlying map. PF-126: bounded with Caffeine so an
+    // unauthenticated client can't grow it without limit. Router.routeOnlyStatic throws RenderStatic
+    // for any path under a staticDir prefix regardless of file existence, and the key includes the
+    // client-controlled Host header (request.domain), so an unbounded map was a PROD heap-growth DoS.
+    // maximumSize evicts least-recently-used entries (W-TinyLFU); getIfPresent returns null on miss,
+    // matching the old Map.get semantics.
+    private static final Cache<String, RenderStatic> staticPathsCache =
+            Caffeine.newBuilder().maximumSize(10_000).build();
 
     public class NettyInvocation extends Invoker.Invocation {
 
@@ -277,7 +284,7 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
                     Router.detectChanges(Play.ctxPath);
                 }
                 if (Play.mode == Play.Mode.PROD) {
-                    RenderStatic rs = staticPathsCache.get(request.domain + " " + request.method + " " + request.path);
+                    RenderStatic rs = staticPathsCache.getIfPresent(request.domain + " " + request.method + " " + request.path);
                     if (rs != null) {
                         serveStatic(rs, ctx, request, response, nettyRequest);
                         if (Logger.isTraceEnabled()) {
