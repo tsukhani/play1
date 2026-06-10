@@ -1,0 +1,156 @@
+h1. Play 1.13.0 -- Release notes
+
+Play 1.13.0 is the *build-toolchain* release. Where 1.12 modernized the runtime (Netty 4.2, Java 25, virtual threads, HTTP/2 and HTTP/3, observability, security), 1.13 modernizes how applications are built, run, and packaged: the Python @play@ CLI and the Ivy-based @conf/dependencies.yml@ are gone, replaced by a Gradle plugin and a thin @play@ shell wrapper. This is the most invasive *project-layout* change in the fork's history — every application's build is touched — but the framework runtime API surface is largely the one 1.12 already settled on.
+
+The headline change is tracked by *PF-90* and ships in *1.13.0*, alongside two other 1.13.0 breaking removals: the @crud@/@secure@/@console@ modules and PROD-gating of the OpenAPI spec endpoints. Separately, the *migration aids* for the cache and crypto format breaks that the 1.12 line shipped without an upgrade path were added across the 1.13.x patch line — the deprecated 1.x @Cache@ facade (*PF-133*, 1.13.35), legacy-AES-ciphertext detection (*PF-129*, 1.13.34), and the legacy password-hash verifier (*PF-132*, 1.13.35). Each is marked with its introducing version below; this page documents the 1.13.x line as a whole.
+
+*Nothing on this page repeats 1.12.* If you are coming from 1.11.x, read the *Play 1.12.0* release notes first — Netty 4.2, the Java 25 minimum, virtual threads, HTTP/2/3, servlet/WAR removal, Joda→@java.time@, security headers, CORS, SameSite cookies, JSON logging, health endpoints, OpenAPI, Micrometer, the typed @Cache@ contract, and the @application.secret@ env-var requirement all landed across the 1.12.x line, not in 1.13.
+
+h2. Requirements
+
+Unchanged from 1.12: *Java 25 or later* is required. Apps that must stay on Java 17 or 21 should pin to Play 1.11.x. The new toolchain additionally needs *Gradle* — every generated app ships a @gradlew@ wrapper, so a separate Gradle install is only needed if you build outside an app directory.
+
+h2. Breaking changes
+
+h3. Gradle replaces the Python CLI and @dependencies.yml@ (PF-90)
+
+The pre-1.13 build model — a Python @play@ command driving Ant/Ivy, with dependencies declared in @conf/dependencies.yml@ and jars resolved into @lib/@ and @modules/@ — is *removed*. Applications now build with Gradle:
+
+* A single @gradlew@ wrapper at the application root.
+* A @play1 { ... }@ DSL block in @build.gradle.kts@ that configures the framework location and declares modules.
+* A @play1@ Gradle task group that exposes the lifecycle and build commands.
+
+The @play1@ extension has three properties — @frameworkPath@ (the Play 1 distribution directory), @frameworkVersion@ (the framework jar version, default @1.13.0-SNAPSHOT@), and @modules@ (declared via the @modules("...")@ helper):
+
+bc. // build.gradle.kts
+plugins {
+    id("org.playframework.play1")
+}
+
+play1 {
+    frameworkPath.set(file("/opt/play1"))
+    modules("docviewer")   // third-party / extra modules declared here
+}
+
+The registered @play1@ tasks are: @playRun@, @playStart@, @playStop@, @playRestart@, @playStatus@, @playPid@, @playOut@, @playTest@, @playAutotest@, @playPrecompile@, @playBundle@, @playDist@, @playClean@, @playSecret@, @playEvolutions@, @playClasspath@, @playModulesInfo@, @playJavadoc@, and @playVersion@. (@playNewApp@ is registered in the framework's own build, not the consumer plugin — it scaffolds new apps and is reached through @play new@.)
+
+*Migration path.* The bundled @play@ shell wrapper at the root of the distribution translates 1.12-era ergonomics onto Gradle so muscle memory mostly carries over. It locates a @./gradlew@ in the current directory (the app's wrapper), then @$PLAY_HOME/gradlew@, then a system @gradle@. It maps subcommands to tasks and rewrites 1.12-style flags to Gradle's @-P@ wire format:
+
+bc. # 1.12 CLI                         1.13 equivalent
+play run                            # → ./gradlew playRun
+play test                           # → ./gradlew playTest
+play start --http.port=9000         # → ./gradlew playStart -PhttpPort=9000
+play run --%staging                 # → ./gradlew playRun  -PplayId=staging
+play run -Xmx2g -Dfoo=bar           # → accumulated into -PjvmArgs="-Xmx2g -Dfoo=bar"
+
+@--http.port=X@ becomes @-PhttpPort=X@, @--https.port=X@ becomes @-PhttpsPort=X@, @--%<id>@ becomes @-PplayId=<id>@, and JVM flags (@-X...@, @-XX:...@, @-D...@, @-javaagent:...@, ...) accumulate into a single @-PjvmArgs="..."@ value. Note that @play.id@ and @http.port@ are *not* @play1@ DSL properties — set them in @conf/application.conf@ (or @%prefix.*@ overrides), or override per-invocation with @-PplayId=@ / @-PhttpPort=@.
+
+*Removed commands.* Commands tied to the old resolution/IDE-file workflow now print a redirect message instead of running:
+
+* @play deps@, @play check@, @play ant@, @play install@, @play list-modules@, @play build-module@, @play new-module@, @play id@ — exit non-zero with a pointer to @./gradlew dependencies@, @build.gradle.kts@, and @play modules@.
+* @play idea@, @play intellij@, @play eclipse@, @play netbeans@ — exit zero with a note that modern IDEs import @build.gradle.kts@ directly; no generated project files are needed.
+
+There is no @lib/@ directory or @dependencies.yml@ to manage any longer. Declare application dependencies in @build.gradle.kts@; Gradle resolves them.
+
+h3. Built-in modules trimmed to @testrunner@ and @docviewer@
+
+The @crud@, @secure@, and @console@ modules that shipped inside the distribution through 1.12 are *removed* in 1.13. Only @testrunner@ and @docviewer@ remain bundled, and both auto-load through the Gradle plugin — @testrunner@ under @play.id=test@, @docviewer@ in dev mode — so apps no longer declare them.
+
+*Migration path.* If your app depended on @crud@ or @secure@, vendor the module sources into your application (they were thin, app-level Groovy/Java + views) or replace their functionality directly — @secure@'s @Secure@ controller and @crud@'s scaffolding were never framework-core. Third-party and extra modules are now declared in the DSL:
+
+bc. play1 {
+    modules("your-module")
+}
+
+Each declared module is sourced from the framework distribution's @modules/@ directory and unzipped under the app's @modules/<name>/@ by the plugin's @extractPlayModules@ task before launch. @Play.loadModules@ and @VirtualFile@ are unchanged from 1.12 — modules remain real on-disk directories, so overlays and hot reload keep working exactly as before.
+
+h3. Cache: typed contract has no static facade — deprecated @LegacyCache@ restores it (PF-133)
+
+The typed @play.cache.Cache<K,V>@ contract and the removal of the memcached backend landed in *1.12.39 (PF-88)* — see the 1.12 notes. The consequence surfaces on the 1.12→1.13 upgrade: a 1.12-era app that called the old static facade (@Cache.set(key, value, "10mn")@, @Cache.get(key)@, @Cache.delete(key)@, ...) *fails to compile*, because that facade no longer exists.
+
+1.13.35 adds a migration aid. @play.cache.LegacyCache@ (PF-133) re-exposes the 1.x static surface on top of the typed registry so a 1.12-era app boots without a source rewrite. (On 1.13.0–1.13.34 the facade is not yet present — port directly to @Caches.named@.)
+
+bc. // Before (1.x static facade — no longer compiles in 1.12.39+):
+import play.cache.Cache;
+Cache.set("user_" + id, user, "10mn");
+User u = Cache.get("user_" + id, User.class);
+Cache.delete("user_" + id);
+
+// Drop-in migration aid (1.13, deprecated):
+import play.cache.LegacyCache;
+LegacyCache.set("user_" + id, user, "10mn");
+User u = LegacyCache.get("user_" + id, User.class);
+LegacyCache.delete("user_" + id);
+
+// Preferred destination (typed contract):
+import play.cache.Cache;
+import play.cache.Caches;
+import play.cache.CacheConfig;
+import java.time.Duration;
+Cache<String, User> users = Caches.named("users",
+    CacheConfig.newBuilder().expireAfterWrite(Duration.ofMinutes(10)).build());
+users.put("user_" + id, user);
+User u = users.getIfPresent("user_" + id);
+users.invalidate("user_" + id);
+
+@LegacyCache@ supports @set@/@safeSet@/@get@/@delete@/@safeDelete@/@clear@. It deliberately does *not* support @add@, @replace@, @incr@, or @decr@: the typed contract offers no atomic add-if-absent / replace-if-present / numeric mutation, and the old memcached-backed versions were genuinely atomic, so emulating them with get-then-put would be racy. Those four throw @UnsupportedOperationException@ — port such call sites to @Cache.get(key, loader)@ or an explicit @AtomicLong@.
+
+@LegacyCache@ is @@Deprecated@ — it is a migration aid, not the supported API. Move to @Caches.named(...)@ and remove it once your call sites are ported.
+
+*Retired cache config keys now WARN (1.13.35).* The @memcached@ on/off toggle and the whole @memcached.*@ family (@.host@, @.<N>.host@, @.user@, @.password@, ...) are no longer honored; 1.13.35 emits a @WARN@ at boot for each such line still in @application.conf@, pointing at the typed @Caches.named@ + @CacheProvider@ replacement. Remove them.
+
+h3. Crypto: migration helpers for the AES and password-hash format changes (PF-129, PF-132)
+
+The AES cipher format (HKDF-SHA256 key derivation + Base64 IV-prefixed AES/GCM, replacing the old truncate/pad-keyed hex AES/ECB) and PBKDF2 password hashing both shipped *in the 1.12.x line*, not in 1.13 — see the 1.12 notes. What the 1.13.x line adds is the *migration tooling* (each helper's introducing version is noted below) for the silent breakage those format changes cause when a 1.12-era datastore meets the new code, because 1.12 shipped the format changes without an upgrade path.
+
+*AES ciphertext (PF-129, 1.13.34).* @Crypto.decryptAES(String)@ now detects input that looks like legacy (pre-GCM) ciphertext — a pure-hex string whose length is a non-zero multiple of 32 — and throws an actionable message rather than failing with an opaque decryption error. Old ciphertext is *not decryptable* with the new key; you must re-encrypt stored values during the upgrade window. A deprecated two-arg escape hatch decrypts old values with the original secret:
+
+bc. // Re-encrypt a stored value during the upgrade window:
+String plaintext = Crypto.decryptAES(oldCiphertext, oldSecret);  // deprecated 2-arg form, old key
+String migrated  = Crypto.encryptAES(plaintext);                 // new GCM format, current secret
+
+*Password hashes (PF-132, 1.13.35).* @Crypto.passwordHash(input)@ returns a salted PBKDF2 string (@pbkdf2$salt$hash@). Because the signature is unchanged but the output format is not, code that authenticated via @passwordHash(input).equals(stored)@ silently rejects *every* previously-stored credential after upgrade (the old code stored an unsalted Base64 MD5/SHA digest, which the new code can no longer reproduce). The new deprecated @Crypto.checkPasswordLegacy(input, stored)@ verifies old MD5/SHA-1/SHA-256/SHA-512 digests so you can re-hash on login:
+
+bc. // Verify-then-upgrade on login:
+if (Crypto.checkPasswordPBKDF2(input, user.passwordHash)) {
+    // already migrated — proceed
+} else if (Crypto.checkPasswordLegacy(input, user.passwordHash)) {
+    // legacy digest matched — rehash to PBKDF2 and persist, then proceed
+    user.passwordHash = Crypto.passwordHashPBKDF2(input);
+    user.save();
+} else {
+    // authentication failed
+}
+
+@checkPasswordLegacy@ is @@Deprecated@ — the legacy unsalted digests are weak. Drop the branch once your population has logged in at least once or after a migration deadline.
+
+h3. OpenAPI spec endpoints are PROD-gated by default
+
+The @/@api/openapi.json@, @/@api/openapi.yaml@, and Swagger-UI @/@api/docs@ endpoints (the OpenAPI feature itself shipped in 1.12) are now served in *DEV mode only* by default. In any non-DEV mode they 404 unless you opt in with @openapi.publicSpec=true@ in @application.conf@. The spec describes every route and parameter, so publishing it in production is now an explicit choice rather than the default. Apps that relied on the spec being reachable in PROD must set @openapi.publicSpec=true@.
+
+h2. Precompilation and packaging
+
+@play precompile@ (the @playPrecompile@ task) boots the framework once under @play.id=test@ with @-Dprecompile=yes@, writing enhanced bytecode to @precompiled/java/@ and parsed templates to @precompiled/templates/@. Two things are compiled (so build errors surface) but deliberately kept *out* of @precompiled/@: @test/@ sources (their bytecode is not written, keeping test code and JUnit off the production classpath) and the @testrunner@ module mount. @precompiled/@ is force-loaded at startup in a self-contained bundle.
+
+Two packaging targets ship:
+
+* *@play bundle@* (@playBundle@) — a *self-contained* deployment zip: framework jar + dependencies + extracted modules + a bundled @play@ launcher, with no Gradle needed at runtime. Because it carries its own modules, the task ships each declared module's non-jar resources (@play.plugins@ descriptors, @public/@ assets, @conf/@) so module plugins still register at prod startup.
+* *@play dist@* (@playDist@) — the *lean* alternative: application source + @precompiled/@ + the SPA, with *no* bundled @modules/@ or framework launcher. It is deployed into a Gradle context where @extractPlayModules@ re-populates modules at launch.
+
+h2. Migration checklist (1.12 → 1.13)
+
+This sequence assumes your app is already on Play 1.12.x. If you are on 1.11.x or earlier, complete the 1.12 upgrade (see the *Play 1.12.0* release notes) first.
+
+# *Adopt the Gradle build.* Add a @build.gradle.kts@ applying @id("org.playframework.play1")@ with a @play1 { }@ block setting @frameworkPath@ (and @frameworkVersion@). Generate the @gradlew@ wrapper. Delete @conf/dependencies.yml@ and the @lib/@ directory. The fastest path is @play new@, which scaffolds all of this.
+# *Re-declare dependencies and modules.* Move every @conf/dependencies.yml@ entry into @build.gradle.kts@ as a Gradle dependency. Move bundled-module declarations into @play1 { modules("...") }@. Drop @testrunner@/@docviewer@ declarations — they auto-load.
+# *Replace removed modules.* If you used @crud@, @secure@, or @console@, vendor the relevant sources into your app or replace the functionality — they are no longer bundled.
+# *Fix cache call sites.* If you used the 1.x static @Cache@ facade, either port to @Caches.named(name, config)@ + the typed @Cache@ methods, or switch the imports to the deprecated @play.cache.LegacyCache@ (1.13.35+) to compile immediately, then port incrementally. Remove any @memcached@ / @memcached.*@ keys from @application.conf@ (they WARN as of 1.13.35).
+# *Plan crypto data migration.* If you store AES-encrypted values, re-encrypt them during the upgrade window (old ciphertext is undecryptable with the new key; use the deprecated two-arg @decryptAES(value, oldKey)@ to read them; the legacy-format *detection* message arrived in 1.13.34). If you store @passwordHash@ output, add a @checkPasswordLegacy@ (1.13.35+) verify-then-rehash branch to your login path so existing credentials keep working.
+# *Decide OpenAPI exposure.* If you need @/@api/openapi.{json,yaml}@ or @/@api/docs@ reachable outside DEV mode, set @openapi.publicSpec=true@; otherwise they 404 in PROD by default.
+# *Update CLI muscle memory / scripts.* Replace @play <cmd>@ invocations in scripts/CI with the equivalent @./gradlew play<Task>@ (or keep using the bundled @play@ wrapper). Replace @play war@-era and IDE-file commands — @play idea@/@eclipse@/etc. are no-ops; import @build.gradle.kts@ into your IDE directly.
+# *Repackage for deployment.* Choose @play bundle@ (self-contained, no Gradle at runtime) or @play dist@ (lean, redeployed into a Gradle context). Run @play precompile@ as part of your release build.
+
+h2. Verification
+
+* New build verified by scaffolding (@play new@), @play run@, @play test@, @play autotest@, @play precompile@, @play bundle@, and @play dist@ against the Gradle plugin.
+* Cache, crypto, and config-warning behaviors verified against the framework source: @play.cache.{Cache, Caches, LegacyCache}@, @play.libs.Crypto@ (@deriveAesKey@, @decryptAES@, @isLegacyCiphertext@, @passwordHashPBKDF2@, @checkPasswordPBKDF2@, @checkPasswordLegacy@), and the retired-key @WARN@ path in @play.Play@.
