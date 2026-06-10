@@ -134,6 +134,81 @@ public class Crypto {
     }
 
     /**
+     * Legacy (Play 1.12 and earlier) digest algorithms that {@code Crypto.passwordHash} could
+     * produce. The 1.x API was {@code passwordHash(input)} — a Base64 MD5 digest (the default) —
+     * plus {@code passwordHash(input, HashType)} variants for SHA-1, SHA-256 and SHA-512. We try
+     * every one so a stored hash made with any of them can be recognised. MD5 is listed first
+     * since it was the historical default and the most common stored format.
+     */
+    private static final String[] LEGACY_HASH_ALGORITHMS = { "MD5", "SHA-1", "SHA-256", "SHA-512" };
+
+    /**
+     * Verify a candidate password against a hash produced by the <b>legacy</b> (Play 1.12 and
+     * earlier) {@code Crypto.passwordHash} API, for use during a migration window only.
+     * <p>
+     * Upstream Play 1.x {@code passwordHash(input)} returned {@code Base64(MD5(input))}, with
+     * {@code passwordHash(input, HashType)} variants emitting the SHA-1 / SHA-256 / SHA-512 Base64
+     * digest. This fork's same-signature {@link #passwordHash(String)} now returns a salted PBKDF2
+     * string ({@code pbkdf2$salt$hash}), so the old digests can no longer be reproduced by hashing
+     * the input again — code that authenticated via {@code passwordHash(input).equals(stored)}
+     * silently rejects every previously-stored credential after upgrade. This helper recomputes the
+     * legacy Base64 digest for each {@linkplain #LEGACY_HASH_ALGORITHMS candidate algorithm}
+     * (MD5, SHA-1, SHA-256, SHA-512) and constant-time-compares it against {@code storedHash}.
+     * <p>
+     * Note: legacy {@code passwordHash} hashed {@code input.getBytes()} using the platform default
+     * charset. This helper uses UTF-8, which is byte-identical for ASCII passwords; passwords
+     * containing non-ASCII characters that were stored under a non-UTF-8 default charset are out of
+     * scope.
+     * <p>
+     * <b>Intended migration pattern</b> (re-hash on login): the legacy digests are unsalted and
+     * cryptographically weak, so do not keep verifying against them indefinitely. On a successful
+     * login, transparently upgrade the stored credential to PBKDF2:
+     * <pre>
+     *   if (Crypto.checkPasswordPBKDF2(input, user.passwordHash)) {
+     *       // already migrated
+     *   } else if (Crypto.checkPasswordLegacy(input, user.passwordHash)) {
+     *       // legacy hash matched — rehash and persist the modern form, then proceed
+     *       user.passwordHash = Crypto.passwordHashPBKDF2(input);
+     *       user.save();
+     *   } else {
+     *       // authentication failed
+     *   }
+     * </pre>
+     * Once your population has logged in at least once (or after a deadline), drop the
+     * {@code checkPasswordLegacy} branch.
+     *
+     * @param input
+     *            The candidate password
+     * @param storedHash
+     *            A Base64 digest stored by the legacy {@code passwordHash} API
+     * @return true if {@code input} hashes (under any supported legacy algorithm) to {@code storedHash}
+     * @deprecated Migration aid only. Legacy unsalted digests (MD5/SHA-*) are unsafe for password
+     *             storage; re-hash matched credentials with {@link #passwordHashPBKDF2(String)} on
+     *             login and remove this call once migration completes.
+     */
+    @Deprecated
+    public static boolean checkPasswordLegacy(String input, String storedHash) {
+        if (input == null || storedHash == null) {
+            return false;
+        }
+        byte[] storedBytes = storedHash.getBytes(UTF_8);
+        boolean matched = false;
+        for (String algorithm : LEGACY_HASH_ALGORITHMS) {
+            try {
+                byte[] digest = java.security.MessageDigest.getInstance(algorithm)
+                        .digest(input.getBytes(UTF_8));
+                String candidate = new String(Base64.encodeBase64(digest), UTF_8);
+                // Constant-time compare per candidate; OR the results without short-circuiting
+                // so the running time does not reveal which algorithm (if any) matched.
+                matched |= java.security.MessageDigest.isEqual(candidate.getBytes(UTF_8), storedBytes);
+            } catch (NoSuchAlgorithmException ex) {
+                throw new UnexpectedException(ex);
+            }
+        }
+        return matched;
+    }
+
+    /**
      * Encrypt a String with AES/GCM/NoPadding using the application secret
      *
      * @param value

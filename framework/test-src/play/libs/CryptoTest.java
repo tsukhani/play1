@@ -82,6 +82,66 @@ public class CryptoTest {
     }
 
     @Test
+    public void testCheckPasswordLegacyVerifiesMd5Hash() throws Exception {
+        // Legacy Play 1.x default: passwordHash(input) == Base64(MD5(input)).
+        // Compute the expected stored value independently (do NOT call the helper under test).
+        String password = "s3cr3t";
+        String storedMd5 = independentLegacyHash("MD5", password);
+        assertThat(Crypto.checkPasswordLegacy(password, storedMd5)).isTrue();
+    }
+
+    @Test
+    public void testCheckPasswordLegacyVerifiesSha256Hash() throws Exception {
+        // Legacy passwordHash(input, HashType.SHA256) == Base64(SHA-256(input)).
+        String password = "s3cr3t";
+        String storedSha256 = independentLegacyHash("SHA-256", password);
+        assertThat(Crypto.checkPasswordLegacy(password, storedSha256)).isTrue();
+    }
+
+    @Test
+    public void testCheckPasswordLegacyVerifiesSha1AndSha512Hashes() throws Exception {
+        // Round out coverage of the documented legacy algorithm set.
+        String password = "s3cr3t";
+        assertThat(Crypto.checkPasswordLegacy(password, independentLegacyHash("SHA-1", password))).isTrue();
+        assertThat(Crypto.checkPasswordLegacy(password, independentLegacyHash("SHA-512", password))).isTrue();
+    }
+
+    @Test
+    public void testCheckPasswordLegacyRejectsWrongPassword() throws Exception {
+        String storedMd5 = independentLegacyHash("MD5", "s3cr3t");
+        assertThat(Crypto.checkPasswordLegacy("wrong", storedMd5)).isFalse();
+        assertThat(Crypto.checkPasswordLegacy(null, storedMd5)).isFalse();
+        assertThat(Crypto.checkPasswordLegacy("s3cr3t", null)).isFalse();
+    }
+
+    @Test
+    public void testCheckPasswordLegacyKnownVector() {
+        // Hard-coded, hand-verified Base64 MD5 of "password":
+        //   echo -n password | openssl dgst -md5 -binary | base64  ->  X03MO1qnZdYdgyfeuILPmQ==
+        assertThat(Crypto.checkPasswordLegacy("password", "X03MO1qnZdYdgyfeuILPmQ==")).isTrue();
+        assertThat(Crypto.checkPasswordLegacy("Password", "X03MO1qnZdYdgyfeuILPmQ==")).isFalse();
+    }
+
+    @Test
+    public void testPbkdf2PathUnaffectedByLegacyHelper() {
+        // The new PBKDF2 verify path must keep working and must NOT match a legacy digest, and the
+        // legacy helper must NOT match a PBKDF2 string — the two formats stay disjoint.
+        String pbkdf2 = Crypto.passwordHashPBKDF2("password");
+        assertThat(Crypto.checkPasswordPBKDF2("password", pbkdf2)).isTrue();
+        assertThat(Crypto.checkPasswordLegacy("password", pbkdf2)).isFalse();
+
+        String legacyMd5 = "X03MO1qnZdYdgyfeuILPmQ==";
+        assertThat(Crypto.checkPasswordPBKDF2("password", legacyMd5)).isFalse();
+    }
+
+    /** Reproduce a legacy Base64 digest independently of the production helper. */
+    private static String independentLegacyHash(String algorithm, String input) throws Exception {
+        byte[] digest = java.security.MessageDigest.getInstance(algorithm)
+                .digest(input.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        return java.util.Base64.getEncoder().encodeToString(digest);
+    }
+
+    @Test
     public void testEncryptDecryptWithShortSecret() {
         // The previous derivation NUL-padded short secrets up to 16 bytes; HKDF should
         // produce a uniformly-random-looking key regardless of input length.
