@@ -687,11 +687,28 @@ public class Evolutions extends PlayPlugin {
     }
 
     private static void checkAndUpdateEvolutionsForMultiModuleSupport(String dbName, Connection connection) throws SQLException {
-        ResultSet rs = connection.getMetaData().getColumns(null, null, "play_evolutions", "module_key");
-        if (!rs.next()) {
+        if (!hasModuleKeyColumn(connection)) {
             System.out.println("!!! - Updating the play_evolutions table to cope with multiple modules - !!!");
             EvolutionQuery.alterForModuleSupport(dbName, connection);
         }
+    }
+
+    // PF-143: JDBC metadata identifier casing varies by database (H2/Oracle report UPPERCASE for
+    // unquoted identifiers, MySQL/Postgres lowercase). A single lowercase getColumns(...,"module_key")
+    // pattern silently mis-fires on H2 — the framework's own default in-memory DB — re-running the ALTER
+    // and throwing a duplicate-column error that listDatabaseEvolutions swallows. Enumerate the table's
+    // columns under both name casings and match case-insensitively. Mirrors isEvolutionsTableExist.
+    private static boolean hasModuleKeyColumn(Connection connection) throws SQLException {
+        for (String table : new String[] { EVOLUTIONS_TABLE_NAME, EVOLUTIONS_TABLE_NAME.toUpperCase() }) {
+            try (ResultSet rs = connection.getMetaData().getColumns(null, null, table, null)) {
+                while (rs.next()) {
+                    if ("module_key".equalsIgnoreCase(rs.getString("COLUMN_NAME"))) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
 }

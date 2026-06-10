@@ -62,15 +62,14 @@ public class EvolutionsTest {
         // used as a module key fallback; db.url marks the default DB as present.
         Play.configuration = new Properties();
         // MODE=MYSQL matches the framework's own in-memory H2 default (DBPlugin sets
-        // jdbc:h2:mem:play;MODE=MYSQL). DATABASE_TO_LOWER=TRUE makes H2 store identifiers (and
-        // therefore return JDBC catalog metadata) in lowercase, which is what the engine's
-        // lowercase getTables("play_evolutions") / getColumns(...,"module_key") lookups
-        // (isEvolutionsTableExist, checkAndUpdateEvolutionsForMultiModuleSupport) require to
-        // recognise the bookkeeping table it just created. Without it H2 reports uppercase
-        // column names, the multi-module check mis-fires a duplicate ALTER, and the engine
-        // silently fails to read back already-applied revisions.
+        // jdbc:h2:mem:play;MODE=MYSQL). We deliberately run under H2's DEFAULT identifier casing
+        // (UPPERCASE JDBC catalog metadata for unquoted names) — i.e. NO DATABASE_TO_LOWER crutch.
+        // Pre-PF-143 the engine's lowercase getColumns(...,"module_key") lookup mis-fired here,
+        // re-running the multi-module ALTER and throwing a swallowed duplicate-column error. As of
+        // PF-143 the engine (hasModuleKeyColumn / isEvolutionsTableExist) handles both casings, so
+        // these tests now exercise the real default casing — which is what proves the fix.
         String dbUrl = "jdbc:h2:mem:evol_" + DB_COUNTER.incrementAndGet()
-                + ";MODE=MYSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1";
+                + ";MODE=MYSQL;DB_CLOSE_DELAY=-1";
         Play.configuration.put("application.name", "evolutions-test");
         Play.configuration.put("db.url", dbUrl);
 
@@ -122,10 +121,17 @@ public class EvolutionsTest {
     }
 
     private boolean tableExists(String tableName) throws SQLException {
-        // DATABASE_TO_LOWER=TRUE makes H2 store/report identifiers in lowercase.
+        // Under default H2 casing, getTables() reports identifiers in UPPERCASE. Mirror the engine's
+        // isEvolutionsTableExist: try the lowercase name, then fall back to the UPPERCASE name.
         try (Connection c = dataSource.getConnection()) {
-            ResultSet rs = c.getMetaData().getTables(null, null, tableName.toLowerCase(), null);
-            return rs.next();
+            try (ResultSet rs = c.getMetaData().getTables(null, null, tableName.toLowerCase(), null)) {
+                if (rs.next()) {
+                    return true;
+                }
+            }
+            try (ResultSet rs = c.getMetaData().getTables(null, null, tableName.toUpperCase(), null)) {
+                return rs.next();
+            }
         }
     }
 
@@ -329,4 +335,5 @@ public class EvolutionsTest {
             assertFalse(rs.next(), "exactly one inconsistent row expected");
         }
     }
+
 }
