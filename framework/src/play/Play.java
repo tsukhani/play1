@@ -90,15 +90,17 @@ public class Play {
      */
     private static volatile Runnable shutdownDrain;
     /**
-     * Retired threading-config keys observed in raw form during {@code readConfiguration()},
-     * preserving any {@code %<id>.} profile prefix. The {@link #init(File, String)} warn
-     * block reports each so an operator can grep the offending line out of
+     * Retired config keys observed in raw form during {@code readConfiguration()},
+     * preserving any {@code %<id>.} profile prefix. Covers two now-dead families —
+     * threading toggles (VT-only fork) and cache backend keys (memcached removed in
+     * PF-88) — with the warn block choosing a family-appropriate message per key.
+     * Reports each so an operator can grep the offending line out of
      * {@code application.conf} regardless of which profile is currently active —
      * the two-pass profile filter in {@code readOneConfigurationFile} would otherwise
      * silently drop e.g. {@code %prod.play.pool=10} when running in dev/test, hiding
      * the dead knob until the next profile switch.
      */
-    private static final java.util.Set<String> retiredThreadingKeys = new java.util.LinkedHashSet<>();
+    private static final java.util.Set<String> retiredConfigKeys = new java.util.LinkedHashSet<>();
     /**
      * The framework ID
      */
@@ -389,7 +391,7 @@ public class Play {
      */
     public static void readConfiguration() {
         confs = new HashSet<>();
-        retiredThreadingKeys.clear();
+        retiredConfigKeys.clear();
         configuration = readOneConfigurationFile("application.conf");
         extractHttpPort();
         // Plugins
@@ -425,7 +427,7 @@ public class Play {
         confs.add(conf);
 
         validateApplicationSecretDeclaration(propsFromFile, filename);
-        recordRetiredThreadingKeys(propsFromFile);
+        recordRetiredKeys(propsFromFile);
 
         // OK, check for instance specifics configuration
         Properties newConfiguration = new OrderSafeProperties();
@@ -608,30 +610,53 @@ public class Play {
     }
 
     /**
-     * Scan the raw {@link Properties} for retired threading-config keys and remember
-     * each in {@link #retiredThreadingKeys} preserving the original key form (including
-     * any {@code %<id>.} profile prefix). Runs before the two-pass profile filter in
+     * Scan the raw {@link Properties} for retired config keys and remember each in
+     * {@link #retiredConfigKeys} preserving the original key form (including any
+     * {@code %<id>.} profile prefix). Covers two now-dead families: threading toggles
+     * (this fork runs on virtual threads only) and cache backend keys (the
+     * memcached/EhCache facade was removed in PF-88 in favor of the typed
+     * {@code play.cache.Cache} contract). Runs before the two-pass profile filter in
      * {@link #readOneConfigurationFile} drops non-active-profile keys, so a dormant
-     * {@code %prod.play.pool=10} sitting in {@code application.conf} during a dev run
-     * still shows up at boot as a {@code WARN} rather than waiting for the next profile
-     * switch to surface.
+     * {@code %prod.play.pool=10} or {@code %prod.memcached=enabled} sitting in
+     * {@code application.conf} during a dev run still shows up at boot as a {@code WARN}
+     * rather than waiting for the next profile switch to surface.
      */
-    private static void recordRetiredThreadingKeys(Properties rawProps) {
+    private static void recordRetiredKeys(Properties rawProps) {
         if (rawProps == null) return;
         for (Object keyObj : rawProps.keySet()) {
             String key = keyObj.toString();
-            String bareKey = key;
-            if (key.startsWith("%")) {
-                int dotIdx = key.indexOf('.');
-                if (dotIdx > 0) bareKey = key.substring(dotIdx + 1);
-            }
-            if (bareKey.equals("play.threads.virtual")
-                    || bareKey.startsWith("play.threads.virtual.")
-                    || bareKey.equals("play.pool")
-                    || bareKey.equals("play.jobs.pool")) {
-                retiredThreadingKeys.add(key);
+            if (isRetiredThreadingKey(bareKey(key)) || isRetiredCacheKey(bareKey(key))) {
+                retiredConfigKeys.add(key);
             }
         }
+    }
+
+    /** Strip a leading {@code %<id>.} profile prefix, leaving the bare config key. */
+    private static String bareKey(String key) {
+        if (key.startsWith("%")) {
+            int dotIdx = key.indexOf('.');
+            if (dotIdx > 0) return key.substring(dotIdx + 1);
+        }
+        return key;
+    }
+
+    private static boolean isRetiredThreadingKey(String bareKey) {
+        return bareKey.equals("play.threads.virtual")
+                || bareKey.startsWith("play.threads.virtual.")
+                || bareKey.equals("play.pool")
+                || bareKey.equals("play.jobs.pool");
+    }
+
+    /**
+     * Cache backend keys retired in PF-88 with the removal of the memcached-backed
+     * {@code play.cache} facade: the {@code memcached} on/off toggle and the whole
+     * {@code memcached.*} family ({@code .host}, {@code .<N>.host}, {@code .user},
+     * {@code .password}, {@code .allowlist}). EhCache had no application.conf keys of
+     * its own (it read an optional {@code ehcache.xml} resource), so there is nothing
+     * to warn on there.
+     */
+    private static boolean isRetiredCacheKey(String bareKey) {
+        return bareKey.equals("memcached") || bareKey.startsWith("memcached.");
     }
 
     /**
@@ -688,17 +713,29 @@ public class Play {
             // Clean templates
             TemplateLoader.cleanCompiledCache();
 
-            // Warn on retired threading toggles. The fork executes the request invoker,
-            // jobs scheduler, and mail dispatcher exclusively on virtual threads; any
-            // legacy play.threads.virtual*, play.pool, or play.jobs.pool entry — including
-            // profile-prefixed forms like %test.play.pool — is silently ignored (the VT
-            // thread-per-task executor isn't sized). Iterating the raw observed set
-            // (populated during readOneConfigurationFile, before the two-pass profile
-            // filter drops non-active-profile keys) means operators get one warning per
-            // dead line in application.conf, regardless of the active profile.
-            for (String key : retiredThreadingKeys) {
-                Logger.warn("Configuration key %s is no longer honored — this fork runs on "
-                        + "virtual threads exclusively. Remove it from application.conf.", key);
+            // Warn on retired config keys. Two now-dead families:
+            //   * Threading toggles — the fork executes the request invoker, jobs
+            //     scheduler, and mail dispatcher exclusively on virtual threads; any
+            //     legacy play.threads.virtual*, play.pool, or play.jobs.pool entry is
+            //     silently ignored (the VT thread-per-task executor isn't sized).
+            //   * Cache backend keys — the memcached-backed play.cache facade was
+            //     removed in PF-88; memcached/memcached.* entries no longer wire a
+            //     backend (the typed Cache contract uses Caches.named + a CacheProvider).
+            // Iterating the raw observed set (populated during readOneConfigurationFile,
+            // before the two-pass profile filter drops non-active-profile keys) means
+            // operators get one warning per dead line in application.conf — including
+            // profile-prefixed forms like %test.play.pool or %prod.memcached — regardless
+            // of the active profile.
+            for (String key : retiredConfigKeys) {
+                if (isRetiredCacheKey(bareKey(key))) {
+                    Logger.warn("Configuration key %s is no longer honored — the memcached cache "
+                            + "backend was removed in PF-88. The framework now uses the typed "
+                            + "play.cache.Cache contract (Caches.named + a CacheProvider). Remove "
+                            + "it from application.conf.", key);
+                } else {
+                    Logger.warn("Configuration key %s is no longer honored — this fork runs on "
+                            + "virtual threads exclusively. Remove it from application.conf.", key);
+                }
             }
 
             // SecretKey
