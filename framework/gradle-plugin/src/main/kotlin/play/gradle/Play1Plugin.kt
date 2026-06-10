@@ -283,9 +283,10 @@ class Play1Plugin : Plugin<Project> {
             frameworkPath.set(ext.frameworkPath)
             frameworkVersion.set(ext.frameworkVersion)
             // -PplayId is the only override channel; absent means "" (no %prefix override).
-            // -PhttpPort absent means "let conf decide" (Property stays not-present).
+            // -PhttpPort / -PhttpsPort absent means "let conf decide" (Property stays not-present).
             playId.set(project.providers.gradleProperty("playId").orElse(""))
             httpPort.set(project.providers.gradleProperty("httpPort").map { it.toInt() })
+            httpsPort.set(project.providers.gradleProperty("httpsPort").map { it.toInt() })
             pidFileOverride.set(project.providers.gradleProperty("pid-file").orElse(""))
             // -PjvmArgs="..." carries 1.12-style JVM tuning forwarded by the
             // play wrapper from the user's command line.
@@ -314,6 +315,7 @@ class Play1Plugin : Plugin<Project> {
             frameworkVersion.set(ext.frameworkVersion)
             playId.set(project.providers.gradleProperty("playId").orElse(""))
             httpPort.set(project.providers.gradleProperty("httpPort").map { it.toInt() })
+            httpsPort.set(project.providers.gradleProperty("httpsPort").map { it.toInt() })
             pidFileOverride.set(project.providers.gradleProperty("pid-file").orElse(""))
             extraJvmArgs.set(project.providers.gradleProperty("jvmArgs").orElse(""))
             playClasspath.from(playClasspathFor(project, ext, includeTestrunner = false))
@@ -523,11 +525,14 @@ class Play1Plugin : Plugin<Project> {
                 }
             }
 
-            // Only pass --http.port when -PhttpPort was supplied; otherwise let
-            // conf/application.conf decide.
+            // Only pass --http.port / --https.port when -PhttpPort / -PhttpsPort
+            // was supplied; otherwise let conf/application.conf decide.
             if (includeHttpPort) {
                 project.providers.gradleProperty("httpPort").orNull?.let {
                     args("--http.port=$it")
+                }
+                project.providers.gradleProperty("httpsPort").orNull?.let {
+                    args("--https.port=$it")
                 }
             }
 
@@ -1193,6 +1198,7 @@ abstract class PlayStartTask : DefaultTask() {
     @get:Internal abstract val frameworkVersion: Property<String>
     @get:Internal abstract val playId: Property<String>
     @get:Internal abstract val httpPort: Property<Int>
+    @get:Internal abstract val httpsPort: Property<Int>
     @get:Internal abstract val playClasspath: ConfigurableFileCollection
     @get:Internal abstract val pidFileOverride: Property<String>
     @get:Internal abstract val extraJvmArgs: Property<String>
@@ -1214,7 +1220,7 @@ abstract class PlayStartTask : DefaultTask() {
             ?.split(Regex("\\s+"))?.filter { it.isNotEmpty() }
             ?: emptyList()
         val process = spawnPlay(appDir, frameworkPath.get().asFile, frameworkVersion.get(),
-            playId.get(), httpPort.orNull, playClasspath.asPath, jvmArgsList)
+            playId.get(), httpPort.orNull, httpsPort.orNull, playClasspath.asPath, jvmArgsList)
         pidFile.writeText(process.pid().toString())
         val sysOut = File(appDir, "logs/system.out")
         logger.lifecycle("~ OK, ${appDir.absolutePath} is started")
@@ -1264,6 +1270,7 @@ abstract class PlayRestartTask : DefaultTask() {
     @get:Internal abstract val frameworkVersion: Property<String>
     @get:Internal abstract val playId: Property<String>
     @get:Internal abstract val httpPort: Property<Int>
+    @get:Internal abstract val httpsPort: Property<Int>
     @get:Internal abstract val playClasspath: ConfigurableFileCollection
     @get:Internal abstract val pidFileOverride: Property<String>
     @get:Internal abstract val extraJvmArgs: Property<String>
@@ -1295,7 +1302,7 @@ abstract class PlayRestartTask : DefaultTask() {
             ?.split(Regex("\\s+"))?.filter { it.isNotEmpty() }
             ?: emptyList()
         val process = spawnPlay(appDir, frameworkPath.get().asFile, frameworkVersion.get(),
-            playId.get(), httpPort.orNull, playClasspath.asPath, jvmArgsList)
+            playId.get(), httpPort.orNull, httpsPort.orNull, playClasspath.asPath, jvmArgsList)
         pidFile.writeText(process.pid().toString())
         val sysOut = File(appDir, "logs/system.out")
         logger.lifecycle("~ OK, ${appDir.absolutePath} is restarted")
@@ -1404,6 +1411,7 @@ private fun spawnPlay(
     frameworkVersion: String,
     playId: String,
     httpPort: Int?,
+    httpsPort: Int?,
     classpath: String,
     extraJvmArgs: List<String> = emptyList(),
 ): Process {
@@ -1429,6 +1437,7 @@ private fun spawnPlay(
         add(classpath)
         add("play.server.Server")
         if (httpPort != null) add("--http.port=$httpPort")
+        if (httpsPort != null) add("--https.port=$httpsPort")
     }
     val logsDir = File(appDir, "logs").apply { mkdirs() }
     val sysOut = File(logsDir, "system.out")
