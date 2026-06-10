@@ -296,16 +296,16 @@ public class Crypto {
 
     /**
      * Actionable message thrown when {@link #decryptAES(String)} is handed ciphertext that looks
-     * like it was produced by the legacy (Play 1.12) AES path rather than the current one.
+     * like it was produced by the legacy (pre-HKDF) AES path rather than the current one.
      */
     static final String LEGACY_CIPHERTEXT_MESSAGE =
-            "decryptAES received what looks like legacy (Play 1.12) ciphertext. The AES "
-          + "key derivation and cipher changed in 1.13: 1.12 used truncate/pad of the secret "
-          + "with hex-encoded AES/ECB output, while 1.13 uses HKDF-SHA256 (info "
-          + "\"play.encrypt.aes.v1\") with Base64 IV-prefixed AES/GCM. Old ciphertext is not "
-          + "decryptable with the new key. Remedy: re-encrypt this value during the upgrade "
-          + "window, or decrypt it with the deprecated two-arg decryptAES(value, oldKey) escape "
-          + "hatch keyed by the original 1.12 secret.";
+            "decryptAES received what looks like legacy ciphertext (the older hex AES/ECB format). "
+          + "The AES key derivation and cipher format changed in an earlier release: the legacy "
+          + "format used truncate/pad of the secret with hex-encoded AES/ECB output, while the "
+          + "current format uses HKDF-SHA256 (info \"play.encrypt.aes.v1\") with Base64 "
+          + "IV-prefixed AES/GCM. Old ciphertext is not decryptable with the new key. Remedy: "
+          + "re-encrypt this value during the upgrade window, or decrypt it with the deprecated "
+          + "two-arg decryptAES(value, oldKey) escape hatch keyed by the original secret.";
 
     /**
      * Heuristic: does {@code value} look like legacy (1.12) AES ciphertext rather than the

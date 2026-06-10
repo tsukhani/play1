@@ -161,7 +161,7 @@ The script requires the standalone Tailwind v4 CLI binary at `framework/tailwind
 
 ### Consumer build (Gradle plugin + `play` shim)
 
-End-user apps use Gradle. The Play 1 plugin is at `framework/gradle-plugin/src/main/kotlin/play/gradle/Play1Plugin.kt` and exposes a `play1` task group: `playRun`, `playStart`/`playStop`/`playRestart`, `playTest`, `playAutotest`, `playPrecompile`, `playBundle`, `playSecret`, `playEvolutions`, `playEnableHttps`/`playDisableHttps`, `playClasspath`, `playModulesInfo`, `playJavadoc`, `playStatus`, `playPid`, `playOut`, `playNewApp`, `playClean`, `playVersion`.
+End-user apps use Gradle. The Play 1 plugin is at `framework/gradle-plugin/src/main/kotlin/play/gradle/Play1Plugin.kt` and exposes a `play1` task group: `playRun`, `playStart`/`playStop`/`playRestart`, `playTest`, `playAutotest`, `playPrecompile`, `playBundle`, `playSecret`, `playEvolutions`, `playDist`, `playClasspath`, `playModulesInfo`, `playJavadoc`, `playStatus`, `playPid`, `playOut`, `playNewApp`, `playClean`, `playVersion`.
 
 The `/opt/play1/play` shell script is a thin wrapper that:
 - Locates `./gradlew` (CWD), then `$PLAY_HOME/gradlew` (when in framework dir), then system `gradle` on PATH.

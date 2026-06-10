@@ -61,7 +61,7 @@ public class CryptoTest {
         assertThat(thrown).isNotNull();
         String message = thrown.getMessage() + " " + String.valueOf(thrown.getCause());
         assertThat(message)
-                .contains("1.13")
+                .contains("HKDF-SHA256")
                 .contains("legacy")
                 .containsIgnoringCase("re-encrypt");
     }
