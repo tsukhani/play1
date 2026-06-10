@@ -25,18 +25,12 @@ class PluginApplicationTest {
 
     @Test
     fun `plugin applies and registers the full play1 task group`(@TempDir tmp: File) {
-        // The `tasks` report task eagerly CREATES every task (not just lazily
-        // registers it). Creating playRun/playStart/... eagerly evaluates the
-        // classpath providers, which read play1.frameworkPath — a property with
-        // no convention. A real consumer always sets frameworkPath, so we point
-        // it at a throwaway dir to let the report enumerate the group.
-        val fw = File(tmp, "fw").apply { mkdirs() }
-        TestProject.write(
-            tmp,
-            play1Block = """
-                frameworkPath.set(file("${fw.absolutePath.replace("\\", "\\\\")}"))
-            """.trimIndent()
-        )
+        // PF-146 regression: the `tasks` report task REALIZES every task (playRun/playStart/...),
+        // which must NOT eagerly resolve play1.frameworkPath (a property with no convention) at
+        // realization time. So this deliberately does NOT set frameworkPath — before PF-146 this
+        // build failed with "Cannot query the value of this provider ... no value available" just
+        // trying to list tasks. After the fix, realization is lazy and task listing succeeds.
+        TestProject.write(tmp)
 
         val result = TestProject.runner(tmp, "tasks", "--all", "--group", "play1").build()
 

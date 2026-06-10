@@ -29,6 +29,7 @@ import org.gradle.api.tasks.TaskAction
 import org.gradle.kotlin.dsl.create
 import org.gradle.kotlin.dsl.getByType
 import org.gradle.kotlin.dsl.register
+import org.gradle.process.CommandLineArgumentProvider
 import org.gradle.process.ExecOperations
 import org.gradle.work.DisableCachingByDefault
 import java.io.ByteArrayOutputStream
@@ -488,8 +489,22 @@ class Play1Plugin : Plugin<Project> {
                 ?: project.providers.gradleProperty("playId").orNull
                 ?: ""
             jvmArgs("-Dplay.id=$effectivePlayId")
-            jvmArgs(ext.frameworkVersion.map { "-Dplay.version=$it" }.get())
-            jvmArgs("-javaagent:${frameworkJar.get().asFile.absolutePath}")
+            // PF-146: -Dplay.version and the framework -javaagent derive from frameworkVersion /
+            // frameworkPath. Supply them via a jvmArgumentProvider so the values are resolved at
+            // EXECUTION time, not when the task is realized. `gradle tasks` / `gradle help` / IDE
+            // sync realize every task; resolving frameworkPath eagerly here would fail a bare apply
+            // that hasn't set frameworkPath (it has no convention) — breaking task listing and IDE
+            // import. (These two args therefore land at the end of the JVM arg list; -Dplay.version
+            // is position-independent and the framework agent loading after any conf/-PjvmArgs agent
+            // is harmless — app/APM agents that want to instrument first now do.)
+            val playVersionProvider = ext.frameworkVersion
+            val javaagentPathProvider = frameworkJar.map { it.asFile.absolutePath }
+            jvmArgumentProviders.add(CommandLineArgumentProvider {
+                listOf(
+                    "-Dplay.version=${playVersionProvider.get()}",
+                    "-javaagent:${javaagentPathProvider.get()}"
+                )
+            })
             val confArgs = confJvmArgs(project.projectDir, effectivePlayId)
             val effectiveConfArgs = if (inheritInstrumentation) confArgs else confArgs.filterNot {
                 it.startsWith("-javaagent:") ||
