@@ -21,8 +21,9 @@ import org.junit.jupiter.api.Test;
  *  - null ALWAYS passes (combine with @Required to enforce presence).
  *  - InFuture: reference.before(value)  -> value must be strictly AFTER reference; equal -> FAIL.
  *  - InPast:   reference.after(value)   -> value must be strictly BEFORE reference; equal -> FAIL.
- *  - Both accept java.util.Date and Long (epoch millis). InFuture additionally accepts
- *    LocalDate/LocalDateTime; InPast does NOT (a LocalDate hits the fall-through -> false).
+ *  - Both accept java.util.Date and Long (epoch millis). Both also accept LocalDate/LocalDateTime
+ *    (PF-145: InPast now mirrors InFuture; LocalDate -> atStartOfDay, LocalDateTime -> atZone,
+ *    same strict boundary as the Date path).
  *  - A non-temporal value (e.g. a String) hits the fall-through and returns false.
  */
 public class DateChecksTest {
@@ -170,9 +171,29 @@ public class DateChecksTest {
     }
 
     @Test
-    public void inPastDoesNotHandleLocalDate() {
-        // InPastCheck has no LocalDate branch -> falls through -> false, even for a clearly-past date.
-        assertThat(inPastFixed().isSatisfied(null, java.time.LocalDate.of(1990, 1, 1), null, null)).isFalse();
+    public void inPastHandlesLocalDate() {
+        // PF-145: InPastCheck now mirrors InFutureCheck — LocalDate is converted via
+        // atStartOfDay(systemDefault()) and compared with the SAME strict reference.after(value)
+        // boundary as the Date/Long paths.
+        // Clearly-past LocalDate -> strictly before reference -> passes.
+        assertThat(inPastFixed().isSatisfied(null, java.time.LocalDate.of(1990, 1, 1), null, null)).isTrue();
+        assertThat(inPastFixed().isSatisfied(null, java.time.LocalDate.of(2020, 6, 14), null, null)).isTrue();
+        // Clearly-future LocalDate -> after reference -> fails.
+        assertThat(inPastFixed().isSatisfied(null, java.time.LocalDate.of(2020, 6, 16), null, null)).isFalse();
+        assertThat(inPastFixed().isSatisfied(null, java.time.LocalDate.of(2030, 1, 1), null, null)).isFalse();
+        // Boundary: LocalDate at the reference's local-midnight equals reference; strict .after() -> fails.
+        assertThat(inPastFixed().isSatisfied(null, java.time.LocalDate.of(2020, 6, 15), null, null)).isFalse();
+    }
+
+    @Test
+    public void inPastHandlesLocalDateTime() {
+        // PF-145: LocalDateTime converted via atZone(systemDefault()); same strict reference.after(value) boundary.
+        // Clearly-past -> passes.
+        assertThat(inPastFixed().isSatisfied(null, java.time.LocalDateTime.of(2020, 6, 14, 12, 0), null, null)).isTrue();
+        // Clearly-future -> fails.
+        assertThat(inPastFixed().isSatisfied(null, java.time.LocalDateTime.of(2020, 6, 16, 12, 0), null, null)).isFalse();
+        // Boundary: exactly the reference's local-midnight instant -> equal -> strict .after() -> fails.
+        assertThat(inPastFixed().isSatisfied(null, java.time.LocalDateTime.of(2020, 6, 15, 0, 0), null, null)).isFalse();
     }
 
     // ---- "now"-relative sanity (empty value()) — robust because dates are decades away ----

@@ -2,6 +2,9 @@ package play.data.validation;
 
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
@@ -48,6 +51,20 @@ public class InPastCheck extends AbstractAnnotationCheck<InPast> {
         if (value instanceof Long) {
             try {
                 return reference.after(new Date((Long) value));
+            } catch (Exception e) {
+                return false;
+            }
+        }
+        if (value instanceof LocalDate) {
+            try {
+                return reference.after(Date.from(((LocalDate) value).atStartOfDay(ZoneId.systemDefault()).toInstant()));
+            } catch (Exception e) {
+                return false;
+            }
+        }
+        if (value instanceof LocalDateTime) {
+            try {
+                return reference.after(Date.from(((LocalDateTime) value).atZone(ZoneId.systemDefault()).toInstant()));
             } catch (Exception e) {
                 return false;
             }
