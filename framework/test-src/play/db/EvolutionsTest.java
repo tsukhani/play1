@@ -336,4 +336,134 @@ public class EvolutionsTest {
         }
     }
 
+    // ---------------------------------------------------------------------------------------------
+    // 5. Legacy single-module -> multi-module in-place upgrade (PF-144).
+    //
+    // Reproduces an app created before module-aware evolutions: a play_evolutions table with NO
+    // module_key column and a single-column primary key on (id). When the engine boots it must
+    // upgrade this table in place via EvolutionQuery.alterForModuleSupport — add module_key, backfill
+    // it, drop the old PK and install the composite PK (id, module_key).
+    //
+    // The bug (PF-144): alterForModuleSupport added module_key as NULLABLE and then tried to put it in
+    // the primary key without ever declaring it NOT NULL. On H2 (the framework default; this harness
+    // runs H2 with no db.driver/jpa.dialect, so isMySqlDialectInUse is false) "add constraint ...
+    // primary key (id, module_key)" fails with: Column "MODULE_KEY" must not be nullable. That
+    // SQLException is swallowed by listDatabaseEvolutions (logged, not rethrown), so the upgrade
+    // silently HALF-completes: module_key exists but the composite PK is never installed.
+    //
+    // This test asserts the upgrade completes CLEANLY end to end — not just that the column was added,
+    // but that the composite PK (id, module_key) is actually in place. With the un-fixed
+    // alterForModuleSupport the composite-PK assertions below fail (the swallowed error aborts the
+    // migration before the PK is installed).
+    // ---------------------------------------------------------------------------------------------
+
+    @Test
+    public void upgradesLegacySingleModuleTableToMultiModuleInPlace() throws SQLException {
+        // Build the OLD-format table by hand: no module_key column, single-column PK on (id). The PK
+        // constraint is named play_evolutions_pkey — the exact name alterForModuleSupport's non-MySQL
+        // branch drops ("alter table play_evolutions drop constraint play_evolutions_pkey").
+        try (Connection c = dataSource.getConnection(); Statement st = c.createStatement()) {
+            st.execute("create table play_evolutions ("
+                    + "id int not null, "
+                    + "hash varchar(255) not null, "
+                    + "applied_at timestamp not null, "
+                    + "apply_script text, "
+                    + "revert_script text, "
+                    + "state varchar(255), "
+                    + "last_problem text, "
+                    + "constraint play_evolutions_pkey primary key (id))");
+            // Seed one already-applied legacy evolution (the pre-existing app's history).
+            st.execute("insert into play_evolutions "
+                    + "(id, hash, applied_at, apply_script, revert_script, state, last_problem) "
+                    + "values (1, 'legacyhash', now(), "
+                    + "'create table legacy_thing (id int);', 'drop table legacy_thing;', "
+                    + "'" + EvolutionState.APPLIED.getStateWord() + "', '')");
+        }
+
+        // Trigger the engine. listDatabaseEvolutions sees the table exists, notices there is no
+        // module_key column, and calls alterForModuleSupport to upgrade it in place.
+        Evolutions.listDatabaseEvolutions(DB.DEFAULT, MODULE_KEY);
+
+        // (a) The migration added the module_key column.
+        assertTrue(hasColumn("module_key"), "module_key column must exist after the legacy upgrade");
+
+        // (b) THE FULL MIGRATION SUCCEEDED: the new composite primary key (id, module_key) is in place.
+        // (b1) Read the PK back from JDBC metadata: it must be exactly the two columns id + module_key.
+        List<String> pkCols = primaryKeyColumns();
+        assertEquals(2, pkCols.size(), "composite PK must consist of exactly two columns (id, module_key)");
+        assertTrue(pkCols.contains("id"), "composite PK must include id");
+        assertTrue(pkCols.contains("module_key"), "composite PK must include module_key");
+
+        // (b2) Behavioural proof the composite PK (not the old single-col PK) is enforced: the same id
+        // with a DIFFERENT module_key must be insertable (would violate the old PK on id alone), while
+        // a full (id, module_key) duplicate must be rejected.
+        try (Connection c = dataSource.getConnection(); Statement st = c.createStatement()) {
+            // Backfill set module_key for the legacy row to application.name ("evolutions-test").
+            // Same id=1 but a different module_key => allowed only under the composite PK.
+            st.execute("insert into play_evolutions "
+                    + "(id, hash, applied_at, apply_script, revert_script, state, last_problem, module_key) "
+                    + "values (1, 'h2', now(), 's', 'd', 'applied', '', 'some_module')");
+        }
+        try (Connection c = dataSource.getConnection(); Statement st = c.createStatement()) {
+            // Exact (id=1, module_key='some_module') duplicate => composite PK must reject it.
+            assertThrows(SQLException.class, () -> st.execute("insert into play_evolutions "
+                    + "(id, hash, applied_at, apply_script, revert_script, state, last_problem, module_key) "
+                    + "values (1, 'h3', now(), 's', 'd', 'applied', '', 'some_module')"),
+                    "the composite PK (id, module_key) must reject a duplicate (id, module_key) pair");
+        }
+
+        // (c) The pre-applied legacy revision reads back intact, now carrying the backfilled module_key
+        // (application.name). Read it directly under its module key.
+        try (Connection c = dataSource.getConnection();
+                Statement st = c.createStatement();
+                ResultSet rs = st.executeQuery(
+                        "select hash, state, module_key from play_evolutions where id = 1 and module_key = 'evolutions-test'")) {
+            assertTrue(rs.next(), "the pre-applied legacy revision (id=1) must still be present after the upgrade");
+            assertEquals("legacyhash", rs.getString("hash"), "legacy row hash preserved");
+            assertEquals(EvolutionState.APPLIED.getStateWord(), rs.getString("state"), "legacy row state preserved");
+            assertEquals("evolutions-test", rs.getString("module_key"),
+                    "legacy row backfilled with application.name as its module key");
+        }
+
+        // (d) No error was swallowed. If alterForModuleSupport had thrown mid-way (the PF-144 bug),
+        // listDatabaseEvolutions would have caught it, logged "SQL error while checking play
+        // evolutions", and left the table half-migrated — which assertions (b1)/(b2) above would then
+        // fail on (the composite PK never got installed). So those assertions are themselves the
+        // "no swallowed error" guarantee: a swallowed mid-migration failure cannot satisfy them.
+    }
+
+    /** True if play_evolutions has a column with the given (case-insensitive) name, under default H2 casing. */
+    private boolean hasColumn(String columnName) throws SQLException {
+        try (Connection c = dataSource.getConnection()) {
+            for (String table : new String[] { "play_evolutions", "PLAY_EVOLUTIONS" }) {
+                try (ResultSet rs = c.getMetaData().getColumns(null, null, table, null)) {
+                    while (rs.next()) {
+                        if (columnName.equalsIgnoreCase(rs.getString("COLUMN_NAME"))) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+    }
+
+    /** The primary-key column names of play_evolutions (lowercased), read from JDBC metadata. */
+    private List<String> primaryKeyColumns() throws SQLException {
+        List<String> cols = new java.util.ArrayList<>();
+        try (Connection c = dataSource.getConnection()) {
+            for (String table : new String[] { "play_evolutions", "PLAY_EVOLUTIONS" }) {
+                try (ResultSet rs = c.getMetaData().getPrimaryKeys(null, null, table)) {
+                    while (rs.next()) {
+                        cols.add(rs.getString("COLUMN_NAME").toLowerCase());
+                    }
+                }
+                if (!cols.isEmpty()) {
+                    break;
+                }
+            }
+        }
+        return cols;
+    }
+
 }

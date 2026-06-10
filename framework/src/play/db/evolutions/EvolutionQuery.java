@@ -51,8 +51,21 @@ public class EvolutionQuery{
         statement.setString(1, Play.configuration.getProperty("application.name"));
         statement.execute();
         closeStatement(statement);
-       
-        
+
+        // A primary key column must be NOT NULL. module_key was added nullable above; now that the
+        // backfill has eliminated all NULLs, declare it NOT NULL before it becomes part of the PK.
+        // MySQL implicitly NOT-NULLs PK columns, but H2 (the framework default) and strict DBs reject
+        // a nullable column in a primary key, so do this explicitly, dialect-aware.
+        if(isMySqlDialectInUse(dbName)){
+            PreparedStatement psNotNull = connection.prepareStatement("alter table play_evolutions modify module_key varchar(255) not null;");
+            psNotNull.execute();
+            closeStatement(psNotNull);
+        }else{
+            PreparedStatement psNotNull = connection.prepareStatement("alter table play_evolutions alter column module_key set not null;");
+            psNotNull.execute();
+            closeStatement(psNotNull);
+        }
+
         if(isMySqlDialectInUse(dbName)){
             // Drop previous primary key
             PreparedStatement ps2 = connection.prepareStatement( "alter table play_evolutions drop primary key;");
