@@ -52,6 +52,31 @@ public class TestController extends Controller {
         sse.close();
     }
 
+    // PF-134 load-bench endpoint (exercised by SseLoadBenchTest under -Dsse.bench): stream
+    // `count` raw frames of `size` bytes as fast as possible. A FRESH array per frame (not a
+    // reused buffer) so a stalled client makes the server retain real bytes — that's what
+    // exercises the bounded-vs-unbounded LazyChunkedInput queue.
+    public static void benchSse() {
+        String c = params.get("count");
+        String s = params.get("size");
+        int count = c != null ? Integer.parseInt(c) : 100000;
+        int size = s != null ? Integer.parseInt(s) : 256;
+        SseStream sse = openSSE();
+        for (int i = 0; i < count; i++) {
+            byte[] payload = new byte[size];
+            java.util.Arrays.fill(payload, (byte) 'x');
+            sse.sendRaw(payload);
+        }
+        sse.close();
+    }
+
+    // Live-set heap probe (gc first so retained queue bytes dominate the reading).
+    public static void heapUsed() {
+        System.gc();
+        Runtime rt = Runtime.getRuntime();
+        renderText(Long.toString(rt.totalMemory() - rt.freeMemory()));
+    }
+
     public static void boom() {
         throw new RuntimeException("integration-test 500 trigger");
     }

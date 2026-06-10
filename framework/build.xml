@@ -202,6 +202,10 @@
                     <!-- PF-57: Netty 4.2 QUIC + brotli4j use JNI; native-access flag below avoids
                          silent JNI restrictions on JDK 25 that the play CLI sets via deps.py. -->
                     <jvmarg value="--enable-native-access=ALL-UNNAMED" />
+                    <!-- PF-134: forward -Dsse.bench to the fork so the SseLoadBenchTest load
+                         harness runs only on demand (otherwise it aborts via assumeTrue and
+                         normal `ant test` never executes it). Enable: ant integration-test -Dsse.bench=1 -->
+                    <jvmarg value="-Dsse.bench=true" if:set="sse.bench" />
                 </fork>
             </testclasses>
             <classpath>
