@@ -176,13 +176,33 @@ public class JobsPlugin extends PlayPlugin {
                     value = Expression.evaluate(value, value).toString();
                     if (!"never".equalsIgnoreCase(value)) {
                         long duration = Time.parseDuration(value);
-                        scheduler.scheduleWithFixedDelay(job, duration, duration, TimeUnit.SECONDS);
+                        scheduler.scheduleWithFixedDelay(resilient(job), duration, duration, TimeUnit.SECONDS);
                     }
                 } catch (InstantiationException | IllegalAccessException ex) {
                     throw new UnexpectedException("Cannot instantiate Job " + clazz.getName(), ex);
                 }
             }
         }
+    }
+
+    // PF-131: wrap an @Every job so a single uncaught exception doesn't kill its schedule.
+    // scheduleWithFixedDelay (via VirtualThreadScheduledExecutor, matching
+    // ScheduledThreadPoolExecutor semantics) drives a Runnable that throws to a terminal
+    // state and never reschedules it — one transient DB blip would permanently disable the
+    // job until JVM restart. Job.run() -> Job.call() -> onException() rethrows, so we catch
+    // and log here instead of letting it propagate to the executor; the fixed-delay schedule
+    // survives. Cron/@On jobs already survive via Job._finally -> scheduleForCRON (one
+    // schedule per run), and the promise-bearing now()/in() paths keep their rethrow because
+    // they don't go through this wrapper. Package-private + static so Job.every() shares it
+    // and JobsPluginEveryResilienceTest can exercise it directly without booting an app.
+    static Runnable resilient(Job<?> job) {
+        return () -> {
+            try {
+                job.run();
+            } catch (Throwable t) {
+                Logger.error(t, "Error executing @Every job %s; keeping its schedule alive", job.getClass().getName());
+            }
+        };
     }
 
     private Job<?> createJob(Class<?> clazz) throws InstantiationException, IllegalAccessException {

@@ -161,7 +161,9 @@ public class Job<V> extends Invoker.Invocation implements Callable<V> {
      *            time in seconds
      */
     public void every(int seconds) {
-        JobsPlugin.scheduler.scheduleWithFixedDelay(this, seconds, seconds, TimeUnit.SECONDS);
+        // PF-131: schedule a resilient wrapper, not `this`, so a single run throwing doesn't
+        // make scheduleWithFixedDelay drop the task permanently. See JobsPlugin.resilient.
+        JobsPlugin.scheduler.scheduleWithFixedDelay(JobsPlugin.resilient(this), seconds, seconds, TimeUnit.SECONDS);
         JobsPlugin.scheduledJobs.add(this);
     }
 
