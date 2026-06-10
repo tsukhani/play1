@@ -13,6 +13,19 @@ repositories {
     mavenCentral()
 }
 
+dependencies {
+    // gradleTestKit() provides GradleRunner. java-gradle-plugin auto-generates
+    // the plugin-under-test metadata, so withPluginClasspath() injects the
+    // plugin with no manual classpath wiring (PF-139).
+    testImplementation(gradleTestKit())
+    testImplementation("org.junit.jupiter:junit-jupiter:6.0.3")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+tasks.named<Test>("test") {
+    useJUnitPlatform()
+}
+
 gradlePlugin {
     plugins {
         register("play1") {
