@@ -164,17 +164,27 @@ case "$CMD" in
         pid=$(cat "$PID_FILE")
         if kill -0 "$pid" 2>/dev/null; then
             kill "$pid"
-            # Wait up to 10s for graceful shutdown, then SIGKILL.
-            for _ in $(seq 1 100); do
+            # Wait past the jobs drain budget (play.jobs.stopTimeout, default 30s)
+            # so a clean-but-slow shutdown finishes instead of being truncated
+            # mid job-drain. Mirrors PlayStopTask in Play1Plugin.kt — keep the two
+            # copies in sync (PF-120 / PF-128). No SIGKILL: once SIGTERM is sent we
+            # leave reaping to the OS rather than hard-killing in-flight work.
+            for _ in $(seq 1 350); do
                 kill -0 "$pid" 2>/dev/null || break
                 sleep 0.1
             done
-            kill -9 "$pid" 2>/dev/null || true
-            echo "~ OK, $SCRIPT_DIR is stopped"
+            if kill -0 "$pid" 2>/dev/null; then
+                # Still draining: leave the pid file so status/pid keep tracking
+                # the live process, mirroring PlayStopTask's timeout return.
+                echo "~ SIGTERM sent; process (pid $pid) still draining after 35s. Leaving it to the OS to reap."
+            else
+                rm -f "$PID_FILE"
+                echo "~ OK, $SCRIPT_DIR is stopped"
+            fi
         else
             echo "~ Play was not running (pid $pid not found); removing stale pid file"
+            rm -f "$PID_FILE"
         fi
-        rm -f "$PID_FILE"
         ;;
     restart)
         "$0" stop
