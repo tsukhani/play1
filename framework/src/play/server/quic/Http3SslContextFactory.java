@@ -49,9 +49,9 @@ public final class Http3SslContextFactory {
 
         if (!certFile.exists() || !keyFile.exists()) {
             throw new IllegalStateException(
-                    "PF-57/PF-68: HTTP/3 needs PEM cert+key files. Run play enable-https "
-                            + "(generates them via mkcert or openssl), or set certificate.file + "
-                            + "certificate.key.file manually. Looked for cert at "
+                    "PF-57/PF-68: HTTP/3 needs PEM cert+key files. Generate them with mkcert or "
+                            + "openssl, then set certificate.file + "
+                            + "certificate.key.file. Looked for cert at "
                             + certFile.getAbsolutePath() + ", key at " + keyFile.getAbsolutePath() + ".");
         }
 

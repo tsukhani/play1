@@ -160,8 +160,8 @@ public class SslHttpServerPipelineFactoryAlpnTest {
 
     /**
      * Generate a self-signed PEM cert+key pair at the given paths under {@link #tmpDir}
-     * via the {@code openssl} CLI — mirrors the openssl fallback in the production
-     * {@code play enable-https} command (PF-68). Avoids any extra Java-level test deps.
+     * via the {@code openssl} CLI — mirrors the documented openssl HTTPS-setup
+     * fallback (PF-68). Avoids any extra Java-level test deps.
      */
     private void generatePemCertAndKey(String certRelative, String keyRelative) throws Exception {
         File certOut = new File(tmpDir.toFile(), certRelative);

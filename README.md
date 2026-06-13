@@ -63,22 +63,35 @@ HTTP/3 gracefully degrades on platforms without a native QUIC binary (currently 
 
 ### Quick start (local development)
 
-The bundled `play enable-https` command does the cert generation and config edits in one step:
+There's no `enable-https` command — HTTPS is configured directly. Generate a cert+key pair under `certs/`, point `application.conf` at it, then enable the listener at launch.
+
+Generate the cert with `mkcert` (preferred — produces a system-trusted cert that Chrome's HTTP/3 stack negotiates against without warnings) or `openssl` as a fallback (self-signed; browsers warn and HTTP/3 won't upgrade):
 
 ```bash
-play enable-https myapp
+mkcert -cert-file certs/host.cert -key-file certs/host.key localhost 127.0.0.1 ::1
+
+# or, without mkcert:
+openssl req -x509 -newkey rsa:2048 -nodes \
+    -keyout certs/host.key -out certs/host.cert \
+    -days 3650 -subj '/CN=localhost' \
+    -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1'
 ```
 
-This generates a PEM cert+key under `certs/host.cert` and `certs/host.key`, prefers `mkcert` (system-trusted, browser-friendly — required for Chrome's HTTP/3 stack to actually negotiate), and falls back to `openssl` (self-signed) if `mkcert` isn't installed. It also uncomments / inserts the `https.port`, `certificate.file`, and `certificate.key.file` lines in `conf/application.conf`. After running it, h2 and h3 are both serving — no further config needed.
-
-To configure HTTPS by hand, point the two property values at any PEM cert+key. The private key may be unencrypted or passphrase-encrypted — for the latter, set `certificate.key.password` and the framework decrypts it via Netty:
+Point the two property values in `conf/application.conf` at the PEM cert+key. The private key may be unencrypted or passphrase-encrypted — for the latter, set `certificate.key.password` and the framework decrypts it via Netty:
 
 ```
-https.port = 9443
-certificate.file = conf/host.cert
-certificate.key.file = conf/host.key
+certificate.file = certs/host.cert
+certificate.key.file = certs/host.key
 # certificate.key.password = ${CERT_KEY_PASSWORD}    # only if the key is encrypted
 ```
+
+The skel `application.conf` ships `https.port=${https.port:-1}`, so the HTTPS listener stays off by default and turns on when you supply the port at launch:
+
+```bash
+play run --https.port=9443
+```
+
+(The shim translates `--https.port=9443` into the framework's `-Dhttps.port` / `--https.port` argv. Operators wanting a fixed port can instead replace the placeholder with a literal `https.port = 9443` in `conf/application.conf`.) Once the port is set and the cert paths are in place, h1.1, h2, and h3 are all serving on 9443.
 
 Start the app and verify each protocol:
 

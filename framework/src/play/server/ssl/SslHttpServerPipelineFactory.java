@@ -129,9 +129,9 @@ public class SslHttpServerPipelineFactory extends HttpServerPipelineFactory {
 
         if (!certFile.exists() || !keyFile.exists()) {
             throw new IllegalStateException(
-                    "No HTTPS cert source found. PF-68: PEM-only — set certificate.file and "
-                            + "certificate.key.file (the play enable-https command does this for you, "
-                            + "or run mkcert/openssl manually). Looked for cert at "
+                    "No HTTPS cert source found. PF-68: PEM-only — generate a cert+key with "
+                            + "mkcert or openssl, then set certificate.file and "
+                            + "certificate.key.file. Looked for cert at "
                             + certFile.getAbsolutePath() + ", key at " + keyFile.getAbsolutePath() + ".");
         }
 
