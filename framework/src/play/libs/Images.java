@@ -1,36 +1,17 @@
 package play.libs;
 
 import java.awt.Color;
-import java.awt.Font;
 import java.awt.Graphics;
 import java.awt.Image;
 import java.awt.image.BufferedImage;
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Random;
 
 import javax.imageio.IIOImage;
 import javax.imageio.ImageIO;
 import javax.imageio.ImageWriteParam;
 import javax.imageio.ImageWriter;
 import javax.imageio.stream.FileImageOutputStream;
-
-import jj.play.ns.nl.captcha.backgrounds.BackgroundProducer;
-import jj.play.ns.nl.captcha.backgrounds.FlatColorBackgroundProducer;
-import jj.play.ns.nl.captcha.backgrounds.GradiatedBackgroundProducer;
-import jj.play.ns.nl.captcha.backgrounds.SquigglesBackgroundProducer;
-import jj.play.ns.nl.captcha.backgrounds.TransparentBackgroundProducer;
-import jj.play.ns.nl.captcha.gimpy.GimpyRenderer;
-import jj.play.ns.nl.captcha.gimpy.RippleGimpyRenderer;
-import jj.play.ns.nl.captcha.noise.CurvedLineNoiseProducer;
-import jj.play.ns.nl.captcha.text.renderer.DefaultWordRenderer;
-import play.exceptions.UnexpectedException;
-import play.mvc.Http.Response;
 
 /**
  * Images utils
@@ -39,7 +20,7 @@ public class Images {
 
     /**
      * Resize an image
-     * 
+     *
      * @param originalImage
      *            The image file
      * @param to
@@ -55,7 +36,7 @@ public class Images {
 
     /**
      * Resize an image
-     * 
+     *
      * @param originalImage
      *            The image file
      * @param to
@@ -143,7 +124,7 @@ public class Images {
 
     /**
      * Crop an image
-     * 
+     *
      * @param originalImage
      *            The image file
      * @param to
@@ -196,7 +177,7 @@ public class Images {
 
     /**
      * Encode an image to base64 using a data: URI
-     * 
+     *
      * @param image
      *            The image file
      * @return The base64 encoded value
@@ -205,231 +186,5 @@ public class Images {
      */
     public static String toBase64(File image) throws IOException {
         return "data:" + MimeTypes.getMimeType(image.getName()) + ";base64," + Codec.encodeBASE64(IO.readContent(image));
-    }
-
-    /**
-     * Create a captche image
-     * 
-     * @param width
-     *            The width of the captche
-     * @param height
-     *            The height of the captche
-     * @return The given captcha
-     */
-    public static Captcha captcha(int width, int height) {
-        return new Captcha(width, height);
-    }
-
-    /**
-     * Create a 150x150 captcha image
-     * 
-     * @return The given captcha
-     */
-    public static Captcha captcha() {
-        return captcha(150, 50);
-    }
-
-    /**
-     * A captcha image.
-     */
-    public static class Captcha extends InputStream {
-
-        public final GimpyRenderer gimpy = new RippleGimpyRenderer();
-        public final List<Font> fonts = new ArrayList<>(2);
-        public String text = null;
-        public BackgroundProducer background = new TransparentBackgroundProducer();
-        public Color textColor = Color.BLACK;
-        public int w, h;
-        public Color noise = null;
-
-        ByteArrayInputStream bais = null;
-
-        public Captcha(int w, int h) {
-            this.w = w;
-            this.h = h;
-            this.fonts.add(new Font("Arial", Font.BOLD, 40));
-            this.fonts.add(new Font("Courier", Font.BOLD, 40));
-        }
-
-        /**
-         * Tell the captche to draw a text and retrieve it
-         * 
-         * @return the given text
-         */
-        public String getText() {
-            return getText(5);
-        }
-
-        /**
-         * Tell the captche to draw a text using the specified color (ex. #000000) and retrieve it
-         * 
-         * @param color
-         *            a <code>String</code> that represents an opaque color as a 24-bit integer
-         * @return The text to draw
-         */
-        public String getText(String color) {
-            this.textColor = Color.decode(color);
-            return getText();
-        }
-
-        /**
-         * Tell the captche to draw a text of the specified size and retrieve it
-         * 
-         * @param length
-         *            the specified size of the text
-         * @return The text to draw
-         */
-        public String getText(int length) {
-            return getText(length, "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789");
-        }
-
-        /**
-         * Tell the captche to draw a text of the specified size using the specified color (ex. #000000) and retrieve it
-         * 
-         * @param color
-         *            a <code>String</code> that represents an opaque color as a 24-bit integer
-         * @param length
-         *            the specified size of the text
-         * @return The text to draw
-         */
-        public String getText(String color, int length) {
-            this.textColor = Color.decode(color);
-            return getText(length);
-        }
-
-        /**
-         * Tell the captche to draw a text of the specified size using specials characters and retrieve it
-         * 
-         * @param length
-         *            the specified size of the text
-         * @param chars
-         *            List of allowed characters
-         * @return The text to draw
-         */
-        public String getText(int length, String chars) {
-            char[] charsArray = chars.toCharArray();
-            Random random = new Random(System.currentTimeMillis());
-            StringBuilder sb = new StringBuilder(length);
-            for (int i = 0; i < length; i++) {
-                sb.append(charsArray[random.nextInt(charsArray.length)]);
-            }
-            text = sb.toString();
-            return text;
-        }
-
-        /**
-         * Tell the captche to draw a text of the specified size using specials characters and a the specified color
-         * (ex. #000000)and retrieve it
-         * 
-         * @param color
-         *            a <code>String</code> that represents an opaque color as a 24-bit integer
-         * @param length
-         *            the specified size of the text
-         * @param chars
-         *            List of allowed characters
-         * @return The text to draw
-         */
-        public String getText(String color, int length, String chars) {
-            this.textColor = Color.decode(color);
-            return getText(length, chars);
-        }
-
-        /**
-         * Add noise to the captcha.
-         * 
-         * @return The given captcha
-         */
-        public Captcha addNoise() {
-            noise = Color.BLACK;
-            return this;
-        }
-
-        /**
-         * Add noise to the captcha.
-         * 
-         * @param color
-         *            a <code>String</code> that represents an opaque color as a 24-bit integer
-         * @return The given captcha
-         */
-        public Captcha addNoise(String color) {
-            noise = Color.decode(color);
-            return this;
-        }
-
-        /**
-         * Set a gradient background.
-         * 
-         * @param from
-         *            a <code>String</code> that represents an opaque color use to start the gradient
-         * @param to
-         *            a <code>String</code> that represents an opaque color use to end the gradient
-         * @return The given captcha
-         */
-        public Captcha setBackground(String from, String to) {
-            GradiatedBackgroundProducer bg = new GradiatedBackgroundProducer();
-            bg.setFromColor(Color.decode(from));
-            bg.setToColor(Color.decode(to));
-            background = bg;
-            return this;
-        }
-
-        /**
-         * Set a solid background.
-         * 
-         * @param color
-         *            a <code>String</code> that represents an opaque color as a 24-bit integer
-         * @return The given captcha
-         */
-        public Captcha setBackground(String color) {
-            background = new FlatColorBackgroundProducer(Color.decode(color));
-            return this;
-        }
-
-        /**
-         * Set a squiggles background
-         * 
-         * @return The given captcha
-         */
-        public Captcha setSquigglesBackground() {
-            background = new SquigglesBackgroundProducer();
-            return this;
-        } // ~~ rendering
-
-        @Override
-        public int read() throws IOException {
-            check();
-            return bais.read();
-        }
-
-        @Override
-        public int read(byte[] b) throws IOException {
-            check();
-            return bais.read(b);
-        }
-
-        void check() {
-            try {
-                if (bais == null) {
-                    if (text == null) {
-                        text = getText();
-                    }
-                    BufferedImage bi = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
-                    DefaultWordRenderer renderer = new DefaultWordRenderer(textColor, fonts);
-                    bi = background.addBackground(bi);
-                    renderer.render(text, bi);
-                    if (noise != null) {
-                        new CurvedLineNoiseProducer(noise, 3.0f).makeNoise(bi);
-                    }
-                    gimpy.gimp(bi);
-                    ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                    ImageIO.write(bi, "png", baos);
-                    bais = new ByteArrayInputStream(baos.toByteArray());
-                    //
-                    Response.current().contentType = "image/png";
-                }
-            } catch (Exception e) {
-                throw new UnexpectedException(e);
-            }
-        }
     }
 }

@@ -332,6 +332,8 @@ For a local MySQL5 database:
 
 bc. db=mysql:user:pwd@database_name
 
+p(note). Play does not bundle a MySQL JDBC driver. Add your own to the application's dependencies — @com.mysql:mysql-connector-j@ or @org.mariadb.jdbc:mariadb-java-client@ — when using a @mysql:…@ configuration.
+
 To reuse an existing Datasource from your application server:
 
 bc. db=java:/comp/env/jdbc/myDatasource@

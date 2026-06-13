@@ -116,19 +116,12 @@ H2 license (MPL-2.0 OR EPL-1.0)
 MPL-1.1 / LGPL-2.1 / Apache-2.0 triple license
     - Javassist
 
-GPL-2.0 with FOSS Exception
-    - MySQL Connector/J (mysql-connector-j)
-      Distribution under GPL-2.0 with the Universal FOSS Exception 1.0,
-      which permits redistribution alongside Apache-2.0 software.
-      See https://oss.oracle.com/licenses/universal-foss-exception/
-
 Permissive (project-specific) licenses
     - dom4j — see https://dom4j.github.io/license.html
     - Jaxen — Apache-style custom license
     - Eclipse Mylyn / WikiText fork (jj-wikitext, jj-textile) —
       EPL-1.0; vendored as `jj-*` to retain the legacy Play 1 textile
       dialect after upstream WikiText was archived.
-    - SimpleCaptcha (jj-simplecaptcha) — BSD-style custom license
 
 Vendored Tailwind CSS pipeline
     - The bundled `framework/tailwindcss` standalone CLI binary (when

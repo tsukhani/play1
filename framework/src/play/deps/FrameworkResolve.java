@@ -59,8 +59,7 @@ public class FrameworkResolve {
      */
     private static final Set<String> VENDORED_JARS = Set.of(
         "jj-wikitext.jar",      // Eclipse Mylyn WikiText, used by modules/docviewer
-        "jj-textile.jar",       // Eclipse Mylyn Textile dialect, used by modules/docviewer
-        "jj-simplecaptcha.jar"  // SimpleCaptcha, used by framework/src/play/libs/Images.java
+        "jj-textile.jar"        // Eclipse Mylyn Textile dialect, used by modules/docviewer
     );
 
     public static void main(String[] args) throws Exception {
