@@ -4,6 +4,7 @@ POST    /echo                      TestController.echo
 POST    /post-json                 TestController.postJson
 GET     /redirect                  TestController.redirect
 GET     /json                      TestController.json
+WS      /wsEcho                    EchoSocket.echo
 GET     /events                    TestController.events
 GET     /benchSse                  TestController.benchSse
 GET     /heapUsed                  TestController.heapUsed

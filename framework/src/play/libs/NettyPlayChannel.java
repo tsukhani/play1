@@ -3,10 +3,9 @@ package play.libs;
 import io.netty.channel.ChannelHandlerContext;
 
 /**
- * Netty 4 implementation of {@link PlayChannel}. Backs the deprecated
- * {@code ChannelHandlerContext}-typed constructors on
- * {@link play.mvc.Http.Inbound} and {@link F.BlockingEventStream}; new
- * code should depend on {@link PlayChannel} directly.
+ * Netty 4 implementation of {@link PlayChannel}. Adapts a Netty
+ * {@link ChannelHandlerContext} to the transport-neutral readability toggle
+ * that {@link play.mvc.Http.Inbound} uses for inbound back-pressure.
  */
 public class NettyPlayChannel implements PlayChannel {
 

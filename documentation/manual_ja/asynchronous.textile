@@ -141,58 +141,31 @@ bc. public class MyWebSocket extends WebSocketController {
 
 ここでは、クライアントはソケットに接続すると‘Hello Guillaume’というメッセージを受け取り、その後 Play はソケットを閉じます。
 
-もちろん、通常は直ちにソケットを閉じたいと思わないでしょう。これは @await(…)@ と継続を使って容易に達成できます。
+もちろん、通常は直ちにソケットを閉じたいと思わないでしょう。ソケットを開いたままにするには、@inbound@ チャネルを反復処理します。各ステップは次のイベントが到着するまで現在の (仮想) スレッドをブロックし、ソケットが閉じるとループが終了します。
+
+@inbound@ は封印された (sealed) @Http.WebSocketEvent@ — @TextFrame@、@BinaryFrame@、@WebSocketClose@ のいずれか — を返すため、これに対する @switch@ は網羅的になります。すべてのケースを処理しているかどうかをコンパイラが検査します。
 
 基本的なエコーサーバの例です:
 
 bc. public class MyWebSocket extends WebSocketController {
- 
+
     public static void echo() {
-        while(inbound.isOpen()) {
-             WebSocketEvent e = await(inbound.nextEvent());
-             if(e instanceof WebSocketFrame) {
-                  WebSocketFrame frame = (WebSocketFrame)e;
-                  if(!e.isBinary) {
-                      if(frame.textData.equals("quit")) {
-                          outbound.send("Bye!");
-                          disconnect();
-                      } else {
-                          outbound.send("Echo: %s", frame.textData);
-                      }
-                  }
-             }
-             if(e instanceof WebSocketClose) {
-                 Logger.info("Socket closed!");
-             }
+        for (WebSocketEvent event : inbound) {
+            switch (event) {
+                case TextFrame(var msg) when msg.equals("quit") -> {
+                    outbound.send("Bye!");
+                    disconnect();
+                }
+                case TextFrame(var msg)    -> outbound.send("Echo: %s", msg);
+                case BinaryFrame(var data) -> outbound.sendBinary(data);
+                case WebSocketClose closed -> Logger.info("Socket closed!");
+            }
         }
     }
- 
+
 }
 
-上記の例において、ネストされた‘if’と‘キャスト’の海は書くのが退屈でエラーを起こしがちでした。この点で Java は最低です。このようなシンプルな場合でさえ容易に扱えません。複数のストリームを結びつけ、より多くのイベントタイプが存在するような、より複雑なケースにおいては悪夢のようになることでしょう。
-
-これこそが、私たちが "play.libs.F":libs#FunctionalprogrammingwithJava ライブラリにおいてある種の基本的なパターンマッチングを導入した理由です。
-
-これにより上記の例を次のように書き直すことができます:
-
-bc. public static void echo() {
-    while(inbound.isOpen()) {
-         WebSocketEvent e = await(inbound.nextEvent());
-         
-         for(String quit: TextFrame.and(Equals("quit")).match(e)) {
-             outbound.send("Bye!");
-             disconnect();
-         }
- 
-         for(String message: TextFrame.match(e)) {
-             outbound.send("Echo: %s", message);
-         }
-         
-         for(WebSocketClose closed: SocketClosed.match(e)) {
-             Logger.info("Socket closed!");
-         }
-    }
-}
+レコードパターンはフレームをインラインで分解し (@TextFrame(var msg)@)、ガード付きの @case@ (@when msg.equals("quit")@) が特別なメッセージを処理します。@WebSocketEvent@ は封印されているため、後で新しいイベントタイプを追加すると、それを処理し忘れた @switch@ は実行時に黙って破棄されるのではなくコンパイルエラーになります。イベントタイプは @play.mvc.Http@ にあります。
 
 p(note). **考察を続けます**
  

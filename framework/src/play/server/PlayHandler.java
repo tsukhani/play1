@@ -1612,11 +1612,11 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
             }
 
             @Override
-            public void send(byte opcode, byte[] data, int offset, int length) {
+            public void sendBinary(byte[] data) {
                 if (!isOpen()) {
                     throw new IllegalStateException("The outbound channel is closed");
                 }
-                writeAndClose(ctx.writeAndFlush(new BinaryWebSocketFrame(Unpooled.wrappedBuffer(data, offset, length))));
+                writeAndClose(ctx.writeAndFlush(new BinaryWebSocketFrame(Unpooled.wrappedBuffer(data))));
             }
 
             @Override
@@ -1699,11 +1699,11 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
         }
         if (frame instanceof BinaryWebSocketFrame) {
             byte[] bytes = ByteBufUtil.getBytes(frame.content());
-            inbound._received(new Http.WebSocketFrame(bytes));
+            inbound._received(new Http.BinaryFrame(bytes));
             return;
         }
         if (frame instanceof TextWebSocketFrame textFrame) {
-            inbound._received(new Http.WebSocketFrame(textFrame.text()));
+            inbound._received(new Http.TextFrame(textFrame.text()));
         }
     }
 

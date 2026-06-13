@@ -10,8 +10,10 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -22,9 +24,6 @@ import play.Play;
 import play.exceptions.UnexpectedException;
 import play.libs.Codec;
 import play.libs.F;
-import play.libs.F.BlockingEventStream;
-import play.libs.F.Option;
-import play.libs.F.Promise;
 import play.libs.PlayChannel;
 import play.libs.Time;
 import play.utils.HTTP;
@@ -870,41 +869,105 @@ public class Http {
     }
 
     /**
-     * A Websocket Inbound channel
+     * A WebSocket inbound channel.
+     *
+     * <p>Iterate it to consume the client-to-server event stream; each
+     * {@link #nextEvent()} blocks the current (virtual) thread until the next frame
+     * arrives. The stream ends after a single terminal {@link WebSocketClose}.
      */
-    public abstract static class Inbound {
+    public abstract static class Inbound implements Iterable<WebSocketEvent> {
 
         public static final ThreadLocal<Inbound> current = new ThreadLocal<>();
-        final BlockingEventStream<WebSocketEvent> stream;
+
+        // Bounded so a flood of inbound frames can't grow the heap without limit; the
+        // +10 slack gives setReadable(false) room to take effect before offer() would fail.
+        private static final int CAPACITY = 100;
+        private final LinkedBlockingQueue<WebSocketEvent> events = new LinkedBlockingQueue<>(CAPACITY + 10);
+        private final PlayChannel channel;
 
         public Inbound(PlayChannel channel) {
-            stream = new BlockingEventStream<>(channel);
+            this.channel = channel;
         }
 
         public static Inbound current() {
             return current.get();
         }
 
-        public void _received(WebSocketFrame frame) {
-            stream.publish(frame);
+        /**
+         * Called by the server I/O thread when a frame (or the synthetic close) arrives.
+         * Never blocks the I/O thread: when the queue nears capacity it back-pressures the
+         * socket via {@link PlayChannel#setReadable(boolean)}, and if the buffer is genuinely
+         * full it drops the event with a warning rather than parking the EventLoop.
+         */
+        public void _received(WebSocketEvent event) {
+            if (events.remainingCapacity() <= 10) {
+                Logger.trace("WebSocket inbound queue near capacity; pausing channel reads.");
+                channel.setReadable(false);
+            }
+            if (!events.offer(event)) {
+                Logger.warn("WebSocket inbound queue full; dropping event to avoid blocking the I/O thread.");
+            }
         }
 
-        public Promise<WebSocketEvent> nextEvent() {
-            if (!isOpen()) {
-                throw new IllegalStateException("The inbound channel is closed");
+        /**
+         * Block the current (virtual) thread until the next event is available and return it.
+         * Returns a {@link WebSocketClose} once the socket has closed.
+         */
+        public WebSocketEvent nextEvent() {
+            try {
+                WebSocketEvent event = events.take();
+                // Resume reads once the backlog has drained below half capacity (avoids jitter).
+                if (events.remainingCapacity() > events.size()) {
+                    channel.setReadable(true);
+                }
+                return event;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return new WebSocketClose();
             }
-            return stream.nextEvent();
+        }
+
+        @Override
+        public Iterator<WebSocketEvent> iterator() {
+            return new Iterator<>() {
+                private WebSocketEvent peeked;
+                private boolean finished;
+
+                @Override
+                public boolean hasNext() {
+                    if (finished) {
+                        return false;
+                    }
+                    if (peeked == null) {
+                        peeked = nextEvent();
+                    }
+                    return true;
+                }
+
+                @Override
+                public WebSocketEvent next() {
+                    if (peeked == null) {
+                        peeked = nextEvent();
+                    }
+                    WebSocketEvent event = peeked;
+                    peeked = null;
+                    if (event instanceof WebSocketClose) {
+                        finished = true;
+                    }
+                    return event;
+                }
+            };
         }
 
         public void close() {
-            stream.publish(new WebSocketClose());
+            _received(new WebSocketClose());
         }
 
         public abstract boolean isOpen();
     }
 
     /**
-     * A Websocket Outbound channel
+     * A WebSocket outbound channel.
      */
     public abstract static class Outbound {
 
@@ -916,15 +979,11 @@ public class Http {
 
         public abstract void send(String data);
 
-        public abstract void send(byte opcode, byte[] data, int offset, int length);
+        public abstract void sendBinary(byte[] data);
 
         public abstract boolean isOpen();
 
         public abstract void close();
-
-        public void send(byte opcode, byte[] data) {
-            send(opcode, data, 0, data.length);
-        }
 
         public void send(String pattern, Object... args) {
             send(String.format(pattern, args));
@@ -935,66 +994,29 @@ public class Http {
         }
     }
 
-    public static class WebSocketEvent {
-
-        public static F.Matcher<WebSocketEvent, WebSocketClose> SocketClosed = new F.Matcher<WebSocketEvent, WebSocketClose>() {
-
-            @Override
-            public Option<WebSocketClose> match(WebSocketEvent o) {
-                if (o instanceof WebSocketClose) {
-                    return F.Option.Some((WebSocketClose) o);
-                }
-                return F.Option.None();
-            }
-        };
-        public static F.Matcher<WebSocketEvent, String> TextFrame = new F.Matcher<WebSocketEvent, String>() {
-
-            @Override
-            public Option<String> match(WebSocketEvent o) {
-                if (o instanceof WebSocketFrame frame) {
-                    if (!frame.isBinary) {
-                        return F.Option.Some(frame.textData);
-                    }
-                }
-                return F.Option.None();
-            }
-        };
-        public static F.Matcher<WebSocketEvent, byte[]> BinaryFrame = new F.Matcher<WebSocketEvent, byte[]>() {
-
-            @Override
-            public Option<byte[]> match(WebSocketEvent o) {
-                if (o instanceof WebSocketFrame frame) {
-                    if (frame.isBinary) {
-                        return F.Option.Some(frame.binaryData);
-                    }
-                }
-                return F.Option.None();
-            }
-        };
+    /**
+     * An event delivered on a WebSocket {@link Inbound} channel: a {@link TextFrame}, a
+     * {@link BinaryFrame}, or the terminal {@link WebSocketClose}. Sealed so a {@code switch}
+     * over it is exhaustive.
+     */
+    public sealed interface WebSocketEvent permits TextFrame, BinaryFrame, WebSocketClose {
     }
 
     /**
-     * A Websocket frame
+     * A text message received from the client.
      */
-    public static class WebSocketFrame extends WebSocketEvent {
-
-        public final boolean isBinary;
-        public final String textData;
-        public final byte[] binaryData;
-
-        public WebSocketFrame(String data) {
-            this.isBinary = false;
-            this.textData = data;
-            this.binaryData = null;
-        }
-
-        public WebSocketFrame(byte[] data) {
-            this.isBinary = true;
-            this.binaryData = data;
-            this.textData = null;
-        }
+    public record TextFrame(String data) implements WebSocketEvent {
     }
 
-    public static class WebSocketClose extends WebSocketEvent {
+    /**
+     * A binary message received from the client.
+     */
+    public record BinaryFrame(byte[] data) implements WebSocketEvent {
+    }
+
+    /**
+     * Signals that the inbound channel has closed; always the final event in the stream.
+     */
+    public record WebSocketClose() implements WebSocketEvent {
     }
 }

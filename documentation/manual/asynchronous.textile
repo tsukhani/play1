@@ -135,58 +135,31 @@ bc. public class MyWebSocket extends WebSocketController {
 
 Here when the client connects to the socket, it receive the ‘Hello Guillaume’ message, and then Play closes the socket.
 
-Of course usually you don’t want to close the socket immediately. But it is easy to achieve using @await(…)@ and continuations.
+Of course usually you don’t want to close the socket immediately. To keep it open, iterate the @inbound@ channel: each step blocks the current (virtual) thread until the next event arrives, and the loop ends once the socket closes.
+
+@inbound@ delivers a sealed @Http.WebSocketEvent@ — one of @TextFrame@, @BinaryFrame@ or @WebSocketClose@ — so a @switch@ over it is exhaustive: the compiler checks that you have handled every case.
 
 For example a basic Echo server:
 
 bc. public class MyWebSocket extends WebSocketController {
- 
+
     public static void echo() {
-        while(inbound.isOpen()) {
-             WebSocketEvent e = await(inbound.nextEvent());
-             if(e instanceof WebSocketFrame) {
-                  WebSocketFrame frame = (WebSocketFrame)e;
-                  if(!e.isBinary) {
-                      if(frame.textData.equals("quit")) {
-                          outbound.send("Bye!");
-                          disconnect();
-                      } else {
-                          outbound.send("Echo: %s", frame.textData);
-                      }
-                  }
-             }
-             if(e instanceof WebSocketClose) {
-                 Logger.info("Socket closed!");
-             }
+        for (WebSocketEvent event : inbound) {
+            switch (event) {
+                case TextFrame(var msg) when msg.equals("quit") -> {
+                    outbound.send("Bye!");
+                    disconnect();
+                }
+                case TextFrame(var msg)    -> outbound.send("Echo: %s", msg);
+                case BinaryFrame(var data) -> outbound.sendBinary(data);
+                case WebSocketClose closed -> Logger.info("Socket closed!");
+            }
         }
     }
- 
+
 }
 
-In the previous example, the nested ‘if’ and ‘cast’ soup was tedious to write and error prone. And here Java sucks. Even for this simple case it is not easy to handle. And for more complicated cases where you combine several streams, and have even more event types, it becomes a nightmare.
-
-That’s why we have introduced a basic pattern matching in Java in the "play.libs.F":libs#FunctionalprogrammingwithJava library.
-
-So we can rewrite our previous echo sample as:
-
-bc. public static void echo() {
-    while(inbound.isOpen()) {
-         WebSocketEvent e = await(inbound.nextEvent());
-         
-         for(String quit: TextFrame.and(Equals("quit")).match(e)) {
-             outbound.send("Bye!");
-             disconnect();
-         }
- 
-         for(String message: TextFrame.match(e)) {
-             outbound.send("Echo: %s", message);
-         }
-         
-         for(WebSocketClose closed: SocketClosed.match(e)) {
-             Logger.info("Socket closed!");
-         }
-    }
-}
+Record patterns deconstruct the frame inline (@TextFrame(var msg)@), and a guarded @case@ (@when msg.equals("quit")@) handles the special message. Because @WebSocketEvent@ is sealed, adding a new event type later turns every @switch@ that forgot it into a compile error rather than a silent runtime drop. The event types live in @play.mvc.Http@.
 
 p(note). **Continuing the discussion**
  

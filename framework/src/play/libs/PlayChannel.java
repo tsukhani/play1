@@ -4,8 +4,7 @@ package play.libs;
  * Abstraction over the underlying network channel used by WebSocket inbound
  * flow-control. Hides the concrete network library (currently Netty) from
  * Play's public API surface so the framework can swap the transport without
- * breaking applications that subclass {@link play.mvc.Http.Inbound} or use
- * {@link F.BlockingEventStream} directly.
+ * breaking applications that subclass {@link play.mvc.Http.Inbound}.
  */
 public interface PlayChannel {
 

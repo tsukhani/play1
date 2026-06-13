@@ -14,7 +14,6 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
@@ -550,114 +549,6 @@ public class F {
             private void markAsRead(T value) {
                 if (value != null) {
                     events.remove(value);
-                }
-            }
-        }
-    }
-
-    public static class BlockingEventStream<T> {
-
-        final LinkedBlockingQueue<T> events;
-        final List<Promise<T>> waiting = new ArrayList<>();
-        final PlayChannel channel;
-        // Same rationale as EventStream above: drain waiting under the lock, invoke
-        // callbacks outside.
-        private final java.util.concurrent.locks.ReentrantLock lock = new java.util.concurrent.locks.ReentrantLock();
-
-        public BlockingEventStream(PlayChannel channel) {
-            this(100, channel);
-        }
-
-        public BlockingEventStream(int maxBufferSize, PlayChannel channel) {
-            this.channel = channel;
-            events = new LinkedBlockingQueue<>(maxBufferSize + 10);
-        }
-
-        public Promise<T> nextEvent() {
-            lock.lock();
-            try {
-                if (events.isEmpty()) {
-                    LazyTask task = new LazyTask(channel);
-                    waiting.add(task);
-                    return task;
-                }
-                return new LazyTask(events.peek(), channel);
-            } finally {
-                lock.unlock();
-            }
-        }
-
-        // Flow control: setReadable(false) is called when the queue nears capacity so Netty
-        // stops draining the socket buffer; this propagates back-pressure to the client. We
-        // then use offer() (non-blocking) instead of put() — if the buffer ever genuinely
-        // fills before Netty acts on the readable=false signal we drop the event with a warn
-        // rather than parking the I/O thread, which would block ALL channels on that
-        // EventLoop, not just this one.
-        public void publish(T event) {
-            if (events.remainingCapacity() <= 10) {
-                Logger.trace("events queue is near capacity; pausing channel reads.");
-                channel.setReadable(false);
-            }
-            if (!events.offer(event)) {
-                Logger.warn("BlockingEventStream queue full; dropping event to avoid blocking the I/O thread.");
-                return;
-            }
-            notifyNewEvent();
-        }
-
-        void notifyNewEvent() {
-            List<Promise<T>> snapshot;
-            T value;
-            lock.lock();
-            try {
-                value = events.peek();
-                if (waiting.isEmpty()) {
-                    return;
-                }
-                snapshot = new ArrayList<>(waiting);
-                waiting.clear();
-            } finally {
-                lock.unlock();
-            }
-            for (Promise<T> task : snapshot) {
-                task.invoke(value);
-            }
-        }
-
-        class LazyTask extends Promise<T> {
-
-            final PlayChannel channel;
-
-            public LazyTask(PlayChannel channel) {
-                this.channel = channel;
-            }
-
-            public LazyTask(T value, PlayChannel channel) {
-                this.channel = channel;
-                invoke(value);
-            }
-
-            @Override
-            public T get() throws InterruptedException, ExecutionException {
-                T value = super.get();
-                markAsRead(value);
-                return value;
-            }
-
-            @Override
-            public T getOrNull() {
-                T value = super.getOrNull();
-                markAsRead(value);
-                return value;
-            }
-
-            private void markAsRead(T value) {
-                if (value != null) {
-                    events.remove(value);
-                    //Don't start back up until we get down to half the total capacity to prevent jittering:
-                    if (events.remainingCapacity() > events.size()) {
-                        channel.setReadable(true);
-                    }
                 }
             }
         }
