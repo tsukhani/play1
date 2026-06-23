@@ -148,13 +148,10 @@ Run the full Play Framework release deployment:
    Group by `major.minor`, sort each group by patch number descending, slice off the first 5 (keepers), and delete the rest:
 
    ```bash
-   gh release list --repo tsukhani/play1 --limit 100 --json tagName --jq '
-     [.[].tagName]
-     | group_by(. | capture("v(?<series>\\d+\\.\\d+)\\.").series)
-     | map(sort_by(. | capture("\\.(?<patch>\\d+)$").patch | tonumber) | reverse | .[5:])
-     | flatten
-     | .[]
-   ' \
+   # NOTE: keep the --jq expression on ONE line. A multi-line quoted jq arg gets
+   # split on its newlines when passed through the shell here — gh then receives a
+   # stray fragment as a positional arg and dies with: unknown command " ".
+   gh release list --repo tsukhani/play1 --limit 100 --json tagName --jq '[.[].tagName] | group_by(capture("v(?<series>\\d+\\.\\d+)\\.").series) | map(sort_by(capture("\\.(?<patch>\\d+)$").patch | tonumber) | reverse | .[5:]) | flatten | .[]' \
      | while read -r tag; do
          echo "trimming $tag (preserving git tag)"
          gh release delete "$tag" --repo tsukhani/play1 --yes
