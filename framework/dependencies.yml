@@ -7,39 +7,39 @@ transitiveDependencies: false
 
 # This core dependencies are required by Play framework
 require:    &allDependencies
-    - antlr4-runtime 4.13.0
-    - com.github.ben-manes.caffeine -> caffeine 3.2.3
+    - org.antlr -> antlr4-runtime 4.13.2
+    - com.github.ben-manes.caffeine -> caffeine 3.2.4
     - com.zaxxer -> HikariCP 5.1.0
-    - org.ow2.asm -> asm 9.8
-    - org.ow2.asm -> asm-commons 9.8
-    - org.ow2.asm -> asm-util 9.8
-    - org.ow2.asm -> asm-tree 9.8
-    - org.ow2.asm -> asm-analysis 9.8
+    - org.ow2.asm -> asm 9.10.1
+    - org.ow2.asm -> asm-commons 9.10.1
+    - org.ow2.asm -> asm-util 9.10.1
+    - org.ow2.asm -> asm-tree 9.10.1
+    - org.ow2.asm -> asm-analysis 9.10.1
     - cglib -> cglib 3.3.0
-    - com.google.code.gson -> gson 2.13.1
+    - com.google.code.gson -> gson 2.14.0
     - com.jamonapi -> jamon 2.82
 
     - commons-beanutils 1.11.0
-    - commons-codec 1.18.0
+    - commons-codec 1.22.0
     - org.apache.commons -> commons-email2-core 2.0.0-M1
     - org.apache.commons -> commons-email2-jakarta 2.0.0-M1
     - commons-fileupload 1.6.0
-    - commons-io 2.19.0
-    - org.apache.commons -> commons-lang3 3.18.0
-    - org.apache.commons -> commons-text 1.13.1
-    - commons-logging 1.3.5
+    - commons-io 2.22.0
+    - org.apache.commons -> commons-lang3 3.20.0
+    - org.apache.commons -> commons-text 1.15.0
+    - commons-logging 1.4.0
     - org.dom4j -> dom4j 2.2.0
     - com.h2database -> h2 2.3.232
-    - jakarta.activation -> jakarta.activation-api 2.1.3
+    - jakarta.activation -> jakarta.activation-api 2.1.4
     - com.sun.mail -> jakarta.mail 2.0.2
     - jakarta.inject -> jakarta.inject-api 2.0.1
     - jakarta.validation -> jakarta.validation-api 3.1.1
-    - jaxen 2.0.0
+    - jaxen 2.0.6
     # PF-63: javax.cache (JSR-107) API. Used at runtime by hibernate-jcache;
     # transitiveDependencies: false means it must be listed explicitly.
     # Without it, Hibernate's JCacheRegionFactory fails at boot with
     # NoClassDefFoundError: javax/cache/*.
-    - javax.cache -> cache-api 1.0.0
+    - javax.cache -> cache-api 1.1.1
     - org.hamcrest -> hamcrest-all 1.3
     # PF-89: JUnit 6.0.x unifies Jupiter, Platform, and Vintage onto a single
     # shared version. Java 17 baseline (already met by JDK 25 toolchain). API
@@ -47,65 +47,65 @@ require:    &allDependencies
     # TestEngine} is unchanged from 5.13 — see documentation/assessments/PF-89-junit-6-upgrade.md
     # for the full audit. Downstream consumers using junit-vintage-engine must
     # align their vintage pin to 6.0.x (jclaw owns its own follow-up).
-    - org.junit.jupiter -> junit-jupiter-api 6.0.3
-    - org.junit.jupiter -> junit-jupiter-engine 6.0.3
-    - org.junit.jupiter -> junit-jupiter-params 6.0.3
-    - org.junit.platform -> junit-platform-launcher 6.0.3
-    - org.junit.platform -> junit-platform-engine 6.0.3
-    - org.junit.platform -> junit-platform-commons 6.0.3
+    - org.junit.jupiter -> junit-jupiter-api 6.1.0
+    - org.junit.jupiter -> junit-jupiter-engine 6.1.0
+    - org.junit.jupiter -> junit-jupiter-params 6.1.0
+    - org.junit.platform -> junit-platform-launcher 6.1.0
+    - org.junit.platform -> junit-platform-engine 6.1.0
+    - org.junit.platform -> junit-platform-commons 6.1.0
     - org.opentest4j -> opentest4j 1.3.0
     - org.apiguardian -> apiguardian-api 1.1.2
     - jregex 1.2_01
-    - org.apache.logging.log4j -> log4j-api 2.25.3
-    - org.apache.logging.log4j -> log4j-core 2.25.3
-    - org.apache.logging.log4j -> log4j-layout-template-json 2.25.3
+    - org.apache.logging.log4j -> log4j-api 2.26.0
+    - org.apache.logging.log4j -> log4j-core 2.26.0
+    - org.apache.logging.log4j -> log4j-layout-template-json 2.26.0
     - net.sf.oval -> oval 4.0.0
     - org.apache.ivy -> ivy 2.5.3
-    - org.bouncycastle -> bcprov-jdk18on 1.81
-    - org.bouncycastle -> bcpkix-jdk18on 1.81
+    - org.bouncycastle -> bcprov-jdk18on 1.84
+    - org.bouncycastle -> bcpkix-jdk18on 1.84
     - org.codehaus.groovy -> groovy 3.0.25
     - org.codehaus.groovy -> groovy-xml 3.0.25
-    - org.eclipse.jdt -> org.eclipse.jdt.core 3.44.0
-    - org.eclipse.jdt -> ecj 3.44.0
-    - org.hibernate.orm -> hibernate-core 7.2.0.Final
-    - org.hibernate.models -> hibernate-models 1.0.1
-    - net.bytebuddy -> byte-buddy 1.17.6
+    - org.eclipse.jdt -> org.eclipse.jdt.core 3.46.0
+    - org.eclipse.jdt -> ecj 3.46.0
+    - org.hibernate.orm -> hibernate-core 7.4.2.Final
+    - org.hibernate.models -> hibernate-models 1.1.1
+    - net.bytebuddy -> byte-buddy 1.18.8
     - jakarta.persistence -> jakarta.persistence-api 3.2.0
     - org.hibernate.validator -> hibernate-validator 8.0.2.Final
-    - io.smallrye -> jandex 3.2.7
-    - org.jboss.logging -> jboss-logging 3.6.1.Final
+    - io.smallrye -> jandex 3.6.0
+    - org.jboss.logging -> jboss-logging 3.6.3.Final
     - jakarta.transaction -> jakarta.transaction-api 2.0.1
-    - jakarta.xml.bind -> jakarta.xml.bind-api 4.0.2
+    - jakarta.xml.bind -> jakarta.xml.bind-api 4.0.5
     - org.glassfish.jaxb -> jaxb-runtime 2.3.9
-    - com.fasterxml -> classmate 1.7.0
-    - org.hibernate.orm -> hibernate-jcache 7.2.0.Final
-    - org.javassist -> javassist 3.30.2-GA
-    - io.netty -> netty-buffer 4.2.13.Final
-    - io.netty -> netty-codec-base 4.2.13.Final
+    - com.fasterxml -> classmate 1.7.3
+    - org.hibernate.orm -> hibernate-jcache 7.4.2.Final
+    - org.javassist -> javassist 3.32.0-GA
+    - io.netty -> netty-buffer 4.2.15.Final
+    - io.netty -> netty-codec-base 4.2.15.Final
     # netty-codec-compression carries the gzip/deflate/brotli/zstd encoder
     # classes that Netty 4.2 split out of netty-codec-http. HttpContentCompressor
     # static-references them via StandardCompressionOptions, so without this jar
     # the no-arg ctor blows up with NoClassDefFoundError: BrotliEncoder. Brings
     # com.aayushatharva.brotli4j + native classifiers transitively, which lets
     # HttpServerPipelineFactory wire brotli when it constructs the compressor.
-    - io.netty -> netty-codec-compression 4.2.13.Final
-    - io.netty -> netty-codec-http 4.2.13.Final
+    - io.netty -> netty-codec-compression 4.2.15.Final
+    - io.netty -> netty-codec-http 4.2.15.Final
     # PF-58: HTTP/2 codec + multiplex handler. Always active when HTTPS is configured;
     # SslHttpServerPipelineFactory installs Http2FrameCodec + Http2MultiplexHandler in the
     # ALPN h2 branch (h1.1 fallback handled by Http2OrHttp1Negotiator). Same Netty version
     # as the other codec-* artifacts.
-    - io.netty -> netty-codec-http2 4.2.13.Final
-    - io.netty -> netty-common 4.2.13.Final
-    - io.netty -> netty-handler 4.2.13.Final
-    - io.netty -> netty-resolver 4.2.13.Final
-    - io.netty -> netty-transport 4.2.13.Final
+    - io.netty -> netty-codec-http2 4.2.15.Final
+    - io.netty -> netty-common 4.2.15.Final
+    - io.netty -> netty-handler 4.2.15.Final
+    - io.netty -> netty-resolver 4.2.15.Final
+    - io.netty -> netty-transport 4.2.15.Final
     # PF-58: Netty 4.2 SslHandler.handlerAdded -> setOpensslEngineSocketFd loads
     # io.netty.channel.unix.UnixChannel unconditionally (not guarded behind an
     # OpenSSL-only branch). Without this artifact every HTTPS connection fails
     # at pipeline init with NoClassDefFoundError. The fork's HTTPS path was
     # latently broken since the Netty 4.2 migration (PF-31); surfaced when PF-58
     # added the first integration test that opens a real TLS socket.
-    - io.netty -> netty-transport-native-unix-common 4.2.13.Final
+    - io.netty -> netty-transport-native-unix-common 4.2.15.Final
     # PF-57: HTTP/3 over QUIC. Activated automatically when https.port is set
     # (subject to native QUIC availability — see Http3SslContextFactory).
     # netty-codec-http3 ships the Http3* frame codec + Http3ServerConnectionHandler;
@@ -115,13 +115,13 @@ require:    &allDependencies
     # gates QuicServer.start() at boot so unsupported platforms (e.g. linux-riscv64,
     # which has no upstream native) get an actionable IllegalStateException instead of
     # a silent UDP bind failure.
-    - io.netty -> netty-codec-http3 4.2.13.Final
-    - io.netty -> netty-codec-classes-quic 4.2.13.Final
-    - io.netty -> netty-codec-native-quic 4.2.13.Final osx-aarch_64
-    - io.netty -> netty-codec-native-quic 4.2.13.Final osx-x86_64
-    - io.netty -> netty-codec-native-quic 4.2.13.Final linux-aarch_64
-    - io.netty -> netty-codec-native-quic 4.2.13.Final linux-x86_64
-    - io.netty -> netty-codec-native-quic 4.2.13.Final windows-x86_64
+    - io.netty -> netty-codec-http3 4.2.15.Final
+    - io.netty -> netty-codec-classes-quic 4.2.15.Final
+    - io.netty -> netty-codec-native-quic 4.2.15.Final osx-aarch_64
+    - io.netty -> netty-codec-native-quic 4.2.15.Final osx-x86_64
+    - io.netty -> netty-codec-native-quic 4.2.15.Final linux-aarch_64
+    - io.netty -> netty-codec-native-quic 4.2.15.Final linux-x86_64
+    - io.netty -> netty-codec-native-quic 4.2.15.Final windows-x86_64
     # PF-105: BoringSSL-backed Netty TLS provider. OpenSslContext beats the JDK
     # SSLEngine on handshake throughput (2-3x) and bulk symmetric crypto (AES-NI
     # via the native lib, not via JDK intrinsics). SslHttpServerPipelineFactory
@@ -136,12 +136,12 @@ require:    &allDependencies
     # across the platforms users run Play on (macOS arm64/x86_64, Linux
     # arm64/x86_64, Windows x86_64). tcnative selects the matching native at
     # runtime; unused ones are dead weight but don't load.
-    - io.netty -> netty-tcnative-classes 2.0.71.Final
-    - io.netty -> netty-tcnative-boringssl-static 2.0.71.Final osx-aarch_64
-    - io.netty -> netty-tcnative-boringssl-static 2.0.71.Final osx-x86_64
-    - io.netty -> netty-tcnative-boringssl-static 2.0.71.Final linux-aarch_64
-    - io.netty -> netty-tcnative-boringssl-static 2.0.71.Final linux-x86_64
-    - io.netty -> netty-tcnative-boringssl-static 2.0.71.Final windows-x86_64
+    - io.netty -> netty-tcnative-classes 2.0.79.Final
+    - io.netty -> netty-tcnative-boringssl-static 2.0.79.Final osx-aarch_64
+    - io.netty -> netty-tcnative-boringssl-static 2.0.79.Final osx-x86_64
+    - io.netty -> netty-tcnative-boringssl-static 2.0.79.Final linux-aarch_64
+    - io.netty -> netty-tcnative-boringssl-static 2.0.79.Final linux-x86_64
+    - io.netty -> netty-tcnative-boringssl-static 2.0.79.Final windows-x86_64
     # com.aayushatharva.brotli4j is the JNI wrapper around the Brotli C lib that
     # StandardCompressionOptions.brotli() loads. brotli4j publishes per-platform
     # natives as separate artifactIds (NOT Ivy classifiers); the `service` jar is
@@ -152,30 +152,30 @@ require:    &allDependencies
     # macOS arm64/x86_64, Linux x86_64/arm64/riscv64, Windows x86_64. The native
     # service-loader picks the right one at runtime; unused ones are dead weight
     # but don't load.
-    - com.aayushatharva.brotli4j -> brotli4j 1.16.0
-    - com.aayushatharva.brotli4j -> service 1.16.0
-    - com.aayushatharva.brotli4j -> native-osx-aarch64 1.16.0
-    - com.aayushatharva.brotli4j -> native-osx-x86_64 1.16.0
-    - com.aayushatharva.brotli4j -> native-linux-aarch64 1.16.0
-    - com.aayushatharva.brotli4j -> native-linux-x86_64 1.16.0
-    - com.aayushatharva.brotli4j -> native-linux-riscv64 1.16.0
-    - com.aayushatharva.brotli4j -> native-windows-x86_64 1.16.0
-    - org.postgresql -> postgresql 42.7.7
-    - org.slf4j -> slf4j-api 2.0.17
-    - org.apache.logging.log4j -> log4j-slf4j2-impl 2.25.3
-    - org.yaml -> snakeyaml 2.4
+    - com.aayushatharva.brotli4j -> brotli4j 1.23.0
+    - com.aayushatharva.brotli4j -> service 1.23.0
+    - com.aayushatharva.brotli4j -> native-osx-aarch64 1.23.0
+    - com.aayushatharva.brotli4j -> native-osx-x86_64 1.23.0
+    - com.aayushatharva.brotli4j -> native-linux-aarch64 1.23.0
+    - com.aayushatharva.brotli4j -> native-linux-x86_64 1.23.0
+    - com.aayushatharva.brotli4j -> native-linux-riscv64 1.23.0
+    - com.aayushatharva.brotli4j -> native-windows-x86_64 1.23.0
+    - org.postgresql -> postgresql 42.7.11
+    - org.slf4j -> slf4j-api 2.0.18
+    - org.apache.logging.log4j -> log4j-slf4j2-impl 2.26.0
+    - org.yaml -> snakeyaml 2.6
     # PF-26: Jackson XML replaces XStream for renderXml(Object). Jackson 2.12+
     # requires a non-default Stax provider, so woodstox-core + stax2-api are
     # mandatory companions, not optional. jackson-annotations versions are
-    # pinned at 2.21 by the Jackson 2.21.x BOM (annotations is stable across
+    # pinned at 2.22 by the Jackson 2.22.x BOM (annotations is stable across
     # point releases).
-    - com.fasterxml.jackson.core -> jackson-annotations 2.21
-    - com.fasterxml.jackson.core -> jackson-core 2.21.3
-    - com.fasterxml.jackson.core -> jackson-databind 2.21.3
-    - com.fasterxml.jackson.dataformat -> jackson-dataformat-xml 2.21.3
-    - com.fasterxml.jackson.dataformat -> jackson-dataformat-yaml 2.21.3
-    - com.fasterxml.jackson.datatype -> jackson-datatype-jsr310 2.21.3
-    - com.fasterxml.woodstox -> woodstox-core 7.1.1
+    - com.fasterxml.jackson.core -> jackson-annotations 2.22
+    - com.fasterxml.jackson.core -> jackson-core 2.22.0
+    - com.fasterxml.jackson.core -> jackson-databind 2.22.0
+    - com.fasterxml.jackson.dataformat -> jackson-dataformat-xml 2.22.0
+    - com.fasterxml.jackson.dataformat -> jackson-dataformat-yaml 2.22.0
+    - com.fasterxml.jackson.datatype -> jackson-datatype-jsr310 2.22.0
+    - com.fasterxml.woodstox -> woodstox-core 7.2.1
     - org.codehaus.woodstox -> stax2-api 4.3.0
     # PF-12: OpenAPI 3 spec generation. swagger-models supplies the OpenAPI
     # object graph; swagger-core supplies Json/Yaml pretty-printers that wrap
@@ -185,9 +185,9 @@ require:    &allDependencies
     # would pull JAX-RS, which Play does not use. jackson-dataformat-yaml +
     # jackson-datatype-jsr310 are runtime peers of swagger-core's Yaml.mapper()
     # and ObjectMapper customizations.
-    - io.swagger.core.v3 -> swagger-models 2.2.39
-    - io.swagger.core.v3 -> swagger-core 2.2.39
-    - io.swagger.core.v3 -> swagger-annotations 2.2.39
+    - io.swagger.core.v3 -> swagger-models 2.2.52
+    - io.swagger.core.v3 -> swagger-core 2.2.52
+    - io.swagger.core.v3 -> swagger-annotations 2.2.52
     # PF-13: Micrometer + Prometheus exposition. micrometer-core ships the meter
     # registry + bundled JVM binders; micrometer-registry-prometheus carries
     # the PrometheusMeterRegistry that scrapes to OpenMetrics text. From
@@ -230,12 +230,12 @@ require:    &allDependencies
     # okhttp-sse ships a single jar without the -jvm split. kotlin-stdlib is a
     # mandatory runtime peer (OkHttp 5 is implemented in Kotlin) — Ivy can't
     # discover it transitively under transitiveDependencies: false.
-    - com.squareup.okhttp3 -> okhttp 5.3.2
-    - com.squareup.okhttp3 -> okhttp-jvm 5.3.2
-    - com.squareup.okhttp3 -> okhttp-sse 5.3.2
-    - com.squareup.okio -> okio 3.16.4
-    - com.squareup.okio -> okio-jvm 3.16.4
-    - org.jetbrains.kotlin -> kotlin-stdlib 2.2.21
+    - com.squareup.okhttp3 -> okhttp 5.4.0
+    - com.squareup.okhttp3 -> okhttp-jvm 5.4.0
+    - com.squareup.okhttp3 -> okhttp-sse 5.4.0
+    - com.squareup.okio -> okio 3.17.0
+    - com.squareup.okio -> okio-jvm 3.17.0
+    - org.jetbrains.kotlin -> kotlin-stdlib 2.4.0
 
 # Default repositories, used for all projects
 repositories:
@@ -262,9 +262,9 @@ repositories:
                 type:       local
                 # PF-57: the (-[classifier]) optional segment is Ivy syntax for "include only if
                 # the classifier extra-attribute is set". Lets entries declare native artifacts
-                # via "io.netty -> netty-codec-native-quic 4.2.13.Final osx-aarch_64" and the
+                # via "io.netty -> netty-codec-native-quic 4.2.15.Final osx-aarch_64" and the
                 # resolver looks up the classifier-suffixed jar on disk; classifier-less entries
-                # like "io.netty -> netty-codec-http 4.2.13.Final" continue to resolve to plain
+                # like "io.netty -> netty-codec-http 4.2.15.Final" continue to resolve to plain
                 # name-revision.jar. YamlParser already populates the classifier extra-attribute
                 # via the regex at YamlParser.java:173-181.
                 artifact:   "${play.path}/framework/lib/[artifact]-[revision](-[classifier]).jar"
