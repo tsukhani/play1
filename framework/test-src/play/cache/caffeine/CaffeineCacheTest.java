@@ -115,7 +115,11 @@ public class CaffeineCacheTest {
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
         provider.bindMetricsToRegistry(registry);
 
-        assertThat(registry.find("cache.gets").tag("cache", "alpha").meters()).isNotEmpty();
-        assertThat(registry.find("cache.gets").tag("cache", "beta").meters()).isNotEmpty();
+        // Caches created without recordStats register only the cache.size gauge —
+        // Micrometer 1.14+ CaffeineCacheMetrics skips the stat-derived meters
+        // (cache.gets, hits, misses, ...) for non-recording caches. cache.size still
+        // proves each created cache was bound to the registry, which is what this asserts.
+        assertThat(registry.find("cache.size").tag("cache", "alpha").meters()).isNotEmpty();
+        assertThat(registry.find("cache.size").tag("cache", "beta").meters()).isNotEmpty();
     }
 }

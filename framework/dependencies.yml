@@ -9,7 +9,7 @@ transitiveDependencies: false
 require:    &allDependencies
     - org.antlr -> antlr4-runtime 4.13.2
     - com.github.ben-manes.caffeine -> caffeine 3.2.4
-    - com.zaxxer -> HikariCP 5.1.0
+    - com.zaxxer -> HikariCP 7.1.0
     - org.ow2.asm -> asm 9.10.1
     - org.ow2.asm -> asm-commons 9.10.1
     - org.ow2.asm -> asm-util 9.10.1
@@ -29,7 +29,7 @@ require:    &allDependencies
     - org.apache.commons -> commons-text 1.15.0
     - commons-logging 1.4.0
     - org.dom4j -> dom4j 2.2.0
-    - com.h2database -> h2 2.3.232
+    - com.h2database -> h2 2.4.240
     - jakarta.activation -> jakarta.activation-api 2.1.4
     - com.sun.mail -> jakarta.mail 2.0.2
     - jakarta.inject -> jakarta.inject-api 2.0.1
@@ -40,7 +40,7 @@ require:    &allDependencies
     # Without it, Hibernate's JCacheRegionFactory fails at boot with
     # NoClassDefFoundError: javax/cache/*.
     - javax.cache -> cache-api 1.1.1
-    - org.hamcrest -> hamcrest-all 1.3
+    - org.hamcrest -> hamcrest 3.0
     # PF-89: JUnit 6.0.x unifies Jupiter, Platform, and Vintage onto a single
     # shared version. Java 17 baseline (already met by JDK 25 toolchain). API
     # surface used by play.test.{BaseTest, FunctionalTest, PlayJUnitExtension,
@@ -69,14 +69,22 @@ require:    &allDependencies
     - org.eclipse.jdt -> ecj 3.46.0
     - org.hibernate.orm -> hibernate-core 7.4.2.Final
     - org.hibernate.models -> hibernate-models 1.1.1
-    - net.bytebuddy -> byte-buddy 1.18.8
+    - net.bytebuddy -> byte-buddy 1.18.10
     - jakarta.persistence -> jakarta.persistence-api 3.2.0
-    - org.hibernate.validator -> hibernate-validator 8.0.2.Final
+    - org.hibernate.validator -> hibernate-validator 9.1.1.Final
     - io.smallrye -> jandex 3.6.0
     - org.jboss.logging -> jboss-logging 3.6.3.Final
     - jakarta.transaction -> jakarta.transaction-api 2.0.1
     - jakarta.xml.bind -> jakarta.xml.bind-api 4.0.5
-    - org.glassfish.jaxb -> jaxb-runtime 2.3.9
+    # jaxb-runtime 4.0.x (jakarta namespace) replaces the old 2.3.9 (javax),
+    # matching jakarta.xml.bind-api 4.0.5 + Hibernate 7's JAXB usage. Under
+    # transitiveDependencies: false its runtime tree is declared explicitly
+    # (companion versions per jaxb-bom 4.0.9).
+    - org.glassfish.jaxb -> jaxb-runtime 4.0.9
+    - org.glassfish.jaxb -> jaxb-core 4.0.9
+    - org.glassfish.jaxb -> txw2 4.0.9
+    - com.sun.istack -> istack-commons-runtime 4.1.2
+    - org.eclipse.angus -> angus-activation 2.0.3
     - com.fasterxml -> classmate 1.7.3
     - org.hibernate.orm -> hibernate-jcache 7.4.2.Final
     - org.javassist -> javassist 3.32.0-GA
@@ -196,29 +204,33 @@ require:    &allDependencies
     # legacy io.prometheus:simpleclient line. HdrHistogram + LatencyUtils are
     # micrometer-core runtime transitives — declared explicitly because
     # transitiveDependencies is off.
-    - io.micrometer -> micrometer-core 1.13.6
-    - io.micrometer -> micrometer-commons 1.13.6
-    - io.micrometer -> micrometer-observation 1.13.6
-    - io.micrometer -> micrometer-registry-prometheus 1.13.6
-    - io.micrometer -> micrometer-registry-otlp 1.13.6
+    - io.micrometer -> micrometer-core 1.17.0
+    - io.micrometer -> micrometer-commons 1.17.0
+    - io.micrometer -> micrometer-observation 1.17.0
+    - io.micrometer -> micrometer-registry-prometheus 1.17.0
+    - io.micrometer -> micrometer-registry-otlp 1.17.0
     # micrometer-registry-otlp transitives: opentelemetry-proto serializes the
     # push payload, protobuf-java is its peer. The Prometheus side ships its
     # own shaded protobuf so the unshaded one declared here is OTLP-only.
-    - io.opentelemetry.proto -> opentelemetry-proto 1.2.0-alpha
-    # PF-130: protobuf-java pinned to 3.25.x to remediate CVE-2024-7254
-    # (unbounded recursion in protobuf parsing). 3.25.5 is the first fixed
-    # release; 3.25.9 is the latest stable patch in that line. opentelemetry-proto
-    # 1.2.0-alpha's generated code targets protobuf-java 3.23.4, which the 3.25.x
-    # runtime is backward-compatible with, so no matching otel-proto bump is
-    # needed (transitiveDependencies is off, so this explicit pin governs).
-    - com.google.protobuf -> protobuf-java 3.25.9
-    - io.prometheus -> prometheus-metrics-core 1.2.1
-    - io.prometheus -> prometheus-metrics-model 1.2.1
-    - io.prometheus -> prometheus-metrics-config 1.2.1
-    - io.prometheus -> prometheus-metrics-tracer-common 1.2.1
-    - io.prometheus -> prometheus-metrics-tracer-initializer 1.2.1
-    - io.prometheus -> prometheus-metrics-exposition-formats 1.2.1
-    - io.prometheus -> prometheus-metrics-shaded-protobuf 1.2.1
+    - io.opentelemetry.proto -> opentelemetry-proto 1.10.0-alpha
+    # PF-130: protobuf-java is the unshaded protobuf used only by the OTLP exporter
+    # (the Prometheus side ships its own shaded protobuf). Kept on a release that
+    # fixes CVE-2024-7254 (unbounded-recursion parsing DoS; patched in 3.25.5+ AND
+    # 4.27.5+). On the 4.x line to match micrometer 1.17's otlp registry:
+    # opentelemetry-proto 1.10.0-alpha's gencode targets protobuf-java 4.34.0, and
+    # the 4.35.x runtime is compatible with that gencode (runtime >= gencode, same
+    # major). transitiveDependencies is off, so this explicit pin governs.
+    - com.google.protobuf -> protobuf-java 4.35.1
+    - io.prometheus -> prometheus-metrics-core 1.7.0
+    - io.prometheus -> prometheus-metrics-model 1.7.0
+    - io.prometheus -> prometheus-metrics-config 1.7.0
+    - io.prometheus -> prometheus-metrics-tracer-common 1.7.0
+    - io.prometheus -> prometheus-metrics-tracer-initializer 1.7.0
+    - io.prometheus -> prometheus-metrics-exposition-formats 1.7.0
+    # prometheus-metrics 1.3.x shades protobuf into exposition-formats itself, so the
+    # standalone prometheus-metrics-shaded-protobuf artifact is gone; exposition-formats
+    # now pulls the split-out exposition-textformats (text/OpenMetrics writer).
+    - io.prometheus -> prometheus-metrics-exposition-textformats 1.7.0
     - org.hdrhistogram -> HdrHistogram 2.2.2
     - org.latencyutils -> LatencyUtils 2.0.3
     # PF-104: OkHttp 5 replaces java.net.http.HttpClient as the WSAsync transport.
