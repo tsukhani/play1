@@ -148,14 +148,20 @@ Run the full Play Framework release deployment:
    Group by `major.minor`, sort each group by patch number descending, slice off the first 5 (keepers), and delete the rest:
 
    ```bash
-   # NOTE: keep the --jq expression on ONE line. A multi-line quoted jq arg gets
-   # split on its newlines when passed through the shell here — gh then receives a
-   # stray fragment as a positional arg and dies with: unknown command " ".
-   gh release list --repo tsukhani/play1 --limit 100 --json tagName --jq '[.[].tagName] | group_by(capture("v(?<series>\\d+\\.\\d+)\\.").series) | map(sort_by(capture("\\.(?<patch>\\d+)$").patch | tonumber) | reverse | .[5:]) | flatten | .[]' \
-     | while read -r tag; do
-         echo "trimming $tag (preserving git tag)"
-         gh release delete "$tag" --repo tsukhani/play1 --yes
-       done
+   # IMPORTANT: do NOT pipe `gh release list` straight into a `while read` loop that
+   # also calls `gh` — i.e. avoid `gh release list ... | while read tag; do gh release
+   # delete ...`. In this shell that exact shape is mangled (the producer `gh release
+   # list` dies with `unknown command " "` and the trim silently no-ops — observed on
+   # two releases). Verified-good workaround: write the selector to a file, then read
+   # the file in the loop (no `gh` on the pipe-producer side). Keep --jq on one line.
+   TRIM_LIST="$(mktemp)"
+   gh release list --repo tsukhani/play1 --limit 100 --json tagName --jq '[.[].tagName] | group_by(capture("v(?<series>\\d+\\.\\d+)\\.").series) | map(sort_by(capture("\\.(?<patch>\\d+)$").patch | tonumber) | reverse | .[5:]) | flatten | .[]' > "$TRIM_LIST"
+   while read -r tag; do
+     [ -n "$tag" ] || continue
+     echo "trimming $tag (preserving git tag)"
+     gh release delete "$tag" --repo tsukhani/play1 --yes
+   done < "$TRIM_LIST"
+   rm -f "$TRIM_LIST"
    ```
 
    Verify the cap:
