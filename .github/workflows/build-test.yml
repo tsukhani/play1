@@ -39,7 +39,7 @@ jobs:
         uses: actions/setup-java@v5
         with:
           java-version: ${{ matrix.jdk }}
-          distribution: 'adopt'
+          distribution: 'temurin'
 
       - name: Build with Ant
         working-directory: ./framework
@@ -69,7 +69,7 @@ jobs:
         uses: actions/setup-java@v5
         with:
           java-version: ${{ env.DEFAULT_JAVA_VERSION }}
-          distribution: 'adopt'
+          distribution: 'temurin'
 
       - name: Build with Ant
         working-directory: ./framework
@@ -106,7 +106,7 @@ jobs:
          uses: actions/setup-java@v5
          with:
            java-version: ${{ matrix.jdk }}
-           distribution: 'adopt'
+           distribution: 'temurin'
 
        - name: Build with Ant
          working-directory: ./framework
