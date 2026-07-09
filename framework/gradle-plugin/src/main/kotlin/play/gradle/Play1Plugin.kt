@@ -209,7 +209,7 @@ class Play1Plugin : Plugin<Project> {
 
         project.tasks.register<PlayAutotestTask>("playAutotest") {
             group = "play1"
-            description = "Run all application tests headlessly via FirePhoque"
+            description = "Run application tests headlessly via FirePhoque. Optional: -Ptests=<Class,...> to run only the named test classes"
             dependsOn("extractPlayModules")
             // PF-94: keep build/classes/java/main/ coherent with app/ sources before
             // the test JVM forks. PropertiesEnhancer's javassist ClassPool walks the
@@ -228,6 +228,9 @@ class Play1Plugin : Plugin<Project> {
             runUnit.set(project.findProperty("runUnit")?.toString().toBoolean())
             runFunctional.set(project.findProperty("runFunctional")?.toString().toBoolean())
             project.findProperty("webclientTimeout")?.toString()?.let { webclientTimeout.set(it) }
+            // -Ptests=Foo,models.BarTest (from `play autotest --tests=...`) restricts
+            // the headless run to the named test classes; FirePhoque does the matching.
+            project.findProperty("tests")?.toString()?.let { testClasses.set(it) }
 
             outputs.upToDateWhen { false }
         }
@@ -743,6 +746,7 @@ abstract class PlayAutotestTask : DefaultTask() {
     @get:Input @get:Optional abstract val runUnit: Property<Boolean>
     @get:Input @get:Optional abstract val runFunctional: Property<Boolean>
     @get:Input @get:Optional abstract val webclientTimeout: Property<String>
+    @get:Input @get:Optional abstract val testClasses: Property<String>
 
     @get:Inject abstract val fileSystemOps: FileSystemOperations
 
@@ -795,6 +799,7 @@ abstract class PlayAutotestTask : DefaultTask() {
             if (runUnit.getOrElse(false)) add("-DrunUnitTests")
             if (runFunctional.getOrElse(false)) add("-DrunFunctionalTests")
             effectiveTimeout?.let { add("-DwebclientTimeout=$it") }
+            testClasses.orNull?.takeIf { it.isNotBlank() }?.let { add("-DtestClasses=$it") }
         }
 
         val logsDir = File(appDir, "logs").apply { mkdirs() }

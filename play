@@ -61,7 +61,8 @@ Build / test / package:
   clean                Remove generated files
   precompile           Precompile sources and templates for production
   test                 Run the application's tests interactively
-  autotest             Run all tests headlessly and exit
+  autotest             Run tests headlessly and exit
+                       (--tests=Class,... runs only the named test classes)
   dist                 Package the source tree as <rootProject.name>.zip
                        (respects .gitignore and .distignore)
   bundle               Build a self-contained deployment zip

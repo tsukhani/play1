@@ -19,7 +19,10 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -73,6 +76,54 @@ public class FirePhoque {
             System.exit(-1);
         } finally {
             closeQuietly(in);
+        }
+
+        // -DtestClasses=Foo,models.BarTest narrows the run to the named classes
+        // (simple name or FQCN, trailing .class optional) instead of the whole
+        // suite — this is what `play autotest --tests=...` forwards. We filter the
+        // already-fetched list client-side, so the server-side classification walk
+        // and the lane split below stay untouched. Unknown names warn; an all-miss
+        // filter exits non-zero WITHOUT writing a result marker, so a typo'd class
+        // name fails the run instead of masquerading as a green "all passed" (the
+        // Gradle task reads pass/fail from test-result/result.{passed,failed}).
+        String testFilter = System.getProperty("testClasses");
+        if (testFilter != null && !testFilter.isBlank()) {
+            Set<String> requested = new LinkedHashSet<>();
+            for (String token : testFilter.split(",")) {
+                String t = token.trim();
+                if (t.endsWith(".class")) {
+                    t = t.substring(0, t.length() - ".class".length());
+                }
+                if (!t.isEmpty()) {
+                    requested.add(t);
+                }
+            }
+            int total = tests.size();
+            Set<String> matched = new HashSet<>();
+            List<String> filtered = new ArrayList<>();
+            for (String entry : tests) {
+                String fqcn = testFqcn(entry);
+                String simpleName = fqcn.substring(fqcn.lastIndexOf('.') + 1);
+                if (requested.contains(fqcn)) {
+                    filtered.add(entry);
+                    matched.add(fqcn);
+                } else if (requested.contains(simpleName)) {
+                    filtered.add(entry);
+                    matched.add(simpleName);
+                }
+            }
+            for (String name : requested) {
+                if (!matched.contains(name)) {
+                    System.out.println("~ WARNING: no test class matches '" + name + "'");
+                }
+            }
+            if (filtered.isEmpty()) {
+                System.out.println("~ No tests matched --tests=" + testFilter + " — nothing to run.");
+                System.exit(1);
+            }
+            System.out.println("~ Running " + filtered.size() + " of " + total
+                    + " test" + (total != 1 ? "s" : "") + " (filtered by --tests)");
+            tests = filtered;
         }
 
         // Let's tweak WebClient
@@ -167,6 +218,24 @@ public class FirePhoque {
             // server tolerates fine.
             System.exit(0);
         }
+    }
+
+    /**
+     * Extract the fully-qualified class name from a {@code /@tests.list} entry,
+     * stripping the lane prefix ({@code U:}/{@code D:}/{@code F:}) and the
+     * {@code .class} suffix. Used to match entries against a {@code -DtestClasses}
+     * filter by FQCN or simple name.
+     */
+    private static String testFqcn(String entry) {
+        String body = entry;
+        if (body.length() > 2 && body.charAt(1) == ':'
+                && (body.startsWith("U:") || body.startsWith("D:") || body.startsWith("F:"))) {
+            body = body.substring(2);
+        }
+        if (body.endsWith(".class")) {
+            body = body.substring(0, body.length() - ".class".length());
+        }
+        return body;
     }
 
     /**
