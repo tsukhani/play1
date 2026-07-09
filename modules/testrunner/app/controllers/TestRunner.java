@@ -195,10 +195,32 @@ public class TestRunner extends Controller {
                                     queue.add(owner);
                                 }
                             }
+                            // PF-154: a call through an INTERFACE hides the concrete impl
+                            // from the static walk (dynamic dispatch). Enqueue every
+                            // application class implementing the interface so a DB-touching
+                            // impl (e.g. JpaMemoryStore behind MemoryStore) is reached and
+                            // the test is classified DB-serial instead of racing on the
+                            // parallel pure lane. Cheap: JClaw's app interfaces have a
+                            // handful of impls, and `visited` dedups when they're polled.
+                            private void enqueueImplementors(String interfaceInternal) {
+                                Class<?> iface;
+                                try {
+                                    iface = Play.classloader.loadClass(interfaceInternal.replace('/', '.'));
+                                } catch (Throwable ignore) {
+                                    return; // not a loadable application interface
+                                }
+                                for (ApplicationClasses.ApplicationClass impl :
+                                        Play.classes.getAssignableClasses(iface)) {
+                                    enqueue(impl.name.replace('.', '/'));
+                                }
+                            }
                             @Override
                             public void visitMethodInsn(int opcode, String owner, String n,
                                                          String d, boolean isInterface) {
                                 enqueue(owner);
+                                if (isInterface) {
+                                    enqueueImplementors(owner);
+                                }
                             }
                             @Override
                             public void visitFieldInsn(int opcode, String owner, String n, String d) {
