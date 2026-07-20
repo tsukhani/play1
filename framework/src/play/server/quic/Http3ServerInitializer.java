@@ -1,7 +1,10 @@
 package play.server.quic;
 
 import io.netty.channel.ChannelInitializer;
+import io.netty.handler.codec.http3.DefaultHttp3SettingsFrame;
 import io.netty.handler.codec.http3.Http3ServerConnectionHandler;
+import io.netty.handler.codec.http3.Http3Settings;
+import io.netty.handler.codec.http3.Http3SettingsFrame;
 import io.netty.handler.codec.quic.QuicChannel;
 
 /**
@@ -20,6 +23,14 @@ public class Http3ServerInitializer extends ChannelInitializer<QuicChannel> {
 
     @Override
     protected void initChannel(QuicChannel ch) {
-        ch.pipeline().addLast("h3-conn", new Http3ServerConnectionHandler(streamInitializer));
+        // PF-158: advertise SETTINGS_ENABLE_CONNECT_PROTOCOL (0x8) so clients know they may
+        // bootstrap a WebSocket with Extended CONNECT (RFC 9220). Built from
+        // Http3Settings.defaultSettings() so the QPACK and field-section defaults Netty would
+        // otherwise supply are still advertised, and disableQpackDynamicTable stays true —
+        // both are what the one-argument Http3ServerConnectionHandler constructor used before.
+        Http3SettingsFrame settings = new DefaultHttp3SettingsFrame(
+                Http3Settings.defaultSettings().enableConnectProtocol(true));
+        ch.pipeline().addLast("h3-conn",
+                new Http3ServerConnectionHandler(streamInitializer, null, null, settings, true));
     }
 }

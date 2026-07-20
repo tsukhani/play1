@@ -33,6 +33,10 @@ public class Http3StreamInitializer extends ChannelInitializer<QuicStreamChannel
     @Override
     protected void initChannel(QuicStreamChannel ch) {
         ch.pipeline()
+                // PF-158: ahead of the HTTP codec — which is final and, like its h2 counterpart,
+                // drops the pseudo-headers an RFC 9220 Extended CONNECT carries. Removes itself
+                // on the first frame of any ordinary request stream.
+                .addLast("h3-extended-connect", new Http3ExtendedConnectHandler())
                 .addLast("h3-codec", new Http3FrameToHttpObjectCodec(true))
                 .addLast("h3-aggregator", new StreamChunkAggregator())
                 .addLast("h3-chunked-write", new ChunkedWriteHandler())

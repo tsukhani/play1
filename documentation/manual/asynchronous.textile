@@ -114,6 +114,8 @@ On the Play side you declare a WS route:
 
 bc. WS   /helloSocket            MyWebSocket.hello
 
+The route serves every HTTP version the server speaks. Over HTTP/1.1 the socket is established with the classic @Upgrade: websocket@ handshake; over HTTP/2 and HTTP/3 clients may instead bootstrap it with Extended CONNECT, so the WebSocket multiplexes onto the connection they already have. Your controller is identical either way — see "WebSockets over HTTP/2 and HTTP/3":httpserver#websockets-over-h2-h3 for the transport detail.
+
 @MyWebSocket@ is a @WebSocketController@. A WebSocket controller is like a standard HTTP controller but handles different concepts.
 
 * It has a request object, but no response object.

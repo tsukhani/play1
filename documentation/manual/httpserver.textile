@@ -28,6 +28,24 @@ The cascade for a fresh browser:
 
 If h3 didn't bind (no native QUIC, or UDP blocked at the load balancer), the server suppresses the @Alt-Svc@ header — clients stay on h2 indefinitely with no error.
 
+h3. <a name="websockets-over-h2-h3">WebSockets over HTTP/2 and HTTP/3</a>
+
+A WebSocket route (@WS /myPath@) is reachable over all three protocols, and there is nothing to configure. On HTTP/1.1 the classic RFC 6455 @Upgrade: websocket@ handshake applies. On HTTP/2 and HTTP/3 the server advertises the @SETTINGS_ENABLE_CONNECT_PROTOCOL@ setting, which tells clients they may bootstrap a WebSocket with *Extended CONNECT* — @:method=CONNECT@ plus @:protocol=websocket@ — as specified by "RFC 8441":https://www.rfc-editor.org/rfc/rfc8441.html (h2) and "RFC 9220":https://www.rfc-editor.org/rfc/rfc9220.html (h3).
+
+The payoff is that the WebSocket becomes one more stream on the connection the client already has open. There is no second TLS handshake for @wss://@, and on the QUIC path a WebSocket is possible at all — HTTP/3 has no @Upgrade@ mechanism to fall back to.
+
+Your controller does not change. A @WebSocketController@ sees the same @inbound@/@outbound@ pair regardless of how the socket was bootstrapped; only the transport underneath differs.
+
+|_. Client | _. What happens |
+| Sends @Upgrade: websocket@ over HTTP/1.1 | Classic RFC 6455 handshake, unchanged |
+| Sends Extended CONNECT over h2 | WebSocket rides an h2 stream (RFC 8441) |
+| Sends Extended CONNECT over h3 | WebSocket rides a QUIC request stream (RFC 9220) |
+| Negotiates h2 but does not use Extended CONNECT | Opens a separate HTTP/1.1 @wss://@ connection, as before |
+
+p(note). *Browser support is uneven.* Firefox uses Extended CONNECT for @new WebSocket()@ over h2; Chrome does not, and opens an HTTP/1.1 connection for @wss://@ instead. That fallback is preserved and needs no configuration, so enabling this costs nothing for clients that can't use it. Non-browser clients (and anything speaking h3) benefit immediately.
+
+Frame and message size on all three transports is capped by @play.netty.maxContentLength@, the same knob that bounds HTTP request bodies. Protocol extensions such as @permessage-deflate@ are negotiated only on the HTTP/1.1 path (@play.netty.ws.allowExtensions@); the Extended-CONNECT paths decline extensions.
+
 h3. <a name="quic-platforms">Native QUIC platform support</a>
 
 HTTP/3 ships native binaries for:
