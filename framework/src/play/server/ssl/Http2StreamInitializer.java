@@ -32,6 +32,10 @@ public class Http2StreamInitializer extends ChannelInitializer<Http2StreamChanne
     @Override
     protected void initChannel(Http2StreamChannel ch) {
         ch.pipeline()
+                // PF-157: ahead of the HTTP codec, because that codec destroys the pseudo-headers
+                // an RFC 8441 Extended CONNECT carries. Removes itself on the first frame of any
+                // ordinary request stream.
+                .addLast("h2-extended-connect", new Http2ExtendedConnectHandler())
                 .addLast("h2-codec", new Http2StreamFrameToHttpObjectCodec(true))
                 .addLast("h2-aggregator", new StreamChunkAggregator())
                 .addLast("h2-chunked-write", new ChunkedWriteHandler())

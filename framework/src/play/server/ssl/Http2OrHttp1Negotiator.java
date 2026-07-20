@@ -50,8 +50,14 @@ public class Http2OrHttp1Negotiator extends ApplicationProtocolNegotiationHandle
     @Override
     protected void configurePipeline(ChannelHandlerContext ctx, String protocol) throws Exception {
         if (ApplicationProtocolNames.HTTP_2.equals(protocol)) {
+            Http2FrameCodecBuilder codecBuilder = Http2FrameCodecBuilder.forServer();
+            // PF-157: advertise SETTINGS_ENABLE_CONNECT_PROTOCOL (0x8) so clients know they may
+            // bootstrap a WebSocket with Extended CONNECT (RFC 8441 §3). Mutated in place rather
+            // than assigned from a fresh Http2Settings so Netty's builder defaults
+            // (maxHeaderListSize, maxConcurrentStreams) survive.
+            codecBuilder.initialSettings().connectProtocolEnabled(true);
             ctx.pipeline()
-                    .addLast("h2-frame-codec", Http2FrameCodecBuilder.forServer().build())
+                    .addLast("h2-frame-codec", codecBuilder.build())
                     .addLast("h2-multiplex", new Http2MultiplexHandler(new Http2StreamInitializer()));
             return;
         }

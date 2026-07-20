@@ -1480,26 +1480,33 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
         return (secure ? "wss://" : "ws://") + (host != null ? host : "") + req.uri();
     }
 
-    private void websocketHandshake(final ChannelHandlerContext ctx, FullHttpRequest req) throws Exception {
-        // PF-66: derive the WebSocket frame/message cap from play.netty.maxContentLength so HTTP
-        // and WebSocket payload limits stay consistent. A {@code -1} (documented as "unlimited"
-        // for HTTP) maps to {@link Integer#MAX_VALUE} here — the previous code coerced negative
-        // values to a hard 65345 even when the operator clearly asked for no limit, which is
-        // contradictory between the two transports. A 0 or unparseable value falls back to the
-        // historical 65345 (Netty's default).
-        int maxFrame;
+    /**
+     * PF-66: derive the WebSocket frame/message cap from play.netty.maxContentLength so HTTP
+     * and WebSocket payload limits stay consistent. A {@code -1} (documented as "unlimited"
+     * for HTTP) maps to {@link Integer#MAX_VALUE} here — the previous code coerced negative
+     * values to a hard 65345 even when the operator clearly asked for no limit, which is
+     * contradictory between the two transports. A 0 or unparseable value falls back to the
+     * historical 65345 (Netty's default).
+     *
+     * <p>PF-156: extracted from {@link #websocketHandshake} so the Extended-CONNECT bootstrap
+     * ({@link ExtendedConnectWebSocketHandler}) sizes its frame decoder and aggregator from the
+     * same knob — a WebSocket must not have a different payload ceiling depending on whether it
+     * arrived over HTTP/1.1, h2 or h3.
+     */
+    static int maxWebSocketFrameSize() {
         try {
             int v = Integer.parseInt(Play.configuration.getProperty("play.netty.maxContentLength", "65345"));
             if (v < 0) {
-                maxFrame = Integer.MAX_VALUE;
-            } else if (v == 0) {
-                maxFrame = 65345;
-            } else {
-                maxFrame = v;
+                return Integer.MAX_VALUE;
             }
+            return v == 0 ? 65345 : v;
         } catch (NumberFormatException nfe) {
-            maxFrame = 65345;
+            return 65345;
         }
+    }
+
+    private void websocketHandshake(final ChannelHandlerContext ctx, FullHttpRequest req) throws Exception {
+        int maxFrame = maxWebSocketFrameSize();
 
         WebSocketServerHandshakerFactory wsFactory = new WebSocketServerHandshakerFactory(
                 getWebSocketLocation(ctx, req), null, allowWsExtensions(), maxFrame);
@@ -1546,11 +1553,32 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
         }
         ctx.channel().attr(WS_HANDSHAKER).set(handshaker);
 
+        startWebSocketSession(ctx, request, route, maxFrame);
+    }
+
+    /**
+     * Bind an established WebSocket to a controller action: install the frame aggregator, build
+     * the {@link Http.Inbound}/{@link Http.Outbound} pair, and hand the request to the Invoker.
+     *
+     * <p>PF-156: extracted from {@link #websocketHandshake} so the RFC 8441 / RFC 9220
+     * Extended-CONNECT path ({@link ExtendedConnectWebSocketHandler}) shares it verbatim.
+     * Everything protocol-specific — the handshake itself and the pipeline surgery that swaps
+     * the HTTP codec for a WebSocket frame codec — has already happened by the time this runs;
+     * from here down a WebSocket is a WebSocket regardless of how it was bootstrapped.
+     *
+     * <p>{@code ctx} must be the context of <em>this</em> handler in the pipeline, because the
+     * Outbound writes through it: writing from a context nearer the head would bypass the
+     * WebSocket frame encoder and put raw {@code TextWebSocketFrame} objects on the wire.
+     */
+    void startWebSocketSession(final ChannelHandlerContext ctx, Http.Request request,
+            Map<String, String> route, int maxFrame) {
         // PF-38: install Netty's frame aggregator immediately after the WS frame codec so the
         // controller receives reassembled Text/BinaryWebSocketFrames instead of an initial
         // fragment followed by silently-dropped ContinuationWebSocketFrames. maxFrame here caps
         // the *aggregated* message size; reuse the handshake max so a configured
         // play.netty.maxContentLength applies symmetrically to single and fragmented messages.
+        // The Extended-CONNECT path installs its own aggregator while rebuilding the pipeline,
+        // hence the null guard rather than an unconditional add.
         if (ctx.pipeline().get("ws-aggregator") == null) {
             ctx.pipeline().addBefore(ctx.name(), "ws-aggregator", new WebSocketFrameAggregator(maxFrame));
         }
@@ -1626,16 +1654,14 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
 
             // PF-39: emit a CloseWebSocketFrame with status 1000 (Normal Closure) before
             // closing the TCP connection. Without it, peers observe status 1006 (Abnormal
-            // Closure) and may trigger reconnect-on-error logic. Use the handshaker.close()
-            // helper so the framing is RFC 6455 compliant; fall back to a plain disconnect
-            // if the handshaker is missing (channel already torn down).
+            // Closure) and may trigger reconnect-on-error logic. Fall back to a plain
+            // disconnect if the channel is already torn down.
             void finalizeClose() {
                 outboundLock.lock();
                 try {
                     writeFutures.clear();
-                    WebSocketServerHandshaker hs = ctx.channel().attr(WS_HANDSHAKER).get();
-                    if (hs != null && ctx.channel().isOpen()) {
-                        hs.close(ctx.channel(), new CloseWebSocketFrame(WebSocketCloseStatus.NORMAL_CLOSURE));
+                    if (ctx.channel().isOpen()) {
+                        closeWebSocket(ctx, new CloseWebSocketFrame(WebSocketCloseStatus.NORMAL_CLOSURE));
                     } else {
                         ctx.channel().disconnect();
                     }
@@ -1662,15 +1688,30 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
         Invoker.invoke(new WebSocketInvocation(route, request, inbound, outbound, ctx));
     }
 
+    /**
+     * Write the closing handshake and tear the socket down.
+     *
+     * <p>On HTTP/1.1 the {@link WebSocketServerHandshaker} owns this: it writes the close frame
+     * and closes the TCP connection. PF-156: on the RFC 8441 / RFC 9220 Extended-CONNECT paths
+     * there is no handshaker at all — the key/accept exchange those classes exist to compute is
+     * not part of the h2/h3 bootstrap — so the frame is written directly and the <em>stream</em>
+     * is closed. Closing a stream sub-channel emits RST_STREAM and leaves the underlying h2
+     * connection (and its sibling streams) untouched, which is exactly the scope we want: the
+     * WebSocket is the stream, not the connection.
+     */
+    protected void closeWebSocket(ChannelHandlerContext ctx, CloseWebSocketFrame frame) {
+        WebSocketServerHandshaker handshaker = ctx.channel().attr(WS_HANDSHAKER).get();
+        if (handshaker != null) {
+            handshaker.close(ctx.channel(), frame);
+            return;
+        }
+        ctx.writeAndFlush(frame).addListener(ChannelFutureListener.CLOSE);
+    }
+
     private void websocketFrameReceived(ChannelHandlerContext ctx, WebSocketFrame frame) {
-        // Close: ack via handshaker (which writes the close response and closes the channel).
+        // Close: ack the closing handshake (writes the close response and closes the channel).
         if (frame instanceof CloseWebSocketFrame closeFrame) {
-            WebSocketServerHandshaker handshaker = ctx.channel().attr(WS_HANDSHAKER).get();
-            if (handshaker != null) {
-                handshaker.close(ctx.channel(), closeFrame.retain());
-            } else {
-                ctx.close();
-            }
+            closeWebSocket(ctx, closeFrame.retain());
             return;
         }
         // Ping: respond with pong carrying the same payload.
