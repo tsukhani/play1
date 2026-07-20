@@ -42,7 +42,9 @@ Your controller does not change. A @WebSocketController@ sees the same @inbound@
 | Sends Extended CONNECT over h3 | WebSocket rides a QUIC request stream (RFC 9220) |
 | Negotiates h2 but does not use Extended CONNECT | Opens a separate HTTP/1.1 @wss://@ connection, as before |
 
-p(note). *Browser support is uneven.* Firefox uses Extended CONNECT for @new WebSocket()@ over h2; Chrome does not, and opens an HTTP/1.1 connection for @wss://@ instead. That fallback is preserved and needs no configuration, so enabling this costs nothing for clients that can't use it. Non-browser clients (and anything speaking h3) benefit immediately.
+p(note). *Browsers only use Extended CONNECT on a connection they already have.* Chrome (since 91) and Firefox (since 65) use Extended CONNECT for @new WebSocket()@ over h2 — but only when an h2 connection to that origin is already open and advertised the setting. Neither opens a fresh h2 connection just to carry a WebSocket, so a @wss://@ call against a cold origin still goes out over HTTP/1.1. In practice this means the multiplexing kicks in when the page itself was served over h2, which is the common case. Safari has not shipped RFC 8441 and always uses the HTTP/1.1 @Upgrade@ handshake.
+
+p(note). *No browser ships RFC 9220 (WebSocket over h3) yet* — Chrome is at Intent to Prototype and Firefox has not announced an implementation. The h3 support here is for non-browser clients today, and for browsers when they catch up. Because the fallback chain is intact end to end, none of this needs configuring: clients take the best transport they support.
 
 Frame and message size on all three transports is capped by @play.netty.maxContentLength@, the same knob that bounds HTTP request bodies. Protocol extensions such as @permessage-deflate@ are negotiated only on the HTTP/1.1 path (@play.netty.ws.allowExtensions@); the Extended-CONNECT paths decline extensions.
 
