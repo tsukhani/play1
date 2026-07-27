@@ -86,7 +86,6 @@ Play について学ばなければならない全てです。
 ## "Web サービスクライアント":libs#WebServiceclient
 ## "Java を使った関数プログラミング":libs#FunctionalprogrammingwithJava
 ## "OAuth":libs#OAuth
-## "OpenID":libs#OpenID
 # "ジョブによる非同期処理":jobs
 ## "起動時に実行するジョブ":jobs#concepts
 ## "スケジューリングされたジョブ":jobs#scheduling

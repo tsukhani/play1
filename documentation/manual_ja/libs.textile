@@ -16,7 +16,6 @@ h1. Play ライブラリ
 * "MimeTypes":/@docs/api/play/libs/MimeTypes.html: MIME タイプの取扱い
 * "OAuth":/@docs/api/play/libs/OAuth.html: OAuth クライアントプロトコル
 * "OAuth2":/@docs/api/play/libs/OAuth2.html: OAuth2 クライアントプロトコル
-* "OpenID":/@docs/api/play/libs/OpenID.html: OpenID クライアントプロトコル
 * "Time":/@docs/api/play/libs/Time.html: 時間と期間のユーティリティ
 * "WS":/@docs/api/play/libs/WS.html: 強力な Web サービスクライアント
 * "XML":/@docs/api/play/libs/XML.html: XML 構造のロード
@@ -263,70 +262,6 @@ bc. WS.url(
 
 完全な使用例が @samples-and-tests/facebook-oauth2@ にあります。
 
-
-h2. OpenID
-
-"OpenID":http://openid.net/ オープンで分散した識別システムです。アプリケーションに特化したユーザ情報を保持することなしに、容易に新しいユーザを受け入れることができます。ユーザの **OpenID** を通して認証されたユーザを追跡し続けなければならないだけです。
-
-この例では、Play アプリケーションにおいて OpenID 認証がどのように使用されるかを高いレベルで見ることができます:
-
-* あらゆるリクエストにおいて、ユーザが接続されているか確認する
-* もしユーザが接続されていなければ、ユーザが OpenID を投稿することのできるページを表示する
-* ユーザを OpenID プロバイダにリダイレクトする
-* ユーザが戻ってきたら、検証された OpenID を取得して HTTP セッションに保存する
-
-OpenID の機能は @play.libs.OpenID@ クラスとして提供されています。
-
-bc. @Before(unless={"login", "authenticate"})
-static void checkAuthenticated() {
-    if(!session.contains("user")) {
-        login();
-    }
-}
- 
-public static void index() {
-    render("Hello %s!", session.get("user"));
-}
-     
-public static void login() {
-    render();
-}
-    
-public static void authenticate(String user) {
-    if(OpenID.isAuthenticationResponse()) {
-        UserInfo verifiedUser = OpenID.getVerifiedID();
-        if(verifiedUser == null) {
-            flash.error("Oops. Authentication has failed");
-            login();
-        } 
-        session.put("user", verifiedUser.id);
-        index();
-    } else {
-        if(!OpenID.id(user).verify()) { // will redirect the user
-            flash.error("Cannot verify your OpenID");
-            login();
-        } 
-    }
-}
-
-そして、以下が @login.html@ テンプレートです:
-
-bc. #{if flash.error}
-<h1>${flash.error}</h1>
-#{/if}
- 
-<form action="@{Application.authenticate()}" method="POST">
-    <label for="user">What’s your OpenID?</label>
-    <input type="text" name="user" id="user" />
-    <input type="submit" value="login..." />
-</form>
-</code>
-
-最後に、 @routes@ の定義は以下のようになります:
-
-bc. GET   /                     Application.index
-GET   /login                Application.login
-*     /authenticate         Application.authenticate
 
 p(note). **考察を続けます**
  

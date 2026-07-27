@@ -111,7 +111,6 @@ The Play framework was initially inspired by our own Java applications. It has a
 * object-relational mapping using Hibernate (with the JPA API).
 * integrated cache support, with easy use of the distributed memcached system if needed.
 * straightforward web services consumption either in JSON or XML (we are talking *real* web services here; not the SOAP stuff).
-* OpenID support for distributed authentication.
 * your web application ready to be deployed anywhere (application server, Google App Engine, Cloud, etc…)
 * image manipulation API.
 

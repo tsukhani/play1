@@ -111,7 +111,6 @@ Play framework は我々自身の Java アプリケーションから閃きを�
 * (JPA API と共に) Hibernate を利用したオブジェクト-リレーショナルマッピング
 * 必要に応じて分散 memchashed システムを簡単に使える組み込みキャッシュサポート
 * JSON または XML による簡単な web サービス利用 (SOAP のようなガラクタではない、 *本当* の web サービスの話です)
-* 分散認証のための OpenID サポート
 * どこ (アプリケーションサーバ, Google App Engine, Cloud, その他...) にでもデプロイできる web アプリケーション
 * イメージ操作 API
 

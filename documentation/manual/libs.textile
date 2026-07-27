@@ -15,7 +15,6 @@ Most of these libraries are simple helpers that are really straightforward to us
 * "Mail":/@docs/api/play/libs/Mail.html: E-mail functions.
 * "MimeTypes":/@docs/api/play/libs/MimeTypes.html: Dealing with MIME types.
 * "OAuth2":/@docs/api/play/libs/OAuth2.html: OAuth 2.0 client protocol.
-* "OpenID":/@docs/api/play/libs/OpenID.html: OpenID client protocol.
 * "Time":/@docs/api/play/libs/Time.html: Time and duration utilities.
 * "WS":/@docs/api/play/libs/WS.html: Powerful Web Service client.
 * "XML":/@docs/api/play/libs/XML.html: Loading XML structures.
@@ -211,70 +210,6 @@ bc. WS.url(
 
 For a working OAuth2 flow, wire @WS@ calls into a controller action: @retrieveVerificationCode()@ in the auth-start action, @retrieveAccessToken()@ in the redirect-back action, then call the resource API with the token.
 
-
-h2. OpenID
-
-"OpenID":http://openid.net/ is an open and decentralized identity system. You can easily accept new users in your application without having to keep specific user information. You just have to keep track of authorized users through their **OpenID**.
-
-This example provides a high-level view of how OpenID authentication can be used within a Play application:
-
-* For each request, check if the user is connected
-* If not, display a page where the user can submit his OpenID
-* Redirect the user to the OpenID provider
-* When the user comes back, get the verified OpenID and save it in the HTTP session.
-
-The OpenID functionality is provided by the @play.libs.OpenID@ class.
-
-bc. @Before(unless={"login", "authenticate"})
-static void checkAuthenticated() {
-    if(!session.contains("user")) {
-        login();
-    }
-}
- 
-public static void index() {
-    render("Hello %s!", session.get("user"));
-}
-     
-public static void login() {
-    render();
-}
-    
-public static void authenticate(String user) {
-    if(OpenID.isAuthenticationResponse()) {
-        UserInfo verifiedUser = OpenID.getVerifiedID();
-        if(verifiedUser == null) {
-            flash.error("Oops. Authentication has failed");
-            login();
-        } 
-        session.put("user", verifiedUser.id);
-        index();
-    } else {
-        if(!OpenID.id(user).verify()) { // will redirect the user
-            flash.error("Cannot verify your OpenID");
-            login();
-        } 
-    }
-}
-
-And the @login.html@ template:
-
-bc. #{if flash.error}
-<h1>${flash.error}</h1>
-#{/if}
- 
-<form action="@{Application.authenticate()}" method="POST">
-    <label for="user">What’s your OpenID?</label>
-    <input type="text" name="user" id="user" />
-    <input type="submit" value="login…" />
-</form>
-</code>
-
-And finally the @routes@ definitions:
-
-bc. GET   /                     Application.index
-GET   /login                Application.login
-*     /authenticate         Application.authenticate
 
 p(note). **Continuing the discussion**
  

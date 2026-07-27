@@ -91,7 +91,6 @@ Everything you need to know about Play.
 ## "Web Service client":libs#WebServiceclient
 ## "Functional programming with Java":libs#FunctionalprogrammingwithJava
 ## "OAuth":libs#OAuth
-## "OpenID":libs#OpenID
 # "Asynchronous Jobs":jobs
 ## "Bootstrap jobs":jobs#concepts
 ## "Scheduled jobs":jobs#scheduling
