@@ -25,6 +25,16 @@ public class PlayDocumentation extends Controller {
     Http.Header header = request.headers.get("accept-language");
     String docLang = header != null ? header.value().split(",")[0] : "";
     docLang = docLang.length() > 2 ? docLang.substring(0, 2) : docLang;
+    // PF-163: the call below is enhanced into a redirect, and reverse routing picks whichever
+    // route can bind the args given. An empty docLang produces the single-segment /@docs/home,
+    // which onRoutesLoaded maps straight back to index() — an infinite redirect loop for any
+    // client that sends no accept-language header (curl, health checks, crawlers). Browsers
+    // always send one and land on the two-segment /@docs/{docLang}/home, which is why this went
+    // unnoticed. Defaulting to "en" keeps a language segment in the redirect; page() treats
+    // "en" as the untranslated manual/ directory, so the rendered page is unchanged.
+    if (docLang.isEmpty()) {
+      docLang = "en";
+    }
     page("home", null, docLang);
   }
 
