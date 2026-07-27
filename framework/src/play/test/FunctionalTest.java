@@ -45,6 +45,8 @@ public abstract class FunctionalTest extends BaseTest {
     public static final String APPLICATION_X_WWW_FORM_URLENCODED = "application/x-www-form-urlencoded";
     public static final String MULTIPART_FORM_DATA = "multipart/form-data";
 
+    private static final int REQUEST_TIMEOUT_SECONDS = 30;
+
     private static Map<String, Http.Cookie> savedCookies; // cookies stored
                                                           // between calls
 
@@ -287,6 +289,13 @@ public abstract class FunctionalTest extends BaseTest {
     }
 
     public static void makeRequest(final Request request, final Response response) {
+        String blockedBy = TestEngine.blockedBy();
+        if (blockedBy != null) {
+            throw new IllegalStateException("Cannot run " + describe(request) + ": the functional-test executor is"
+                    + " still occupied by " + blockedBy + ", which never completed. Fix that request first -"
+                    + " every request after it fails here rather than waiting " + REQUEST_TIMEOUT_SECONDS
+                    + " seconds to report a symptom of it.");
+        }
         final CountDownLatch actionCompleted = new CountDownLatch(1);
         final Future<?> invocationResult = TestEngine.functionalTestsExecutor.submit(new Invoker.Invocation() {
 
@@ -334,8 +343,14 @@ public abstract class FunctionalTest extends BaseTest {
             // We can not simply wait on the future result because of how continuations
             // are implemented. Only when the latch is counted down the action is really
             // completed. Therefore, wait on the latch.
-            if (!actionCompleted.await(30, TimeUnit.SECONDS)) {
-                throw new TimeoutException("Request did not complete in time");
+            if (!actionCompleted.await(REQUEST_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                // The invocation is not cancelled - see TestEngine.abandonInvocation - so it keeps
+                // the executor's only thread. Record it, so the requests behind it fail immediately
+                // naming this one instead of each timing out on their own.
+                TestEngine.abandonInvocation(describe(request), invocationResult);
+                throw new TimeoutException(describe(request) + " did not complete within " + REQUEST_TIMEOUT_SECONDS
+                        + " seconds. It still holds the functional-test thread, so the requests after it will fail"
+                        + " immediately.");
             }
         } catch (Exception ex) {
             throw new RuntimeException(ex);
@@ -378,6 +393,10 @@ public abstract class FunctionalTest extends BaseTest {
         } catch (Exception ex) {
             throw new RuntimeException(ex);
         }
+    }
+
+    private static String describe(Request request) {
+        return request.method + " " + request.url;
     }
 
     /**

@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.ListIterator;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import play.utils.VirtualThreadFactory;
 
@@ -49,6 +50,37 @@ public class TestEngine {
     // semantic comes from newSingleThreadExecutor's queue, not from the carrier kind.
     public static final ExecutorService functionalTestsExecutor =
             Executors.newSingleThreadExecutor(new VirtualThreadFactory("functional-test"));
+
+    private record AbandonedInvocation(String request, Future<?> future) {}
+
+    private static volatile AbandonedInvocation abandonedInvocation;
+
+    /**
+     * Records an invocation that {@link FunctionalTest#makeRequest} gave up waiting for. It is
+     * deliberately not cancelled: interrupting it mid-flight would leave the shared static
+     * request/response/render state corrupt for every following test. It therefore keeps the
+     * executor's only thread, and everything queued behind it would time out in turn.
+     */
+    static void abandonInvocation(String request, Future<?> future) {
+        abandonedInvocation = new AbandonedInvocation(request, future);
+    }
+
+    /**
+     * @return a description of the abandoned invocation still holding the executor thread, or
+     *         {@code null} when the executor is usable. An abandoned invocation that has since
+     *         finished has released the thread, so it stops blocking further requests.
+     */
+    static String blockedBy() {
+        AbandonedInvocation abandoned = abandonedInvocation;
+        if (abandoned == null) {
+            return null;
+        }
+        if (abandoned.future().isDone()) {
+            abandonedInvocation = null;
+            return null;
+        }
+        return abandoned.request();
+    }
 
     public static List<Class> allUnitTests() {
         List<Class> classes = new ArrayList<>();
