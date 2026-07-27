@@ -61,8 +61,14 @@ require:    &allDependencies
     - org.apache.logging.log4j -> log4j-layout-template-json 2.26.1
     - net.sf.oval -> oval 4.0.0
     - org.apache.ivy -> ivy 2.5.3
-    - org.bouncycastle -> bcprov-jdk18on 1.84
-    - org.bouncycastle -> bcpkix-jdk18on 1.84
+    - org.bouncycastle -> bcprov-jdk18on 1.85
+    - org.bouncycastle -> bcpkix-jdk18on 1.85
+    # bcutil is a bcpkix runtime transitive; transitiveDependencies: false means
+    # it must be listed explicitly. Not needed through 1.84, but 1.85 reaches
+    # org.bouncycastle.asn1.misc.MiscObjectIdentifiers (which lives here, not in
+    # bcprov/bcpkix) while building an SslContext — without it the failure is a
+    # NoClassDefFoundError from SslHttpServerPipelineFactoryAlpnTest.
+    - org.bouncycastle -> bcutil-jdk18on 1.85
     - org.codehaus.groovy -> groovy 3.0.25
     - org.codehaus.groovy -> groovy-xml 3.0.25
     - org.eclipse.jdt -> org.eclipse.jdt.core 3.46.0
