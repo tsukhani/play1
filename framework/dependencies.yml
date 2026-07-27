@@ -32,7 +32,7 @@ require:    &allDependencies
     - com.h2database -> h2 2.4.240
     - jakarta.activation -> jakarta.activation-api 2.1.4
     - com.sun.mail -> jakarta.mail 2.0.2
-    - jakarta.inject -> jakarta.inject-api 2.0.1
+    - jakarta.inject -> jakarta.inject-api 2.0.1.MR
     - jakarta.validation -> jakarta.validation-api 3.1.1
     - jaxen 2.0.6
     # PF-63: javax.cache (JSR-107) API. Used at runtime by hibernate-jcache;
