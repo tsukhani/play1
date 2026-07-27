@@ -56,9 +56,9 @@ require:    &allDependencies
     - org.opentest4j -> opentest4j 1.3.0
     - org.apiguardian -> apiguardian-api 1.1.2
     - jregex 1.2_01
-    - org.apache.logging.log4j -> log4j-api 2.26.0
-    - org.apache.logging.log4j -> log4j-core 2.26.0
-    - org.apache.logging.log4j -> log4j-layout-template-json 2.26.0
+    - org.apache.logging.log4j -> log4j-api 2.26.1
+    - org.apache.logging.log4j -> log4j-core 2.26.1
+    - org.apache.logging.log4j -> log4j-layout-template-json 2.26.1
     - net.sf.oval -> oval 4.0.0
     - org.apache.ivy -> ivy 2.5.3
     - org.bouncycastle -> bcprov-jdk18on 1.84
@@ -170,7 +170,7 @@ require:    &allDependencies
     - com.aayushatharva.brotli4j -> native-windows-x86_64 1.23.0
     - org.postgresql -> postgresql 42.7.11
     - org.slf4j -> slf4j-api 2.0.18
-    - org.apache.logging.log4j -> log4j-slf4j2-impl 2.26.0
+    - org.apache.logging.log4j -> log4j-slf4j2-impl 2.26.1
     - org.yaml -> snakeyaml 2.6
     # PF-26: Jackson XML replaces XStream for renderXml(Object). Jackson 2.12+
     # requires a non-default Stax provider, so woodstox-core + stax2-api are
