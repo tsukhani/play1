@@ -1,5 +1,5 @@
 {
-  // Renovate configuration for the Play 1.12 fork.
+  // Renovate configuration for the Play 1.13 fork.
   // Schema: https://docs.renovatebot.com/renovate-schema.json
   //
   // Renovate is the sole dependency-update bot for this repo. It covers:
@@ -41,10 +41,24 @@
   ],
 
   // Off-hours scheduling. Bound PR noise without delaying urgent CVE bumps.
+  // Split into separate entries rather than the compound
+  // "after 10pm and before 5am every weekday" — Renovate migrates that form
+  // to exactly this. Entries are OR'd, so the window is 22:00-24:00 and
+  // 00:00-05:00 on weekdays, plus all weekend.
   schedule: [
-    "after 10pm and before 5am every weekday",
+    "after 10pm every weekday",
+    "before 5am every weekday",
     "every weekend"
   ],
+
+  // REQUIRED: tsukhani/play1 is a fork of playframework/play1, and Renovate
+  // skips forks by default — including forks that have a config file, because
+  // it can't tell whether the file came from upstream. Mend only flips this on
+  // automatically when the app is installed with "Selected repositories"; an
+  // "All repositories" install leaves it disabled and this repo is silently
+  // never processed. Setting it explicitly makes activation independent of how
+  // the app happens to be installed.
+  forkProcessing: "enabled",
 
   // Single dashboard issue summarises every pending update — easier to
   // review than scrolling the PR list.
@@ -62,7 +76,9 @@
   customManagers: [
     {
       customType: "regex",
-      fileMatch: ["^framework/dependencies\\.yml$"],
+      // Renamed from `fileMatch` in Renovate 40. A regex (rather than a glob)
+      // has to be wrapped in slashes here.
+      managerFilePatterns: ["/^framework/dependencies\\.yml$/"],
       matchStrings: [
         "-\\s+(?<groupId>[a-zA-Z0-9_.\\-]+)\\s+->\\s+(?<artifactId>[a-zA-Z0-9_.\\-]+)\\s+(?<currentValue>[0-9][\\w.\\-]+)"
       ],
@@ -76,61 +92,59 @@
     // lockstep. Saves merge churn AND avoids version-skew CVEs that
     // happen when (e.g.) netty-codec-http and netty-handler diverge.
     {
-      matchPackagePrefixes: ["io.netty:"],
+      matchPackageNames: ["io.netty:**"],
       groupName: "Netty"
     },
     {
-      matchPackagePrefixes: ["io.micrometer:"],
+      matchPackageNames: ["io.micrometer:**"],
       groupName: "Micrometer"
     },
     {
-      matchPackagePrefixes: ["io.swagger.core.v3:"],
+      matchPackageNames: ["io.swagger.core.v3:**"],
       groupName: "Swagger / OpenAPI"
     },
     {
-      matchPackagePrefixes: ["com.fasterxml.jackson"],
+      matchPackageNames: ["com.fasterxml.jackson**"],
       groupName: "Jackson"
     },
     {
-      matchPackagePrefixes: [
-        "org.hibernate.orm:",
-        "org.hibernate.models:",
-        "org.hibernate.validator:"
+      matchPackageNames: [
+        "org.hibernate.orm:**",
+        "org.hibernate.models:**",
+        "org.hibernate.validator:**"
       ],
       groupName: "Hibernate"
     },
     {
-      matchPackagePrefixes: ["org.apache.logging.log4j:"],
+      matchPackageNames: ["org.apache.logging.log4j:**"],
       groupName: "Log4j"
     },
     {
-      matchPackagePrefixes: ["io.prometheus:"],
+      matchPackageNames: ["io.prometheus:**"],
       groupName: "Prometheus client_java"
     },
     {
-      matchPackagePrefixes: ["org.junit."],
+      matchPackageNames: ["org.junit.**"],
       groupName: "JUnit"
     },
     {
-      matchPackagePrefixes: ["org.bouncycastle:"],
+      matchPackageNames: ["org.bouncycastle:**"],
       groupName: "Bouncy Castle"
     },
     {
-      matchPackagePrefixes: ["jakarta."],
+      matchPackageNames: ["jakarta.**"],
       groupName: "Jakarta APIs"
     },
     {
-      matchPackagePrefixes: ["org.eclipse.jdt:"],
+      matchPackageNames: ["org.eclipse.jdt:**"],
       groupName: "Eclipse JDT"
     },
     {
-      matchPackagePrefixes: [
-        "com.aayushatharva.brotli4j:"
-      ],
+      matchPackageNames: ["com.aayushatharva.brotli4j:**"],
       groupName: "brotli4j (multi-platform native)"
     },
     {
-      matchPackagePrefixes: ["org.codehaus.groovy:"],
+      matchPackageNames: ["org.codehaus.groovy:**"],
       groupName: "Groovy"
     },
     {
