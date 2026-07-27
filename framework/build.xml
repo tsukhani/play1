@@ -29,6 +29,20 @@
         </fileset>
     </path>
 
+    <!-- PF-164: the integration fixture mounts the docviewer module (see
+         test-src/integration/testapp/modules/docviewer) so /@docs routing is covered by
+         DocViewerFunctionalTest. Play.addModule puts a module's app/ on javaPath but does
+         NOT put its lib/ jars on the classpath — that is the launcher's job — so
+         play-docviewer.jar has to be added here explicitly. Without it the runtime-compiled
+         controllers fail on play.modules.docviewer.DocumentationGenerator. Kept separate
+         from classpath.test so plain unit tests can't accidentally depend on module classes. -->
+    <path id="classpath.integration">
+        <path refid="classpath.test" />
+        <fileset dir="../modules/docviewer/lib" erroronmissingdir="false">
+            <include name="*.jar"/>
+        </fileset>
+    </path>
+
     <target name="clean" description="clean resources">
         <delete dir="classes" />
         <delete dir="dist" />
@@ -198,10 +212,13 @@
         </copy>
     </target>
 
-    <target name="integration-test" depends="compile-tests,version">
+    <!-- PF-164: depends on `modules` so ../modules/docviewer/lib/play-docviewer.jar exists
+         before classpath.integration is resolved — the fixture mounts docviewer, and a bare
+         `ant integration-test` from a clean tree would otherwise boot without it. -->
+    <target name="integration-test" depends="compile-tests,version,modules">
         <mkdir dir="tests-results" />
         <junitlauncher haltonfailure="false" failureproperty="integration.failure" printSummary="true">
-            <classpath refid="classpath.test" />
+            <classpath refid="classpath.integration" />
             <testclasses>
                 <fileset dir="test-classes" includes="integration/*Test.class" />
                 <fork>
@@ -219,7 +236,7 @@
             </testclasses>
             <classpath>
                 <pathelement location="test-classes"/>
-                <path refid="classpath.test"/>
+                <path refid="classpath.integration"/>
             </classpath>
             <listener type="legacy-plain" sendSysOut="true" sendSysErr="true" outputdir="tests-results" />
         </junitlauncher>

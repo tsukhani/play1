@@ -36,9 +36,32 @@
         </javac>
     </target>
 
-    <!-- No-op: docviewer has no JUnit tests. The framework's `module-unittest`
-         target invokes this on every module; modules without tests just stay
-         silent here. Add a real implementation if/when docviewer grows tests. -->
-    <target name="unittest" />
+    <!-- PF-164: runs docviewer's JUnit tests; invoked by the framework's `module-unittest`.
+         Scope is src/ only — that is all this build compiles. app/ (controllers, helpers,
+         DocViewerPlugin) is compiled at runtime by ApplicationClassloader when the module is
+         mounted, so it is unreachable from a JUnit sourceset; /@docs routing is covered by the
+         framework's integration.DocViewerFunctionalTest instead, which mounts docviewer into
+         the integration fixture. See PF-163 for the bug that split was introduced to catch. -->
+    <target name="unittest" depends="build">
+        <mkdir dir="tmp/test-classes" />
+        <javac srcdir="test" destdir="tmp/test-classes" debug="true" release="${build-release}" includeantruntime="false">
+            <classpath>
+                <path refid="project.classpath" />
+                <fileset dir="lib" includes="*.jar" />
+            </classpath>
+        </javac>
+        <junitlauncher haltonfailure="true" printSummary="true">
+            <testclasses>
+                <fileset dir="tmp/test-classes" includes="**/*Test.class" />
+                <fork />
+            </testclasses>
+            <classpath>
+                <pathelement location="tmp/test-classes" />
+                <path refid="project.classpath" />
+                <fileset dir="lib" includes="*.jar" />
+            </classpath>
+        </junitlauncher>
+        <delete dir="tmp" />
+    </target>
 
 </project>
