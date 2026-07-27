@@ -18,7 +18,7 @@ dependencies {
     // the plugin-under-test metadata, so withPluginClasspath() injects the
     // plugin with no manual classpath wiring (PF-139).
     testImplementation(gradleTestKit())
-    testImplementation("org.junit.jupiter:junit-jupiter:6.1.0")
+    testImplementation("org.junit.jupiter:junit-jupiter:6.1.2")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
