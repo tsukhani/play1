@@ -74,6 +74,18 @@ Project setup:
                                  --dest=<path> (override destination directory)
   secret               Generate a new application secret
 
+Nuxt frontend (apps scaffolded with --frontend):
+  The frontend is a separate process — `cd frontend && pnpm dev` (port 3000) —
+  which proxies /api/** to the backend. It resolves the backend port as:
+    1. PLAY_BACKEND_PORT=<port> pnpm dev
+                       Use this alongside `play run --http.port=<port>`. A CLI
+                       port override never touches conf/application.conf, so the
+                       frontend has no other way to learn about it.
+    2. http.port=<port> in conf/application.conf
+                       Set it there instead and both halves agree on their own,
+                       with no env var and no flag on either command.
+    3. 9000            Play's default, when neither of the above is set.
+
 Information:
   classpath            Print the resolved runtime classpath
   modules              List installed modules
