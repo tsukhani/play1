@@ -26,7 +26,7 @@ import play.mvc.Router;
  * (RFC 9220) request stream via Extended CONNECT. Subclasses supply the protocol-specific
  * frame types; everything from route resolution down is common.
  *
- * <h3>Why none of Netty's WebSocket handshake machinery applies</h3>
+ * <h2>Why none of Netty's WebSocket handshake machinery applies</h2>
  *
  * RFC 8441 §5.1 deliberately drops the {@code Sec-WebSocket-Key}/{@code Sec-WebSocket-Accept}
  * exchange: h2's stream framing already provides the intermediary-confusion protection that the
@@ -35,7 +35,7 @@ import play.mvc.Router;
  * <em>codec</em> ({@link WebSocket13FrameDecoder} / {@link WebSocket13FrameEncoder}) is reused,
  * driven over the stream's DATA frames by the bridge {@link #newDataFrameBridge()} supplies.
  *
- * <h3>Why this sits at the head of the stream pipeline</h3>
+ * <h2>Why this sits at the head of the stream pipeline</h2>
  *
  * The existing h2/h3 stream chains begin with a frame-to-{@code HttpObject} codec, and that
  * conversion destroys exactly the information Extended CONNECT carries. Netty's
@@ -45,7 +45,7 @@ import play.mvc.Router;
  * reached {@link PlayHandler} through that codec would have no path left to route on. So the
  * detection has to happen above it, on the raw frames.
  *
- * <h3>Pipeline surgery</h3>
+ * <h2>Pipeline surgery</h2>
  *
  * On a match the HTTP chain named by the constructor is removed and replaced, between this
  * handler and the tail {@link PlayHandler}, with:
