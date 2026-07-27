@@ -221,16 +221,16 @@ require:    &allDependencies
     # the 4.35.x runtime is compatible with that gencode (runtime >= gencode, same
     # major). transitiveDependencies is off, so this explicit pin governs.
     - com.google.protobuf -> protobuf-java 4.35.1
-    - io.prometheus -> prometheus-metrics-core 1.7.0
-    - io.prometheus -> prometheus-metrics-model 1.7.0
-    - io.prometheus -> prometheus-metrics-config 1.7.0
-    - io.prometheus -> prometheus-metrics-tracer-common 1.7.0
-    - io.prometheus -> prometheus-metrics-tracer-initializer 1.7.0
-    - io.prometheus -> prometheus-metrics-exposition-formats 1.7.0
+    - io.prometheus -> prometheus-metrics-core 1.8.0
+    - io.prometheus -> prometheus-metrics-model 1.8.0
+    - io.prometheus -> prometheus-metrics-config 1.8.0
+    - io.prometheus -> prometheus-metrics-tracer-common 1.8.0
+    - io.prometheus -> prometheus-metrics-tracer-initializer 1.8.0
+    - io.prometheus -> prometheus-metrics-exposition-formats 1.8.0
     # prometheus-metrics 1.3.x shades protobuf into exposition-formats itself, so the
     # standalone prometheus-metrics-shaded-protobuf artifact is gone; exposition-formats
     # now pulls the split-out exposition-textformats (text/OpenMetrics writer).
-    - io.prometheus -> prometheus-metrics-exposition-textformats 1.7.0
+    - io.prometheus -> prometheus-metrics-exposition-textformats 1.8.0
     - org.hdrhistogram -> HdrHistogram 2.2.2
     - org.latencyutils -> LatencyUtils 2.0.3
     # PF-104: OkHttp 5 replaces java.net.http.HttpClient as the WSAsync transport.
