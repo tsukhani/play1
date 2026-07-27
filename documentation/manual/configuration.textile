@@ -886,6 +886,19 @@ There are two ways to send the e-mail over an encrypted channel, which you can c
 Default: @clear@
 
 
+h3(#mail.smtp.ssl.cavalidation). mail.smtp.ssl.cavalidation
+
+Whether to verify the SMTP server's certificate when "mail.smtp.channel":#mail.smtp.channel is @ssl@. When enabled, the certificate chain must be trusted **and** must match the host being dialled.
+
+Set this to @false@ only for a server presenting a self-signed or internal-CA certificate. Doing so accepts *any* certificate, which means anyone able to intercept the connection can read the message and the SMTP AUTH credentials sent after the handshake. Play logs a warning at startup whenever it is disabled.
+
+bc. mail.smtp.ssl.cavalidation=false
+
+Default: @true@
+
+p(note). Play 1.13.48 and earlier never verified the certificate on the @ssl@ channel. If you upgrade and mail stops sending, your server's certificate is not trusted by the JVM — install it in the truststore rather than reaching for this property.
+
+
 h3(#mail.smtp.host). mail.smtp.host
 
 Outgoing mail server. For example:

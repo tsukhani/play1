@@ -128,12 +128,27 @@ public class Mail {
             if ("clear".equals(channelEncryption)) {
                 props.put("mail.smtp.port", "25");
             } else if ("ssl".equals(channelEncryption)) {
-                // port 465 + setup yes ssl socket factory (won't verify that the server certificate is signed with a
-                // root ca.)
+                // Implicit TLS on 465. This used to install YesSSLSocketFactory unconditionally,
+                // which trusts *any* certificate — so choosing the secure-looking channel silently
+                // disabled verification, leaving the message and the SMTP AUTH credentials that
+                // follow the handshake readable by anyone on the path. Verification is now the
+                // default and has to be switched off deliberately.
                 props.put("mail.smtp.port", "465");
-                props.put("mail.smtp.socketFactory.port", "465");
-                props.put("mail.smtp.socketFactory.class", "play.utils.YesSSLSocketFactory");
-                props.put("mail.smtp.socketFactory.fallback", "false");
+                boolean caValidation = Boolean
+                        .parseBoolean(Play.configuration.getProperty("mail.smtp.ssl.cavalidation", "true"));
+                if (caValidation) {
+                    props.put("mail.smtp.ssl.enable", "true");
+                    // jakarta.mail 2.0.x defaults this to false, which would check that the chain
+                    // is trusted but not that the certificate belongs to the host we dialled.
+                    props.put("mail.smtp.ssl.checkserveridentity", "true");
+                } else {
+                    Logger.warn("mail.smtp.ssl.cavalidation=false: SMTP server certificates are NOT verified."
+                            + " The connection to %s can be intercepted, including the SMTP AUTH credentials.",
+                            Play.configuration.getProperty("mail.smtp.host", "localhost"));
+                    props.put("mail.smtp.socketFactory.port", "465");
+                    props.put("mail.smtp.socketFactory.class", "play.utils.YesSSLSocketFactory");
+                    props.put("mail.smtp.socketFactory.fallback", "false");
+                }
             } else if ("starttls".equals(channelEncryption)) {
                 // port 25 + enable starttls + ssl socket factory
                 props.put("mail.smtp.port", "25");
