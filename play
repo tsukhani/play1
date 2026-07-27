@@ -230,12 +230,19 @@ case "$CMD" in
         exit 0
         ;;
     new)
-        APP_NAME="${1:-}"
-        if [ -z "$APP_NAME" ]; then
-            echo "play new: missing application name." >&2
-            echo "Usage: play new <name> [--frontend] [--dest=<path>]" >&2
-            exit 1
-        fi
+        # A flag in the name position (`play new --frontend`) means the name was
+        # omitted, not that the app is called "--frontend". Reject anything
+        # starting with `-` here: the option loop below only runs after the name
+        # has been consumed, so without this the flag is taken as the name and we
+        # cheerfully scaffold a directory called "--frontend".
+        case "${1:-}" in
+            '' | -*)
+                echo "play new: missing application name." >&2
+                echo "Usage: play new <name> [--frontend] [--dest=<path>]" >&2
+                exit 1
+                ;;
+        esac
+        APP_NAME="$1"
         shift
         # Default destination: $PWD/$APP_NAME (the user's current working dir).
         # --dest=<path> overrides this. The user's CWD is captured *before* we
