@@ -86,11 +86,20 @@
         	  <tag name="todo" scope="all" description="To do:"/>
             <group title="Libs" packages="play.libs.*"/>
             <arg value="-Xdoclint:all,-missing"/>
-            <link offline="false" href="https://docs.oracle.com/en/java/javase/21/docs/api/" />
-            <!-- offline=true: javadoc.io is unreliable (intermittent Cloudflare 521); use local package-list, keep href live for reader clicks. -->
+            <!-- Every link is offline=true: an offline=false link makes javadoc fetch the
+                 remote element-list at build time, so `ant package` succeeds or fails on a
+                 third party's uptime. That is how the Hibernate link broke (Cloudflare 525),
+                 and the commons-fileupload one before it (521). The href stays live so links
+                 in the generated docs still resolve for readers; only the build-time fetch
+                 goes away. Refresh a list with:
+                   curl -L -o javadoc-package-lists/<dir>/element-list <href>element-list -->
+            <link offline="true" href="https://docs.oracle.com/en/java/javase/25/docs/api/" packagelistLoc="javadoc-package-lists/jdk-25" />
             <link offline="true" href="https://javadoc.io/doc/commons-fileupload/commons-fileupload/1.6.0/" packagelistLoc="javadoc-package-lists/commons-fileupload-1.6.0" />
-<link offline="false" href="https://docs.hibernate.org/orm/4.2/javadocs/" />
-            <link offline="false" href="https://www.mchange.com/projects/c3p0/apidocs/" />
+            <!-- No Hibernate link. It was pinned to 4.2 while the fork shipped 7.4.5 and nobody
+                 noticed, because no play.* signature exposes a Hibernate type — it produced zero
+                 cross-links either way. Re-add (offline, with a vendored element-list) only if
+                 some public API starts returning one. The c3p0 link was dropped outright: c3p0
+                 has not been a dependency since the move to HikariCP. -->
         </javadoc>
     </target>
 
