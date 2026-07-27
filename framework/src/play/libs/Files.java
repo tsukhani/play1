@@ -125,18 +125,24 @@ public class Files {
 
     public static void unzip(File from, File to) {
         try {
-            String outDir = to.getCanonicalPath();
+            // Compare as Paths, not as strings. A String.startsWith on the canonical path
+            // also accepts a *sibling* whose name merely shares the prefix — "/out/x" vs
+            // "/outEVIL/x" — so an entry named "../<outdir-name>EVIL/x" escapes `to` while
+            // passing the guard. Path.startsWith compares whole name elements instead.
+            Path outDir = to.getCanonicalFile().toPath();
             try (ZipFile zipFile = new ZipFile(from)) {
                 Enumeration<? extends ZipEntry> entries = zipFile.entries();
                 while (entries.hasMoreElements()) {
                     ZipEntry entry = entries.nextElement();
-                    if (entry.isDirectory()) {
-                        new File(to, entry.getName()).mkdir();
-                        continue;
-                    }
+                    // Checked before the isDirectory branch: a traversing *directory* entry
+                    // was previously mkdir'd with no containment check at all.
                     File f = new File(to, entry.getName());
-                    if (!f.getCanonicalPath().startsWith(outDir)) {
+                    if (!f.getCanonicalFile().toPath().startsWith(outDir)) {
                         throw new IOException("Corrupted zip file");
+                    }
+                    if (entry.isDirectory()) {
+                        f.mkdir();
+                        continue;
                     }
                     f.getParentFile().mkdirs();
                     copyInputStreamToFile(zipFile.getInputStream(entry), f);

@@ -29,7 +29,13 @@ public class FileUpload implements Upload {
             defaultFile = new File(tmp, FilenameUtils.getName(fileItem.getFieldName()) + File.separator
                     + FilenameUtils.getName(fileItem.getName()));
             try {
-                if (!defaultFile.getCanonicalPath().startsWith(tmp.getCanonicalPath())) {
+                // Compare as Paths, not as strings. The temp folder is named
+                // "<millis>_<counter>" (TempFilePlugin.createTempFolder), so a String
+                // prefix check also accepts the sibling "<millis>_<counter>EVIL" — reachable
+                // because FilenameUtils.getName("..") returns "..", letting a crafted field
+                // name climb one level back into uploads/. Path.startsWith compares whole
+                // name elements, so a sibling no longer satisfies it.
+                if (!defaultFile.getCanonicalFile().toPath().startsWith(tmp.getCanonicalFile().toPath())) {
                     throw new IOException("Temp file try to override existing file?");
                 }
                 defaultFile.getParentFile().mkdirs();

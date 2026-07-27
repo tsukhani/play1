@@ -3,8 +3,15 @@ package play.libs;
 
 
 import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import play.utils.OS;
 
@@ -117,5 +124,62 @@ public class FilesTest {
         a = new File("/temp/../temp/test.txt");
         b = new File("/temp/./test.txt");
         assertTrue(Files.isSameFile(a, b), String.format("Error comparing %s and %s", a.getPath(), b.getPath()));
+    }
+
+    /**
+     * Zip-slip via a sibling directory sharing the output directory's name prefix. The
+     * containment guard used to be a String startsWith on the canonical path, which accepts
+     * "<out>EVIL" as being "inside" "<out>". Path.startsWith compares whole name elements,
+     * so the entry is now rejected.
+     */
+    @Test
+    public void unzipRejectsEntryEscapingIntoAPrefixSharingSibling(@TempDir Path tmp) throws Exception {
+        File out = tmp.resolve("out").toFile();
+        assertTrue(out.mkdir());
+        File zip = tmp.resolve("evil.zip").toFile();
+        // "../outEVIL/pwned.txt" canonicalises to a sibling of `out` whose path string
+        // starts with out's path string — the exact bypass the old check allowed.
+        writeZip(zip, "../outEVIL/pwned.txt", false);
+
+        RuntimeException thrown = assertThrows(RuntimeException.class, () -> Files.unzip(zip, out));
+        assertInstanceOf(IOException.class, thrown.getCause(), "expected the containment guard to trip");
+        assertFalse(tmp.resolve("outEVIL/pwned.txt").toFile().exists(), "file escaped the output directory");
+    }
+
+    /**
+     * The directory branch of unzip previously called mkdir() with no containment check at
+     * all, so a traversing directory entry could create directories outside the target.
+     */
+    @Test
+    public void unzipRejectsTraversingDirectoryEntry(@TempDir Path tmp) throws Exception {
+        File out = tmp.resolve("out").toFile();
+        assertTrue(out.mkdir());
+        File zip = tmp.resolve("evil-dir.zip").toFile();
+        writeZip(zip, "../escaped-dir/", true);
+
+        assertThrows(RuntimeException.class, () -> Files.unzip(zip, out));
+        assertFalse(tmp.resolve("escaped-dir").toFile().exists(), "directory escaped the output directory");
+    }
+
+    /** A well-formed archive still extracts. */
+    @Test
+    public void unzipExtractsLegitimateEntries(@TempDir Path tmp) throws Exception {
+        File out = tmp.resolve("out").toFile();
+        assertTrue(out.mkdir());
+        File zip = tmp.resolve("good.zip").toFile();
+        writeZip(zip, "nested/hello.txt", false);
+
+        Files.unzip(zip, out);
+        assertTrue(new File(out, "nested/hello.txt").exists(), "legitimate entry should extract");
+    }
+
+    private static void writeZip(File zip, String entryName, boolean directory) throws IOException {
+        try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(zip))) {
+            zos.putNextEntry(new ZipEntry(entryName));
+            if (!directory) {
+                zos.write("payload".getBytes(StandardCharsets.UTF_8));
+            }
+            zos.closeEntry();
+        }
     }
 }
