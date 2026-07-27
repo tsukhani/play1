@@ -88,32 +88,32 @@ require:    &allDependencies
     - com.fasterxml -> classmate 1.7.3
     - org.hibernate.orm -> hibernate-jcache 7.4.2.Final
     - org.javassist -> javassist 3.32.0-GA
-    - io.netty -> netty-buffer 4.2.15.Final
-    - io.netty -> netty-codec-base 4.2.15.Final
+    - io.netty -> netty-buffer 4.2.16.Final
+    - io.netty -> netty-codec-base 4.2.16.Final
     # netty-codec-compression carries the gzip/deflate/brotli/zstd encoder
     # classes that Netty 4.2 split out of netty-codec-http. HttpContentCompressor
     # static-references them via StandardCompressionOptions, so without this jar
     # the no-arg ctor blows up with NoClassDefFoundError: BrotliEncoder. Brings
     # com.aayushatharva.brotli4j + native classifiers transitively, which lets
     # HttpServerPipelineFactory wire brotli when it constructs the compressor.
-    - io.netty -> netty-codec-compression 4.2.15.Final
-    - io.netty -> netty-codec-http 4.2.15.Final
+    - io.netty -> netty-codec-compression 4.2.16.Final
+    - io.netty -> netty-codec-http 4.2.16.Final
     # PF-58: HTTP/2 codec + multiplex handler. Always active when HTTPS is configured;
     # SslHttpServerPipelineFactory installs Http2FrameCodec + Http2MultiplexHandler in the
     # ALPN h2 branch (h1.1 fallback handled by Http2OrHttp1Negotiator). Same Netty version
     # as the other codec-* artifacts.
-    - io.netty -> netty-codec-http2 4.2.15.Final
-    - io.netty -> netty-common 4.2.15.Final
-    - io.netty -> netty-handler 4.2.15.Final
-    - io.netty -> netty-resolver 4.2.15.Final
-    - io.netty -> netty-transport 4.2.15.Final
+    - io.netty -> netty-codec-http2 4.2.16.Final
+    - io.netty -> netty-common 4.2.16.Final
+    - io.netty -> netty-handler 4.2.16.Final
+    - io.netty -> netty-resolver 4.2.16.Final
+    - io.netty -> netty-transport 4.2.16.Final
     # PF-58: Netty 4.2 SslHandler.handlerAdded -> setOpensslEngineSocketFd loads
     # io.netty.channel.unix.UnixChannel unconditionally (not guarded behind an
     # OpenSSL-only branch). Without this artifact every HTTPS connection fails
     # at pipeline init with NoClassDefFoundError. The fork's HTTPS path was
     # latently broken since the Netty 4.2 migration (PF-31); surfaced when PF-58
     # added the first integration test that opens a real TLS socket.
-    - io.netty -> netty-transport-native-unix-common 4.2.15.Final
+    - io.netty -> netty-transport-native-unix-common 4.2.16.Final
     # PF-57: HTTP/3 over QUIC. Activated automatically when https.port is set
     # (subject to native QUIC availability — see Http3SslContextFactory).
     # netty-codec-http3 ships the Http3* frame codec + Http3ServerConnectionHandler;
@@ -123,13 +123,13 @@ require:    &allDependencies
     # gates QuicServer.start() at boot so unsupported platforms (e.g. linux-riscv64,
     # which has no upstream native) get an actionable IllegalStateException instead of
     # a silent UDP bind failure.
-    - io.netty -> netty-codec-http3 4.2.15.Final
-    - io.netty -> netty-codec-classes-quic 4.2.15.Final
-    - io.netty -> netty-codec-native-quic 4.2.15.Final osx-aarch_64
-    - io.netty -> netty-codec-native-quic 4.2.15.Final osx-x86_64
-    - io.netty -> netty-codec-native-quic 4.2.15.Final linux-aarch_64
-    - io.netty -> netty-codec-native-quic 4.2.15.Final linux-x86_64
-    - io.netty -> netty-codec-native-quic 4.2.15.Final windows-x86_64
+    - io.netty -> netty-codec-http3 4.2.16.Final
+    - io.netty -> netty-codec-classes-quic 4.2.16.Final
+    - io.netty -> netty-codec-native-quic 4.2.16.Final osx-aarch_64
+    - io.netty -> netty-codec-native-quic 4.2.16.Final osx-x86_64
+    - io.netty -> netty-codec-native-quic 4.2.16.Final linux-aarch_64
+    - io.netty -> netty-codec-native-quic 4.2.16.Final linux-x86_64
+    - io.netty -> netty-codec-native-quic 4.2.16.Final windows-x86_64
     # PF-105: BoringSSL-backed Netty TLS provider. OpenSslContext beats the JDK
     # SSLEngine on handshake throughput (2-3x) and bulk symmetric crypto (AES-NI
     # via the native lib, not via JDK intrinsics). SslHttpServerPipelineFactory
@@ -144,12 +144,12 @@ require:    &allDependencies
     # across the platforms users run Play on (macOS arm64/x86_64, Linux
     # arm64/x86_64, Windows x86_64). tcnative selects the matching native at
     # runtime; unused ones are dead weight but don't load.
-    - io.netty -> netty-tcnative-classes 2.0.79.Final
-    - io.netty -> netty-tcnative-boringssl-static 2.0.79.Final osx-aarch_64
-    - io.netty -> netty-tcnative-boringssl-static 2.0.79.Final osx-x86_64
-    - io.netty -> netty-tcnative-boringssl-static 2.0.79.Final linux-aarch_64
-    - io.netty -> netty-tcnative-boringssl-static 2.0.79.Final linux-x86_64
-    - io.netty -> netty-tcnative-boringssl-static 2.0.79.Final windows-x86_64
+    - io.netty -> netty-tcnative-classes 2.0.81.Final
+    - io.netty -> netty-tcnative-boringssl-static 2.0.81.Final osx-aarch_64
+    - io.netty -> netty-tcnative-boringssl-static 2.0.81.Final osx-x86_64
+    - io.netty -> netty-tcnative-boringssl-static 2.0.81.Final linux-aarch_64
+    - io.netty -> netty-tcnative-boringssl-static 2.0.81.Final linux-x86_64
+    - io.netty -> netty-tcnative-boringssl-static 2.0.81.Final windows-x86_64
     # com.aayushatharva.brotli4j is the JNI wrapper around the Brotli C lib that
     # StandardCompressionOptions.brotli() loads. brotli4j publishes per-platform
     # natives as separate artifactIds (NOT Ivy classifiers); the `service` jar is
