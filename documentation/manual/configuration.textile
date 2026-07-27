@@ -888,15 +888,18 @@ Default: @clear@
 
 h3(#mail.smtp.ssl.cavalidation). mail.smtp.ssl.cavalidation
 
-Whether to verify the SMTP server's certificate when "mail.smtp.channel":#mail.smtp.channel is @ssl@. When enabled, the certificate chain must be trusted **and** must match the host being dialled.
+Whether to verify the SMTP server's certificate. Applies to both encrypted values of "mail.smtp.channel":#mail.smtp.channel. When enabled, the certificate chain must be trusted **and** must match the host being dialled.
 
-Set this to @false@ only for a server presenting a self-signed or internal-CA certificate. Doing so accepts *any* certificate, which means anyone able to intercept the connection can read the message and the SMTP AUTH credentials sent after the handshake. Play logs a warning at startup whenever it is disabled.
+Set this to @false@ only for a server whose certificate you cannot fix. Play logs a warning naming the host at startup whenever it is disabled. What the opt-out gives up differs by channel:
+
+* @ssl@ - *any* certificate is accepted, including self-signed. Anyone able to intercept the connection can read the message and the SMTP AUTH credentials sent after the handshake.
+* @starttls@ - the chain is still verified, but the certificate is no longer checked against the hostname, so a trusted certificate issued for any other domain is accepted.
 
 bc. mail.smtp.ssl.cavalidation=false
 
 Default: @true@
 
-p(note). Play 1.13.48 and earlier never verified the certificate on the @ssl@ channel. If you upgrade and mail stops sending, your server's certificate is not trusted by the JVM — install it in the truststore rather than reaching for this property.
+p(note). Play 1.13.48 and earlier never verified the certificate on the @ssl@ channel, and never checked the hostname on @starttls@. If you upgrade and mail stops sending, the server's certificate is either untrusted by the JVM or does not name the host you connect to — fix the certificate or install it in the truststore rather than reaching for this property.
 
 
 h3(#mail.smtp.host). mail.smtp.host

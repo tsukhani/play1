@@ -47,6 +47,40 @@ public class MailSslTest {
                 "the trust-everything socket factory must not be installed by default");
     }
 
+    /**
+     * PF-160: the starttls channel always validated the chain, but not that the certificate
+     * belongs to the host dialled — jakarta.mail 2.0.x defaults checkserveridentity to false,
+     * so a trusted certificate issued for any other domain also completed the handshake.
+     */
+    @Test
+    public void starttlsChannelVerifiesServerIdentityByDefault() {
+        Play.configuration.setProperty("mail.smtp.channel", "starttls");
+
+        Properties props = Mail.getSession().getProperties();
+
+        assertEquals("25", props.getProperty("mail.smtp.port"));
+        assertEquals("true", props.getProperty("mail.smtp.starttls.enable"));
+        assertEquals("true", props.getProperty("mail.smtp.ssl.checkserveridentity"),
+                "a trusted certificate for an unrelated domain must not satisfy this connection");
+    }
+
+    /**
+     * The opt-out is deliberately narrower on starttls than on ssl: it drops the identity check
+     * but must NOT loosen chain validation, which this branch has always performed.
+     */
+    @Test
+    public void starttlsOptOutDropsIdentityCheckWithoutTrustingEverything() {
+        Play.configuration.setProperty("mail.smtp.channel", "starttls");
+        Play.configuration.setProperty("mail.smtp.ssl.cavalidation", "false");
+
+        Properties props = Mail.getSession().getProperties();
+
+        assertNull(props.getProperty("mail.smtp.ssl.checkserveridentity"));
+        assertNull(props.getProperty("mail.smtp.ssl.trust"),
+                "opting out of hostname checking must not silently start trusting every certificate");
+        assertNull(props.getProperty("mail.smtp.socketFactory.class"));
+    }
+
     /** The escape hatch stays available for internal servers with self-signed certificates. */
     @Test
     public void sslChannelHonoursExplicitOptOut() {

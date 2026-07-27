@@ -125,6 +125,11 @@ public class Mail {
                 channelEncryption = Play.configuration.getProperty("mail.smtp.channel", "clear");
             }
 
+            // One switch for "I accept an unverified SMTP peer", honoured by both encrypted
+            // channels. Read once here rather than per-branch so the two cannot drift.
+            boolean caValidation = Boolean
+                    .parseBoolean(Play.configuration.getProperty("mail.smtp.ssl.cavalidation", "true"));
+
             if ("clear".equals(channelEncryption)) {
                 props.put("mail.smtp.port", "25");
             } else if ("ssl".equals(channelEncryption)) {
@@ -134,8 +139,6 @@ public class Mail {
                 // follow the handshake readable by anyone on the path. Verification is now the
                 // default and has to be switched off deliberately.
                 props.put("mail.smtp.port", "465");
-                boolean caValidation = Boolean
-                        .parseBoolean(Play.configuration.getProperty("mail.smtp.ssl.cavalidation", "true"));
                 if (caValidation) {
                     props.put("mail.smtp.ssl.enable", "true");
                     // jakarta.mail 2.0.x defaults this to false, which would check that the chain
@@ -150,11 +153,25 @@ public class Mail {
                     props.put("mail.smtp.socketFactory.fallback", "false");
                 }
             } else if ("starttls".equals(channelEncryption)) {
-                // port 25 + enable starttls + ssl socket factory
+                // Clear connection on 25, upgraded via STARTTLS. This branch never installed
+                // YesSSLSocketFactory, so the certificate *chain* has always been validated here.
+                // What was missing is the identity check — jakarta.mail 2.0.x defaults
+                // checkserveridentity to false, so a trusted certificate issued for any other
+                // domain also completed the handshake, which is enough to intercept the message
+                // and the SMTP AUTH credentials that follow it (PF-160).
                 props.put("mail.smtp.port", "25");
                 props.put("mail.smtp.starttls.enable", "true");
-                // can't install our socket factory. will work only with server that has a signed certificate
-                // story to be continued in javamail 1.4.2 : https://glassfish.dev.java.net/issues/show_bug.cgi?id=5189
+                if (caValidation) {
+                    props.put("mail.smtp.ssl.checkserveridentity", "true");
+                } else {
+                    // Deliberately narrower than the ssl branch's opt-out: this turns the identity
+                    // check off but leaves chain validation in place. Loosening it to trust-all
+                    // would silently *weaken* starttls on upgrade for anyone who set the property
+                    // for the ssl channel, where it was previously a no-op here.
+                    Logger.warn("mail.smtp.ssl.cavalidation=false: the SMTP certificate presented by %s is not"
+                            + " checked against that hostname, so a trusted certificate for any domain is accepted.",
+                            Play.configuration.getProperty("mail.smtp.host", "localhost"));
+                }
             }
 
             // Inject additional mail.* settings declared in Play! configuration
