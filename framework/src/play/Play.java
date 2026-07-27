@@ -1035,8 +1035,7 @@ public class Play {
         Set<String> modules = new LinkedHashSet<>();
         if (localModules != null && localModules.exists() && localModules.isDirectory()) {
             try {
-                File userHome = new File(System.getProperty("user.home"));
-                DependenciesManager dm = new DependenciesManager(applicationPath, frameworkPath, userHome);
+                DependenciesManager dm = new DependenciesManager(applicationPath);
                 modules = dm.retrieveModules();
             } catch (Exception e) {
                 Logger.error(

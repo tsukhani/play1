@@ -24,13 +24,12 @@ import java.util.Set;
  * manual "curl from Maven Central + verify SHA-256 + drop into lib/" flow
  * used when adding new framework-level deps (PF-62).
  *
- * <p>Standalone from {@link DependenciesManager}: that class is wired for
+ * <p>Standalone from {@link DependenciesManager}: that class was wired for
  * resolving an application's {@code conf/dependencies.yml} against the
- * framework as a transitive parent, and its path conventions
- * ({@code application.path} hard-coded to {@code conf/dependencies.yml},
- * {@link DependenciesManager#isFrameworkLocal} skipping anything already in
- * {@code framework/lib/}) make framework-self-resolution awkward to drive
- * through it. This class shares the smaller building blocks
+ * framework as a transitive parent, which made framework-self-resolution
+ * awkward to drive through it. Its Ivy-driving half served the {@code play deps}
+ * command and was removed with it (PF-90); only the module-order lookup remains.
+ * This class shares the smaller building blocks
  * ({@link YamlParser}, {@link SettingsParser}, {@link HumanReadyLogger}) but
  * runs Ivy with a manifest-only path tailored for this use case.
  *
