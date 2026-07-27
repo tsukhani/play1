@@ -5,6 +5,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.security.cert.X509Certificate;
+import java.sql.Connection;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -107,31 +108,47 @@ public class JpaLazyPoolTest {
                         + "observed max active=" + roWatcher.max());
     }
 
+    /**
+     * Calibrates the instrument every other assertion here leans on. {@link
+     * #pingNeverLeasesConnection()} asserts the watcher saw <em>no</em> lease — which would also
+     * hold if the watcher simply never worked — so prove separately that it can see a lease that
+     * is definitely present. The connection is held far longer than any plausible sampling
+     * interval, which is what makes this deterministic where sampling a real request is not
+     * (PF-161).
+     */
     @Test
-    void countMaterializesAndLeasesConnection() throws Exception {
+    void watcherObservesAHeldConnection() throws Exception {
         HikariPoolMXBean pool = pool();
 
-        // /count calls JPA.em() and runs a query, which forces materialization on both PF-106
-        // and pre-PF-106 code paths. Under 50-way concurrency multiple connections must be
-        // checked out simultaneously — that's the false-positive guard for the /ping test.
-        WatchedMax watcher = WatchedMax.start(pool);
-        try {
-            fireConcurrent("/count", CONCURRENCY);
+        WatchedMax probe = WatchedMax.start(pool);
+        try (Connection held = ((HikariDataSource) DB.getDataSource()).getConnection()) {
+            assertNotNull(held, "could not lease a connection to calibrate the watcher");
+            Thread.sleep(200);
         } finally {
-            watcher.stop();
+            probe.stop();
         }
-        assertTrue(watcher.max() > 0,
-                "/count must lease at least one HikariCP connection — observed max active=" + watcher.max() + ". "
-                        + "If this is 0 something has decoupled JPA.em() from connection acquisition and the "
-                        + "/ping test's assertion is no longer meaningful.");
 
-        // /countRo exercises the readOnly=true materialize() path. Pool-state observation is
-        // unreliable here on Windows CI runners: by this point HikariCP is warmed by the prior
-        // /count load and the warm-pool lease/return cycle is too brief to catch. Verify
-        // materialization directly via the response body — "select count(n) from Note n"
-        // cannot return a value without a JDBC connection, so "count-ro:0" (Note table is empty)
-        // proves both materialization and a connection lease, which is what the pool-active
-        // assertion was a proxy for.
+        assertTrue(probe.max() > 0,
+                "the pool watcher never observed a connection that was held open for 200ms, so it cannot "
+                        + "detect leases at all — pingNeverLeasesConnection's max==0 assertion would pass "
+                        + "regardless of what /ping does and is not evidence of anything.");
+    }
+
+    @Test
+    void countMaterializesAndLeasesConnection() throws Exception {
+        // /count calls JPA.em() and runs a query, which forces materialization on both PF-106
+        // and pre-PF-106 code paths — the false-positive guard for the /ping test.
+        //
+        // Asserted through the response body rather than by sampling pool state. "select count(n)
+        // from Note n" cannot produce a value without a JDBC connection, so "count:0" (the Note
+        // table is empty) proves both materialization and a lease. Sampling was flaky on Windows
+        // CI: Thread.sleep(1) yields a ~15.6ms period there, while the lease/return cycle against
+        // in-memory H2 is measured in microseconds, so the watcher stepped straight over it and
+        // reported max active=0 for a request that had behaved correctly (PF-161). That the
+        // watcher works at all is established by watcherObservesAHeldConnection.
+        fireConcurrentExpectingBody("/count", CONCURRENCY, "count:0");
+
+        // /countRo exercises the readOnly=true materialize() path, on the same reasoning.
         fireConcurrentExpectingBody("/countRo", CONCURRENCY, "count-ro:0");
     }
 
