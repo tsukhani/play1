@@ -170,10 +170,24 @@ class Play1Plugin : Plugin<Project> {
             // VM-init failure when the agent jar isn't on disk).
             inheritInstrumentation = false)
 
+        // PF-169: shared by playDist and playBundle so one invocation naming both
+        // runs the Nuxt build once. Stays always-out-of-date on purpose — declaring
+        // inputs over frontend/ would miss the files a Nuxt config can legitimately
+        // read from outside it (imported docs, the pinned Node/pnpm versions) and
+        // would silently ship a stale SPA in a release artifact.
+        project.tasks.register<PlayFrontendSpaTask>("playFrontendSpa") {
+            group = "play1"
+            description = "Build the Nuxt frontend (pnpm install + generate) and copy frontend/.output/public into public/spa. Skipped when the app has no frontend/ directory."
+            projectDir.set(project.layout.projectDirectory)
+            val frontendDir = project.layout.projectDirectory.dir("frontend").asFile
+            onlyIf { frontendDir.isDirectory }
+            outputs.upToDateWhen { false }
+        }
+
         project.tasks.register<PlayDistTask>("playDist") {
             group = "play1"
             description = "Package the application source + precompiled classes + frontend SPA as <rootProject.name>.zip (respects .gitignore + .distignore). Optional: -Poutput=<path>"
-            dependsOn("playPrecompile")
+            dependsOn("playPrecompile", "playFrontendSpa")
             projectDir.set(project.layout.projectDirectory)
             projectName.set(project.name)
             val customOutput = project.providers.gradleProperty("output").orNull
@@ -190,7 +204,7 @@ class Play1Plugin : Plugin<Project> {
         project.tasks.register<PlayBundleTask>("playBundle") {
             group = "play1"
             description = "Self-contained <rootProject.name>-bundle.zip (source + precompiled + frontend SPA + framework + deps + bundled `play` launcher). Java 25+ is the only runtime dependency. Optional: -Poutput=<path>"
-            dependsOn("extractPlayModules", "playPrecompile")
+            dependsOn("extractPlayModules", "playPrecompile", "playFrontendSpa")
             projectDir.set(project.layout.projectDirectory)
             projectName.set(project.name)
             frameworkPath.set(ext.frameworkPath)
@@ -662,9 +676,8 @@ abstract class PlayDistTask : DefaultTask() {
         // consistently-named archive.
         val appName = projectName.get()
 
-        // Build the SPA if a Nuxt frontend is present at frontend/. Shared
-        // helper between playDist and playBundle.
-        buildFrontendAndCopySpa(projDir, execOps, logger)
+        // The SPA at public/spa/ is built by the playFrontendSpa task this one
+        // depends on, so it is already on disk by the time this action runs.
 
         // Source file list from git: tracked + untracked-not-gitignored.
         // Honors all .gitignore files, including frontend/.gitignore (which
@@ -1127,11 +1140,32 @@ private fun resolvePidFile(appDir: File, override: String?): File {
     return if (f.isAbsolute) f else File(appDir, name)
 }
 
+// PF-169: the SPA build is a registered task, not a call from inside playDist's
+// and playBundle's actions. Gradle's run-each-task-at-most-once rule applies to
+// the task graph; a helper invoked from an action body is invisible to it, so
+// `gradle playDist playBundle` used to run a full Nuxt production build twice.
+// As a dependency of both it runs once, and dependsOn ordering guarantees
+// public/spa/ exists before either packaging action walks it.
+@DisableCachingByDefault(because = "Runs an external pnpm build whose real inputs extend outside frontend/ (see PF-169); not modelled as declared inputs/outputs")
+abstract class PlayFrontendSpaTask : DefaultTask() {
+    @get:Internal
+    abstract val projectDir: DirectoryProperty
+
+    @get:Inject
+    abstract val execOps: ExecOperations
+
+    @TaskAction
+    fun buildSpa() {
+        buildFrontendAndCopySpa(projectDir.get().asFile, execOps, logger)
+    }
+}
+
 // Build the SPA if a Nuxt frontend is present at the project root. Runs
 // pnpm install + pnpm run generate, then copies frontend/.output/public/ to
-// public/spa/ in the project root. Used by both playDist and playBundle so
-// the dist-shaped artifacts include the frontend build alongside the
-// precompiled Java classes. Returns true if a frontend was found and built.
+// public/spa/ in the project root. Invoked by the playFrontendSpa task, which
+// playDist and playBundle depend on so the dist-shaped artifacts include the
+// frontend build alongside the precompiled Java classes. Returns true if a
+// frontend was found and built.
 private fun buildFrontendAndCopySpa(
     projDir: File,
     execOps: ExecOperations,
@@ -1593,9 +1627,8 @@ abstract class PlayBundleTask : DefaultTask() {
         }
         val frameworkLibDir = File(fwDir, "framework/lib")
 
-        // Same dist-shaped frontend build as playDist: pnpm install + generate,
-        // copy frontend/.output/public/ to public/spa/ for static-asset serving.
-        buildFrontendAndCopySpa(projDir, execOps, logger)
+        // Same dist-shaped frontend build as playDist: public/spa/ is produced by
+        // the shared playFrontendSpa task both packaging tasks depend on.
 
         // Resolve dep jars: Gradle-resolved minus framework/ + projDir/lib +
         // projDir/modules (those are bundled separately under their respective

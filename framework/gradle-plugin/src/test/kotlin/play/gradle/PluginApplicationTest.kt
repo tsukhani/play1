@@ -21,6 +21,7 @@ class PluginApplicationTest {
         "playClean", "playSecret", "playEvolutions",
         "playStatus", "playPid", "playOut", "playVersion",
         "playClasspath", "playModulesInfo", "playJavadoc",
+        "playFrontendSpa",
     )
 
     @Test
