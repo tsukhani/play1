@@ -148,6 +148,19 @@
       groupName: "Groovy"
     },
     {
+      // Byte Buddy publishes a parallel `-jdk5` line (built for Java 5
+      // bytecode) alongside every normal release: 1.18.11 and 1.18.11-jdk5
+      // both exist. The suffixed one sorts LAST, so Maven Central's own
+      // <latest>/<release> metadata points at it and Renovate offers
+      // 1.18.10 -> 1.18.11-jdk5 as a routine patch bump. That is not an
+      // upgrade — it swaps the artifact for one targeting a bytecode level
+      // 20 majors below the Java 25 this framework requires, and nothing in
+      // CI would flag it. Caught once during a merge; pinned so it can't
+      // recur.
+      matchPackageNames: ["net.bytebuddy:**"],
+      allowedVersions: "!/-jdk5$/"
+    },
+    {
       // Major bumps go through manual review — never auto-merge.
       matchUpdateTypes: ["major"],
       automerge: false,
