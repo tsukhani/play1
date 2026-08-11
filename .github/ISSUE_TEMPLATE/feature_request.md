@@ -7,6 +7,12 @@ assignees: ''
 
 ---
 
+<!--
+Before filing: CONTRIBUTING.md has a "Scope" section listing decisions that are
+settled and won't be reconsidered (upstream syncing, WAR deployment, pre-Java-25
+support, Joda Time). Worth a look so you don't spend time writing one of those up.
+-->
+
 **Is your feature request related to a problem? Please describe.**
 A clear and concise description of what the problem is. Ex. I'm always frustrated when [...]
 

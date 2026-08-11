@@ -1,4 +1,4 @@
-# Welcome to Play framework
+# Play 1.13
 
 [![Build Status](https://github.com/tsukhani/play1/actions/workflows/build-test.yml/badge.svg)](https://github.com/tsukhani/play1/actions/workflows/build-test.yml)
 [![CodeQL](https://github.com/tsukhani/play1/actions/workflows/codeql.yml/badge.svg)](https://github.com/tsukhani/play1/actions/workflows/codeql.yml)
@@ -6,17 +6,19 @@
 [![Repository size](https://img.shields.io/github/repo-size/tsukhani/play1.svg?logo=git)](https://github.com/tsukhani/play1)
 
 
-Play framework makes it easier to build Web applications with Java. It is a clean alternative to bloated Enterprise Java stacks. It focuses on developer productivity and targets RESTful architectures. Play is a perfect companion to agile software development.
+Play 1.13 makes it easier to build web applications with Java. It is a clean alternative to bloated enterprise Java stacks, focused on developer productivity, fast iteration through hot reload, and RESTful architectures.
 
-Learn more on the [https://www.playframework.com](https://www.playframework.com) website.
+This is an independently developed framework with its own roadmap and release line. It originated as a fork of Play 1 and keeps that programming model — controllers, `routes`, Groovy templates, JPA models — but it is now a separate product: it tracks no upstream, takes no upstream changes, and is not affiliated with the Play framework project. Java 25, virtual threads, Netty 4.2, and HTTP/2 + HTTP/3 are baseline parts of the framework here, not optional extras.
 
-## About this fork
+Documentation ships in this repository — see [`documentation/manual/home.textile`](documentation/manual/home.textile), also browseable at `/@docs` while a dev-mode app is running.
 
-A modernized Play 1 fork built on top of Java 25:
+## Highlights
+
+Built on Java 25:
 
 - **Netty 4.2.x** — full migration from Netty 3 to Netty 4.2.x. Reference-counted `ByteBuf`s with explicit refcount discipline, request-body spooling above a configurable threshold (`play.netty.spoolThresholdBytes`), and hard body-size caps via `play.netty.maxContentLength`. The HTTP server, WebSocket handling, and SSL paths all run on Netty 4.
 - **Virtual threads, unconditionally** — request invocation (`Invoker`), background jobs (`JobsPlugin`), and mail dispatch (`Mail`) all dispatch through `play.utils.VirtualThreadScheduledExecutor`. Only two platform threads are kept, used solely for timer dispatch; everything else runs on virtual threads. Requires Java 25+ — JEP 491's elimination of `synchronized`-pinning makes the VT path strictly cheaper than platform threads under blocking I/O.
-- **No legacy Play 1.x code** — Continuations / Javaflow, the `play.threads.virtual*` / `play.pool` / `play.jobs.pool` configuration toggles, `ExecutorFacade`, deprecated executor mirrors, and other 1.x-era plumbing have been removed. The framework emits a `WARN` at boot if any retired configuration keys are still present in `application.conf` (including profile-prefixed forms like `%test.play.pool=3`), so operators upgrading from upstream Play 1.x see exactly which lines to delete.
+- **No legacy Play 1.x code** — Continuations / Javaflow, the `play.threads.virtual*` / `play.pool` / `play.jobs.pool` configuration toggles, `ExecutorFacade`, deprecated executor mirrors, and other 1.x-era plumbing have been removed. The framework emits a `WARN` at boot if any retired configuration keys are still present in `application.conf` (including profile-prefixed forms like `%test.play.pool=3`), so operators upgrading from Play 1.12 or earlier see exactly which lines to delete.
 - **HTTP/2 over TLS, automatically** — h2 is always advertised via ALPN whenever HTTPS is configured. ALPN-capable clients negotiate `h2`; older clients fall back to `http/1.1` and are served by the same controllers. There is no separate `play.http2.enabled` flag — bind `https.port` with a PEM cert+key and h2 is on. Per-stream concurrency: HTTP/2 multiplexes streams over a single connection, so per-connection logs may show interleaved request lines from one client. Plain-HTTP h2c upgrade is out of scope (browsers don't use it).
 - **HTTP/3 over QUIC, automatically** — when HTTPS is configured and a native QUIC binary is available on the platform, the framework also binds a UDP listener for HTTP/3 alongside the TCP HTTPS listener (same port number — TCP and UDP have separate port spaces). Browsers discover the h3 endpoint via an `Alt-Svc: h3=":<port>"` header that's automatically emitted on every TLS-protected response when h3 is actually serving, then switch to QUIC for subsequent requests. Reuses the same PEM cert source as the TCP path. There is no separate `play.http3.enabled` flag. Native QUIC ships for `osx-{aarch_64,x86_64}`, `linux-{aarch_64,x86_64}`, and `windows-x86_64`; on `linux-riscv64` (no upstream native) and any other platform without a Netty QUIC binary, the framework logs a `WARN` and skips the UDP listener — HTTPS+h2+h1.1 keep working normally on TCP.
 
@@ -54,7 +56,7 @@ cd ~/projects/myFirstApp && play run
 
 ## TLS, HTTP/2, and HTTP/3
 
-This fork serves HTTP/1.1, HTTP/2, and HTTP/3 from the same TLS configuration. There are no per-protocol enable flags — bind `https.port` with a PEM cert+key and the framework activates all three:
+The framework serves HTTP/1.1, HTTP/2, and HTTP/3 from the same TLS configuration. There are no per-protocol enable flags — bind `https.port` with a PEM cert+key and the framework activates all three:
 
 - **HTTP/1.1** and **HTTP/2** on the existing TCP HTTPS listener — clients negotiate `h2` via ALPN, with a clean fallback to `http/1.1` for older clients. Both versions run through the same controllers.
 - **HTTP/3** on a UDP listener bound to the same port number (TCP and UDP have separate port spaces, so TCP:9443 and UDP:9443 coexist). The framework emits an `Alt-Svc: h3=":<port>"` header on every TLS-protected response so browsers discover the h3 endpoint automatically and switch to QUIC for subsequent requests.
@@ -180,15 +182,15 @@ http.headers.hsts.includeSubDomains=true
 http.headers.hsts.preload=false
 ```
 
-The plugin itself can also be disabled by removing `play.plugins.SecurityHeadersPlugin` from your app's `play.plugins` (or removing it from `framework/src/play.plugins` for fork builds).
+The plugin itself can also be disabled by removing `play.plugins.SecurityHeadersPlugin` from your app's `play.plugins` (or removing it from `framework/src/play.plugins` when building the framework itself).
 
 ### Per-response overrides
 
 Headers are applied additively — if a controller has already set `X-Frame-Options` (e.g., `response.setHeader("X-Frame-Options", "SAMEORIGIN")`) the framework default does not overwrite it. Same for any other header in the table above.
 
-## Removed: WAR / servlet-container deployment
+## No WAR / servlet-container deployment
 
-This fork no longer supports deploying as a WAR into a servlet container (PF-78). The `ServletWrapper` adapter, the `play war` CLI command, the `WEB-INF/web.xml` template, and the `jakarta.servlet-api` dependency are all gone. The marquee features of this fork — HTTP/2 ALPN (PF-58), HTTP/3 over QUIC (PF-57), virtual-thread dispatch — are Netty-exclusive by design and don't work inside a servlet container anyway.
+Play 1.13 does not support deploying as a WAR into a servlet container — it was removed in PF-78. The `ServletWrapper` adapter, the `play war` CLI command, the `WEB-INF/web.xml` template, and the `jakarta.servlet-api` dependency are all gone. The marquee features of this framework — HTTP/2 ALPN (PF-58), HTTP/3 over QUIC (PF-57), virtual-thread dispatch — are Netty-exclusive by design and don't work inside a servlet container anyway.
 
 **If you were deploying via `play war`:** switch to the embedded Netty path (`play run` for development, `play start` for production) and front it with a reverse proxy (nginx, HAProxy, AWS ALB, etc.) if you need TLS termination or path-prefix rewriting at the edge. The application code does not need to change — only the deployment topology.
 
@@ -202,7 +204,7 @@ Full reference and examples: [`documentation/manual/openapi.textile`](documentat
 
 ## Migrating from Joda Time
 
-Joda Time was removed from this fork (PF-27). Form-binding is now `java.time` (JSR-310) only. Replace any controller-arg or model-field types as follows:
+Joda Time was removed in PF-27. Form-binding is now `java.time` (JSR-310) only. Replace any controller-arg or model-field types as follows:
 
 | Before (Joda) | After (`java.time`) | ISO-8601 example input |
 |---|---|---|
@@ -230,7 +232,7 @@ The `joda-time` jar is no longer on the framework classpath. Apps that still nee
 
 ## Get the source
 
-Fork the project source code on [Github](https://github.com/tsukhani/play1)
+The source lives on [GitHub](https://github.com/tsukhani/play1):
 
 ```
 git clone https://github.com/tsukhani/play1.git
@@ -246,22 +248,23 @@ git clone https://github.com/tsukhani/play1.git --depth 10
 
 Please report bugs on [our tracker](https://github.com/tsukhani/play1/issues).
 
-## Learn More
+## Learn more
 
-* [www.playframework.com](https://www.playframework.com)
-* [Download](https://www.playframework.com/download)
+* [Documentation](documentation/manual/home.textile) — the full manual, also served at `/@docs` in dev mode
 * [Install](documentation/manual/install.textile)
 * [Create a new application](documentation/manual/guide1.textile)
 * [Build from source](documentation/manual/install.textile#build)
-* [Modules](https://www.playframework.com/modules)
+* [OpenAPI 3 spec generation](documentation/manual/openapi.textile)
+* [Download a release](https://github.com/tsukhani/play1/releases)
 * [Search or create issues](https://github.com/tsukhani/play1/issues)
-* [Get help](http://stackoverflow.com/questions/tagged/playframework)
-* [Code of Conduct](https://www.playframework.com/conduct)
-* [Contribute](https://github.com/playframework/play1/wiki/Contributor-guide)
-* [Play contributor guidelines](https://www.playframework.com/contributing)
+* [Contributing](CONTRIBUTING.md) — build, test, and PR workflow
+* [Code of Conduct](CODE_OF_CONDUCT.md)
+* [Security policy](SECURITY.md)
 
 ## Licence
 
 Licensed under the Apache License, Version 2.0 (the "License"); you may not use this project except in compliance with the License. You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0.
 
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.
+
+This project originated as a fork of [Play framework 1](https://github.com/playframework/play1), copyright the Play framework contributors, likewise licensed under Apache 2.0. It is no longer affiliated with or derived from that project's ongoing development, but retains that attribution as the License requires.

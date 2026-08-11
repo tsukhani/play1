@@ -2,7 +2,7 @@
 
 <project name="play! framework" default="jar" basedir="." xmlns:if="ant:if" xmlns:unless="ant:unless">
 
-    <property name="baseversion" value="1.13.53" />
+    <property name="baseversion" value="1.13.54" />
     <property name="build-release" value="25" />
     <!-- Loaded as a startup -javaagent in test forks so Mockito's inline mock-maker
          doesn't have to self-attach byte-buddy-agent at runtime (which JDK 21+ warns
@@ -366,7 +366,7 @@
         <mkdir dir="dist" />
         <mkdir dir="dist/play-${version}" />
         <copy todir="dist/play-${version}">
-            <fileset dir=".." excludes=".github/**,**/cobertura.ser,**/*.pyc,**/*.log,hs_err*,.*,.*/*,build/**,framework/gradle-plugin/build/**,**/.gradle/**,**/.kotlin/**,framework/dist/**,framework/tailwindcss,framework/test-src/**,id,**/.bzr/**,**/.git/**,*.bzrignore,framework/classes/**,framework/tests-results/**,test-result/**,framework/test-result/**,docs/**,renovate.json5,modules/**,openspec/**,.claude/**,CLAUDE.md,sync-fork.sh,_bmad/**,_bmad-output/**,.agents/**,AGENTS.md" />
+            <fileset dir=".." excludes=".github/**,**/cobertura.ser,**/*.pyc,**/*.log,hs_err*,.*,.*/*,build/**,framework/gradle-plugin/build/**,**/.gradle/**,**/.kotlin/**,framework/dist/**,framework/tailwindcss,framework/test-src/**,id,**/.bzr/**,**/.git/**,*.bzrignore,framework/classes/**,framework/tests-results/**,test-result/**,framework/test-result/**,docs/**,renovate.json5,modules/**,openspec/**,.claude/**,CLAUDE.md,CONTRIBUTING.md,CODE_OF_CONDUCT.md,_bmad/**,_bmad-output/**,.agents/**,AGENTS.md" />
             <fileset dir=".." includes="modules/docviewer/**,modules/testrunner/**" excludes="**/*.pyc" />
         </copy>
     </target>

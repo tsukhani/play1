@@ -1,25 +1,35 @@
-# Pull Request Checklist
-
-* [ ] Have you read [How to write the perfect pull request](https://github.com/blog/1943-how-to-write-the-perfect-pull-request)?
-* [ ] Have you read through the [contributor guidelines](https://www.playframework.com/contributing)?
-* [ ] Have you referenced any issues you're fixing using [commit message keywords](https://help.github.com/articles/closing-issues-using-keywords/)?
-* [ ] Have you updated the documentation?
-* [ ] Have you added tests for any changed functionality?
-
-# Helpful things
-
-## Fixes
-
-Fixes #xxxx
+# Pull Request
 
 ## Purpose
 
-What does this PR do?
+<!-- What does this PR do? -->
 
-## Background Context
+## Background
 
-Why did you take this approach?
+<!-- Why this approach? Anything you tried and rejected? -->
+
+## Fixes
+
+<!-- Fixes #xxxx -->
+
+## Checklist
+
+* [ ] Read the [contributing guide](../CONTRIBUTING.md)
+* [ ] `ant test` passes locally (from `framework/`)
+* [ ] Added or updated tests covering the changed behavior
+* [ ] Updated the documentation (`documentation/manual/`, `README.md`) if behavior visible to app developers changed
+* [ ] Commit messages follow Conventional Commits, with `!` if this is a breaking change
+* [ ] No unrelated reformatting, renaming, or version bumps in the diff
+
+If your change touches either of these, one extra step is required — see CONTRIBUTING.md:
+
+* [ ] **Edited `framework/dependencies.yml`?** Ran `ant resolve` and committed the resulting `framework/lib/` changes. (CI compiles against the committed jars, so a dependency PR goes green while testing the *old* versions.)
+* [ ] **Changed Tailwind classes** in framework templates, module views, or app-skel views? Ran `framework/tailwind/build-css.sh` and committed the regenerated CSS.
+
+## Breaking changes
+
+<!-- Anything app developers must change when upgrading. Write "none" if none. -->
 
 ## References
 
-Are there any relevant issues / PRs / mailing lists discussions?
+<!-- Related issues, PRs, or discussion. -->

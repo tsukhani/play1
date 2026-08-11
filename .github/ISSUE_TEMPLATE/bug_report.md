@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Create a report to help us improve
+about: Report something in the framework behaving incorrectly
 title: ''
 labels: ''
 assignees: ''
@@ -8,54 +8,67 @@ assignees: ''
 ---
 
 <!--
+This tracker is for developing Play 1.13 — it isn't a support channel, so please
+don't use it to ask usage questions.
 
-If you are reporting a bug, please be informative. This template can guide you to provide basic information, but you are not limited to that.
+Play 1.13 is developed independently and is NOT the Play framework project. If
+your issue is with Play 2/3 (Scala), or with Play 1.x from playframework/play1,
+please report it to that project instead — we can't act on it here.
 
-### Are you looking for help?
-
-This is an issue tracker, used to manage and track the development of Play. It is not a support system and so it is not a place to ask questions or get help. If you're not sure if you have found a bug, or if you have a feature request, the best place to start is with either the [Play Forum](https://github.com/playframework/playframework/discussions) or [Stack Overflow](http://stackoverflow.com/questions/ask?tags=playframework).
-
+Do NOT report security vulnerabilities here. See SECURITY.md for private
+disclosure.
 -->
 
-### Play Version
+### Play version
 
-<!-- The Play version used -->
+<!-- e.g. 1.13.53 — `play version`, or the version of the release zip you unpacked -->
 
+### JDK
 
-**Describe the bug**
-A clear and concise description of what the bug is.
+<!-- Paste the output of `java -version`. Java 25+ is required. -->
 
-**To Reproduce**
-Steps to reproduce the behavior:
-1. Go to '...'
-2. Click on '....'
-3. Scroll down to '....'
-4. See error
+### Operating system
 
-or
+<!-- e.g. macOS 15.5 (aarch64), Ubuntu 24.04, Windows 11. On Linux use `uname -a`.
+     Please include the architecture — several code paths (native QUIC for HTTP/3
+     in particular) ship per-platform binaries and behave differently without one. -->
 
-Please provide a PR with a failing test.  
+### Other relevant versions
 
-If the issue is more complex or requires configuration, please provide a link to a project on Github that reproduces the issue.
+<!-- Only if the issue involves something outside the framework: the database and
+     JDBC driver version, Gradle version, Node/pnpm for a --frontend app, etc. -->
 
+## Expected behavior
 
-**Expected behavior**
-A clear and concise description of what you expected to happen.
+<!-- What you expected to happen, starting from the first action. -->
 
-**Screenshots**
-If applicable, add screenshots to help explain your problem.
+## Actual behavior
 
-**Desktop (please complete the following information):**
- - OS: [e.g. iOS]: Use `uname -a` if on Linux.
- - Browser [e.g. chrome, safari]
- - Version [e.g. 22]
- - JDK [e.g 17]: Paste the output from `java -version` at the command line.
+<!-- What actually happened. Be specific: "it doesn't work" doesn't describe the
+     behavior — "the page returns 500 with an empty body" does.
 
-**Smartphone (please complete the following information):**
- - Device: [e.g. iPhone6]
- - OS: [e.g. iOS8.1]
- - Browser [e.g. stock browser, safari]
- - Version [e.g. 22]
+     Include stack traces and logs. Set application.log=TRACE in application.conf
+     (and application.log.format=json for structured output) if there's nothing
+     useful. -->
 
-**Additional context**
-Add any other context about the problem here.
+## Steps to reproduce
+
+1.
+2.
+3.
+
+## Reproducible test case
+
+<!-- The most useful thing you can attach.
+
+     Best: a PR adding a failing test under framework/test-src/.
+     Also good: a link to a minimal app on GitHub that reproduces it.
+
+     If the bug involves HTTPS, HTTP/2, or HTTP/3, please say how you generated
+     the certificate (mkcert vs. openssl self-signed) — browsers won't upgrade to
+     h3 against an untrusted cert, which accounts for a lot of "h3 doesn't work". -->
+
+## Additional context
+
+<!-- Anything else: relevant application.conf settings, whether it reproduces in
+     both dev and prod mode, whether it worked in an earlier 1.13.x release. -->
