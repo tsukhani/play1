@@ -70,7 +70,7 @@ Build / test / package:
 
 Project setup:
   new <name>           Scaffold a new application in <cwd>/<name>
-                       Optional: --frontend (Nuxt 3 frontend)
+                       Optional: --frontend (Nuxt 4 frontend)
                                  --dest=<path> (override destination directory)
   secret               Generate a new application secret
 

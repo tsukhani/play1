@@ -11,7 +11,7 @@ Generate a new secret key, used for HMAC and encryption
 
 *new*
 Scaffold a new application (run from any directory; pass @--frontend@ for the
-Nuxt 3 frontend skeleton)
+Nuxt 4 frontend skeleton)
 
 *modules*
 Print the modules that will be loaded for this app

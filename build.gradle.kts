@@ -213,7 +213,7 @@ abstract class PlayNewAppTask : DefaultTask() {
 
         val frontendDir = File(dest, "frontend")
         logger.lifecycle("~")
-        logger.lifecycle("~ Setting up Nuxt 3 frontend...")
+        logger.lifecycle("~ Setting up Nuxt 4 frontend...")
 
         // Manual walk-and-copy (same reasoning as the gradle-wrapper copy
         // above): fileSystemOps.copy preserves source-file permissions, so
@@ -272,7 +272,7 @@ abstract class PlayNewAppTask : DefaultTask() {
         // Frontend gitignore
         File(frontendDir, ".gitignore").writeText("node_modules\n.nuxt\n.output\ndist\n")
 
-        logger.lifecycle("~ Nuxt 3 frontend created in ${frontendDir.absolutePath}")
+        logger.lifecycle("~ Nuxt 4 frontend created in ${frontendDir.absolutePath}")
     }
 
     private fun generateSecret(): String {
@@ -286,7 +286,7 @@ abstract class PlayNewAppTask : DefaultTask() {
 
 tasks.register<PlayNewAppTask>("playNewApp") {
     group = "play1"
-    description = "Scaffold a new Play 1 application. Required: -Pname=<name>. Optional: -Pdest=<path> (default: <cwd>/<name>), -Pfrontend (add Nuxt 3 frontend), -PframeworkPath=<path> (override; defaults to projectDir — used by the play wrapper to invoke this task from a writable scratch dir)"
+    description = "Scaffold a new Play 1 application. Required: -Pname=<name>. Optional: -Pdest=<path> (default: <cwd>/<name>), -Pfrontend (add Nuxt 4 frontend), -PframeworkPath=<path> (override; defaults to projectDir — used by the play wrapper to invoke this task from a writable scratch dir)"
     val fwPathProp = providers.gradleProperty("frameworkPath").orNull?.takeIf { it.isNotBlank() }
     if (fwPathProp != null) {
         frameworkPath.set(file(fwPathProp))
