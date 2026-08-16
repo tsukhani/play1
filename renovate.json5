@@ -161,6 +161,24 @@
       allowedVersions: "!/-jdk5$/"
     },
     {
+      // Same trap as byte-buddy above, different suffix. Jakarta specs
+      // publish a `.MR` (Maintenance Release) artifact alongside the plain
+      // version — jakarta.inject-api ships both 2.0.1 and 2.0.1.MR — and
+      // Central's metadata declares `<release>2.0.1.MR</release>`, so
+      // Renovate reads it as the newest and offers 2.0.1 -> 2.0.1.MR.
+      // It is not newer: the .MR jar was published 28 minutes BEFORE final
+      // 2.0.1 (compare Last-Modified on the two jars), and it relocates
+      // module-info.class from the jar root into META-INF/versions/9/,
+      // changing JPMS packaging on a Java 25 framework for no new code.
+      // Offered as PR #12, closed 2026-08-16; pinned so it can't recur.
+      // Case-insensitive on purpose: the dependencies.yml edit carried
+      // `2.0.1.MR` but Renovate rendered the PR title as `v2.0.1.mr`, so the
+      // casing it matches against is not something to bet the pin on. The
+      // trailing `i` flag is supported (util/string-match.ts accepts `/i$`).
+      matchPackageNames: ["jakarta.inject:**"],
+      allowedVersions: "!/\\.MR$/i"
+    },
+    {
       // Major bumps go through manual review — never auto-merge.
       matchUpdateTypes: ["major"],
       automerge: false,
