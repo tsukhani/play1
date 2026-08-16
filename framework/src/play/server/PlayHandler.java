@@ -101,7 +101,10 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
 
     static {
         exposePlayServer = !"false".equals(Play.configuration.getProperty("http.exposePlayServer"));
-        allowedHttpMethodOverride = Stream.of(Play.configuration.getProperty("http.allowed.method.override", "").split(",")).collect(Collectors.toUnmodifiableSet());
+        // Entries are trimmed so `http.allowed.method.override=PUT, DELETE` opts DELETE in rather
+        // than silently registering " DELETE" and failing closed. Router applies the same parse to
+        // the query-string form of this feature (PF-170).
+        allowedHttpMethodOverride = Stream.of(Play.configuration.getProperty("http.allowed.method.override", "").split(",")).map(String::trim).collect(Collectors.toUnmodifiableSet());
     }
 
     /**

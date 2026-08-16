@@ -133,6 +133,69 @@ public class RouterTest {
         assertTrue(canRenderFile(musicRequest), "Musicfile [" + musicRequest.domain + "] from the right domain must be found");
     }
     
+    /**
+     * PF-170: the {@code x-http-method-override} query-string parameter must not rewrite the request
+     * method unless the target method is listed in {@code http.allowed.method.override} AND the wire
+     * method is something other than GET. A cross-site top-level GET navigation is the shape
+     * {@code SameSite=Lax} still attaches cookies to, so elevating a GET is the CSRF vector; the POST
+     * cases are the shape {@code #{form}}/{@code #{a}} emit for PUT/DELETE/PATCH actions.
+     */
+    @Test
+    public void test_queryStringMethodOverride_isGatedAndNeverElevatesGet() {
+        Play.configuration = new Properties();
+        Router.addRoute("GET", "/widget", "Widgets.show");
+        Router.addRoute("POST", "/widget", "Widgets.create");
+        Router.addRoute("PUT", "/widget", "Widgets.update");
+
+        // No opt-in: the override is inert on both the attack shape and the #{form} shape.
+        assertThat(routeAction("GET", "x-http-method-override=PUT")).isEqualTo("Widgets.show");
+        assertThat(routeAction("POST", "x-http-method-override=PUT")).isEqualTo("Widgets.create");
+
+        Play.configuration.setProperty("http.allowed.method.override", "PUT");
+
+        // Opted in: #{form}'s POST-with-override reaches the PUT route...
+        assertThat(routeAction("POST", "x-http-method-override=PUT")).isEqualTo("Widgets.update");
+        // ...but the opt-in never re-opens GET elevation.
+        assertThat(routeAction("GET", "x-http-method-override=PUT")).isEqualTo("Widgets.show");
+
+        // A method that is not opted in stays inert even from a POST.
+        assertThat(routeAction("POST", "x-http-method-override=GET")).isEqualTo("Widgets.create");
+
+        // Opting POST in does not make GET->POST work, unlike the header form in PlayHandler.
+        Play.configuration.setProperty("http.allowed.method.override", "POST");
+        assertThat(routeAction("GET", "x-http-method-override=POST")).isEqualTo("Widgets.show");
+
+        // The parameter is still honoured alongside others in the query string.
+        Play.configuration.setProperty("http.allowed.method.override", "PUT");
+        assertThat(routeAction("POST", "page=2&x-http-method-override=PUT&sort=name")).isEqualTo("Widgets.update");
+
+        // Entries are trimmed, so a list written with spaces opts in rather than failing closed.
+        Play.configuration.setProperty("http.allowed.method.override", "POST, PUT, DELETE");
+        assertThat(routeAction("POST", "x-http-method-override=PUT")).isEqualTo("Widgets.update");
+    }
+
+    /** Route {@code /widget} with the given wire method and query string, returning the resolved action. */
+    private static String routeAction(String method, String querystring) {
+        Request request = Http.Request.createRequest(new Http.Request.RequestData(
+                null,
+                method,
+                "/widget",
+                querystring,
+                null,
+                null,
+                null,
+                null,
+                false,
+                80,
+                "localhost",
+                false,
+                null,
+                null
+        ));
+        Router.route(request);
+        return request.action;
+    }
+
     public boolean canRenderFile(Request request){
         try {
             Router.route(request);

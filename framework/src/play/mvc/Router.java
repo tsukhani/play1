@@ -22,6 +22,7 @@ import java.net.URLEncoder;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.stream.Stream;
 
 /**
  * The router matches HTTP requests to action invocations
@@ -363,15 +364,54 @@ public class Router {
         }
     }
 
+    /**
+     * PF-170 (CWE-352): decide whether a {@code x-http-method-override} query-string parameter may
+     * rewrite the request method. Two conditions, both required.
+     * <p>
+     * First, {@code targetMethod} must be opted in via {@code http.allowed.method.override}, which
+     * defaults to empty — the same gate {@link play.server.PlayHandler} applies to the header form
+     * of this feature. Until PF-170 the query-string form had no gate at all, so the two halves of
+     * one feature disagreed and every application shipped the override enabled.
+     * <p>
+     * Second, {@code wireMethod} must not be GET. A cross-site <em>top-level GET navigation</em> is
+     * the one cross-site shape that {@code SameSite=Lax} (this fork's default, see
+     * {@link Scope#COOKIE_SAMESITE}) still attaches session cookies to: the browser makes its
+     * SameSite decision while the request is still a GET, and we would convert it to POST/PUT/DELETE
+     * afterwards. Refusing to elevate a GET keeps the opt-in itself safe rather than handing an
+     * application that needs the feature a CSRF hole along with it.
+     * <p>
+     * What survives both conditions is the shape the framework's own tags emit: {@code FastTags._form}
+     * and {@code FastTags._a} append {@code ?x-http-method-override=PUT|DELETE|PATCH} and submit a
+     * POST carrying an authenticity token, because HTML forms can only speak GET or POST.
+     * Applications routing such actions through those tags must now list the method in
+     * {@code http.allowed.method.override}.
+     * <p>
+     * Entries are trimmed, so {@code http.allowed.method.override=PUT, DELETE} opts DELETE in rather
+     * than registering {@code " DELETE"} and silently failing closed; PlayHandler parses the header
+     * form the same way, so one setting means one thing on both paths.
+     * <p>
+     * The property is read here rather than cached at class-load — as PlayHandler does — because
+     * {@link Play#configuration} is replaced wholesale on a dev-mode reload. That costs nothing on
+     * the hot path: the caller only reaches this method for a request whose query string already
+     * matched {@link #methodOverride}.
+     */
+    private static boolean isMethodOverrideAllowed(String wireMethod, String targetMethod) {
+        if ("GET".equals(wireMethod)) {
+            return false;
+        }
+        return Stream.of(Play.configuration.getProperty("http.allowed.method.override", "").split(","))
+                .map(String::trim)
+                .anyMatch(targetMethod::equals);
+    }
+
     public static Route route(Http.Request request) {
         if (Logger.isTraceEnabled()) {
             Logger.trace("Route: " + request.path + " - " + request.querystring);
         }
-        // request method may be overridden if a x-http-method-override parameter
-        // is given
-        if (request.querystring != null && methodOverride.matches(request.querystring)) {
+        // request method may be overridden if a x-http-method-override parameter is given (PF-170)
+        if (request.querystring != null) {
             Matcher matcher = methodOverride.matcher(request.querystring);
-            if (matcher.matches()) {
+            if (matcher.matches() && isMethodOverrideAllowed(request.method, matcher.group("method"))) {
                 if (Logger.isTraceEnabled()) {
                     Logger.trace("request method %s overridden to %s ", request.method, matcher.group("method"));
                 }
