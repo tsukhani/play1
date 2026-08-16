@@ -44,8 +44,9 @@ require:    &allDependencies
     # PF-89: JUnit 6.0.x unifies Jupiter, Platform, and Vintage onto a single
     # shared version. Java 17 baseline (already met by JDK 25 toolchain). API
     # surface used by play.test.{BaseTest, FunctionalTest, PlayJUnitExtension,
-    # TestEngine} is unchanged from 5.13 — see documentation/assessments/PF-89-junit-6-upgrade.md
-    # for the full audit. Downstream consumers using junit-vintage-engine must
+    # TestEngine} is unchanged from 5.13. The full audit was a one-off migration
+    # doc, purged by PF-90 (358e7e2ba); recover it from 596e64a3f if ever needed.
+    # Downstream consumers using junit-vintage-engine must
     # align their vintage pin to 6.0.x (jclaw owns its own follow-up).
     - org.junit.jupiter -> junit-jupiter-api 6.1.2
     - org.junit.jupiter -> junit-jupiter-engine 6.1.2
