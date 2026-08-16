@@ -42,7 +42,7 @@ export PATH=$PATH:/opt/play
 ```
 cd ~/projects && play new myFirstApp
 ```
-   (Optional: pass `--frontend` to scaffold a Nuxt 3 frontend alongside the
+   (Optional: pass `--frontend` to scaffold a Nuxt 4 frontend alongside the
    Java app.)
 5. Run the created application:
 ```

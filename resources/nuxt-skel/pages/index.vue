@@ -9,7 +9,7 @@ const backendPort = useRuntimeConfig().public.backendPort
   <div>
     <div class="mb-8">
       <h2 class="text-2xl font-semibold text-gray-900 mb-2">Your application is ready</h2>
-      <p class="text-gray-500">Nuxt 3 frontend connected to Play backend.</p>
+      <p class="text-gray-500">Nuxt 4 frontend connected to Play backend.</p>
     </div>
 
     <div class="bg-white border border-gray-200 rounded-lg p-6">

@@ -4,7 +4,7 @@ import play.mvc.Controller;
 import com.google.gson.JsonObject;
 
 /**
- * API controller for the Nuxt 3 frontend.
+ * API controller for the Nuxt 4 frontend.
  * All endpoints are prefixed with /api/ in the routes file.
  */
 public class ApiController extends Controller {
