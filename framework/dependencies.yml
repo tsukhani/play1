@@ -189,7 +189,7 @@ require:    &allDependencies
     - com.fasterxml.jackson.dataformat -> jackson-dataformat-xml 2.22.1
     - com.fasterxml.jackson.dataformat -> jackson-dataformat-yaml 2.22.1
     - com.fasterxml.jackson.datatype -> jackson-datatype-jsr310 2.22.1
-    - com.fasterxml.woodstox -> woodstox-core 7.2.1
+    - com.fasterxml.woodstox -> woodstox-core 7.2.2
     - org.codehaus.woodstox -> stax2-api 4.3.0
     # PF-12: OpenAPI 3 spec generation. swagger-models supplies the OpenAPI
     # object graph; swagger-core supplies Json/Yaml pretty-printers that wrap
@@ -251,8 +251,8 @@ require:    &allDependencies
     - com.squareup.okhttp3 -> okhttp 5.4.0
     - com.squareup.okhttp3 -> okhttp-jvm 5.4.0
     - com.squareup.okhttp3 -> okhttp-sse 5.4.0
-    - com.squareup.okio -> okio 3.18.0
-    - com.squareup.okio -> okio-jvm 3.18.0
+    - com.squareup.okio -> okio 3.18.1
+    - com.squareup.okio -> okio-jvm 3.18.1
     - org.jetbrains.kotlin -> kotlin-stdlib 2.4.10
 
 # Default repositories, used for all projects
