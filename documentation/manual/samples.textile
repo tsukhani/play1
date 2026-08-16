@@ -1,6 +1,6 @@
 h1. Sample applications
 
-This Play 1.12 fork no longer ships in-tree sample applications. The historical @samples-and-tests/@ directory was removed during the modernization phase — see the "1.12.x release notes":releases/release1.12.x/releasenotes-1.12.x for context.
+This Play 1.12 fork no longer ships in-tree sample applications. The historical @samples-and-tests/@ directory was removed during the modernization phase — see the "1.12.0 release notes":releases/release1.12.x/releasenotes-1.12.0 for context.
 
 Instead, generate a fresh app with:
 

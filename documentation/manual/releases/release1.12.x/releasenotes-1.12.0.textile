@@ -222,7 +222,7 @@ The base PF-13 surface emits JVM and HTTP metrics. PF-85 / PF-86 / PF-87 extend 
 
 h4. 1.12.40 — JUnit 6.0.x upgrade (PF-89)
 
-The framework moves from JUnit Jupiter 5.13.4 + Platform 1.13.4 to the unified JUnit 6.0.3 line. JUnit 6.0 keeps the Jupiter Extension API and Platform Launcher API surfaces stable; the framework's @play.test.{BaseTest, FunctionalTest, PlayJUnitExtension, TestEngine}@ classes recompile and run unchanged. See @documentation/assessments/PF-89-junit-6-upgrade.md@ for the full Phase A audit covering all six investigation items called out by the ticket.
+The framework moves from JUnit Jupiter 5.13.4 + Platform 1.13.4 to the unified JUnit 6.0.3 line. JUnit 6.0 keeps the Jupiter Extension API and Platform Launcher API surfaces stable; the framework's @play.test.{BaseTest, FunctionalTest, PlayJUnitExtension, TestEngine}@ classes recompile and run unchanged. The full Phase A audit, covering all six investigation items called out by the ticket, was a one-off migration document later removed by PF-90; it remains readable in git history at commit @596e64a3f@.
 
 * *Six version-string changes* in @framework/dependencies.yml@: @junit-jupiter-api@, @junit-jupiter-engine@, @junit-jupiter-params@, @junit-platform-launcher@, @junit-platform-engine@, @junit-platform-commons@ → @6.0.3@. JUnit 6.0 unifies these onto a single shared version (no more 5.x-Jupiter / 1.x-Platform split).
 * *Java 17 baseline* — already met by the JDK 25 toolchain; no action.

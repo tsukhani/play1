@@ -24,4 +24,4 @@ The 1.0.3 release is the first one to be officially supported by the new "http:/
 
 !images/dashboard_preview!
 
-p(note). Next release: %(next)"Play 1.1 release notes":releasenotes-1.1%
+p(note). Next release: %(next)"Play 1.1 release notes":../release1.1.x/releasenotes-1.1%
