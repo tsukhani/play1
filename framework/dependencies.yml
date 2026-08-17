@@ -200,9 +200,9 @@ require:    &allDependencies
     # would pull JAX-RS, which Play does not use. jackson-dataformat-yaml +
     # jackson-datatype-jsr310 are runtime peers of swagger-core's Yaml.mapper()
     # and ObjectMapper customizations.
-    - io.swagger.core.v3 -> swagger-models 2.2.52
-    - io.swagger.core.v3 -> swagger-core 2.2.52
-    - io.swagger.core.v3 -> swagger-annotations 2.2.52
+    - io.swagger.core.v3 -> swagger-models 2.2.53
+    - io.swagger.core.v3 -> swagger-core 2.2.53
+    - io.swagger.core.v3 -> swagger-annotations 2.2.53
     # PF-13: Micrometer + Prometheus exposition. micrometer-core ships the meter
     # registry + bundled JVM binders; micrometer-registry-prometheus carries
     # the PrometheusMeterRegistry that scrapes to OpenMetrics text. From
