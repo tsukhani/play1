@@ -185,11 +185,11 @@ require:    &allDependencies
     # pinned at 2.22 by the Jackson 2.22.x BOM (annotations is stable across
     # point releases).
     - com.fasterxml.jackson.core -> jackson-annotations 2.22
-    - com.fasterxml.jackson.core -> jackson-core 2.22.1
-    - com.fasterxml.jackson.core -> jackson-databind 2.22.1
-    - com.fasterxml.jackson.dataformat -> jackson-dataformat-xml 2.22.1
-    - com.fasterxml.jackson.dataformat -> jackson-dataformat-yaml 2.22.1
-    - com.fasterxml.jackson.datatype -> jackson-datatype-jsr310 2.22.1
+    - com.fasterxml.jackson.core -> jackson-core 2.22.2
+    - com.fasterxml.jackson.core -> jackson-databind 2.22.2
+    - com.fasterxml.jackson.dataformat -> jackson-dataformat-xml 2.22.2
+    - com.fasterxml.jackson.dataformat -> jackson-dataformat-yaml 2.22.2
+    - com.fasterxml.jackson.datatype -> jackson-datatype-jsr310 2.22.2
     - com.fasterxml.woodstox -> woodstox-core 7.2.2
     - org.codehaus.woodstox -> stax2-api 4.3.0
     # PF-12: OpenAPI 3 spec generation. swagger-models supplies the OpenAPI
