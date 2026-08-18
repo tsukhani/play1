@@ -9,6 +9,7 @@ GET     /events                    TestController.events
 GET     /benchSse                  TestController.benchSse
 GET     /heapUsed                  TestController.heapUsed
 GET     /boom                      TestController.boom
+GET     /binary                    TestController.binaryFile
 GET     /ping                      TestController.ping
 GET     /pingRo                    TestController.pingReadonly
 GET     /count                     TestController.count

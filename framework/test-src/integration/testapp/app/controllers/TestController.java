@@ -31,6 +31,16 @@ public class TestController extends Controller {
         index();
     }
 
+    /**
+     * Serves a real File through renderBinary, which sets {@code response.direct = file}
+     * and so exercises PlayHandler.copyResponse's File branch (including its 304
+     * fast-path) — the other static route, /public/, goes through serveStatic instead.
+     * Used by {@link integration.NotModifiedKeepAliveTest}.
+     */
+    public static void binaryFile() {
+        renderBinary(play.Play.getFile("public/test.txt"));
+    }
+
     public static void json() {
         JsonObject obj = new JsonObject();
         obj.addProperty("status", "ok");

@@ -625,7 +625,11 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
             nettyResponse = addEtag(nettyRequest, nettyResponse, file);
             if (nettyResponse.status().equals(HttpResponseStatus.NOT_MODIFIED)) {
                 Channel ch = ctx.channel();
-                ChannelFuture writeFuture = ch.writeAndFlush(nettyResponse);
+                // A headers-only DefaultHttpResponse leaves the Netty 4 encoder mid-message, so every
+                // later request on this keep-alive connection goes unanswered. Terminate it as the
+                // InputStream/ChunkedInput 304 branches below do.
+                ch.write(nettyResponse);
+                ChannelFuture writeFuture = ch.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT);
                 if (!keepAlive) {
                     writeFuture.addListener(ChannelFutureListener.CLOSE);
                 }
@@ -1182,7 +1186,9 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
 
                     if (nettyResponse.status().equals(HttpResponseStatus.NOT_MODIFIED)) {
                         Channel ch = ctx.channel();
-                        ChannelFuture writeFuture = ch.writeAndFlush(nettyResponse);
+                        // Same Netty 4 message-termination requirement as the copyResponse 304 branch.
+                        ch.write(nettyResponse);
+                        ChannelFuture writeFuture = ch.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT);
                         if (!keepAlive) {
                             writeFuture.addListener(ChannelFutureListener.CLOSE);
                         }
