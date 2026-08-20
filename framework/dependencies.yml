@@ -76,7 +76,7 @@ require:    &allDependencies
     - org.eclipse.jdt -> ecj 3.46.0
     - org.hibernate.orm -> hibernate-core 7.4.5.Final
     - org.hibernate.models -> hibernate-models 1.3.0
-    - net.bytebuddy -> byte-buddy 1.18.11
+    - net.bytebuddy -> byte-buddy 1.18.12
     - jakarta.persistence -> jakarta.persistence-api 3.2.0
     - org.hibernate.validator -> hibernate-validator 9.1.3.Final
     - io.smallrye -> jandex 3.6.0
@@ -227,7 +227,7 @@ require:    &allDependencies
     # opentelemetry-proto 1.10.0-alpha's gencode targets protobuf-java 4.34.0, and
     # the 4.35.x runtime is compatible with that gencode (runtime >= gencode, same
     # major). transitiveDependencies is off, so this explicit pin governs.
-    - com.google.protobuf -> protobuf-java 4.35.1
+    - com.google.protobuf -> protobuf-java 4.36.0
     - io.prometheus -> prometheus-metrics-core 1.8.0
     - io.prometheus -> prometheus-metrics-model 1.8.0
     - io.prometheus -> prometheus-metrics-config 1.8.0
@@ -249,9 +249,9 @@ require:    &allDependencies
     # okhttp-sse ships a single jar without the -jvm split. kotlin-stdlib is a
     # mandatory runtime peer (OkHttp 5 is implemented in Kotlin) — Ivy can't
     # discover it transitively under transitiveDependencies: false.
-    - com.squareup.okhttp3 -> okhttp 5.4.0
-    - com.squareup.okhttp3 -> okhttp-jvm 5.4.0
-    - com.squareup.okhttp3 -> okhttp-sse 5.4.0
+    - com.squareup.okhttp3 -> okhttp 5.5.0
+    - com.squareup.okhttp3 -> okhttp-jvm 5.5.0
+    - com.squareup.okhttp3 -> okhttp-sse 5.5.0
     - com.squareup.okio -> okio 3.18.1
     - com.squareup.okio -> okio-jvm 3.18.1
     - org.jetbrains.kotlin -> kotlin-stdlib 2.4.10
