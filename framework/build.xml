@@ -2,12 +2,19 @@
 
 <project name="play! framework" default="jar" basedir="." xmlns:if="ant:if" xmlns:unless="ant:unless">
 
-    <property name="baseversion" value="1.13.57" />
+    <property name="baseversion" value="1.13.58" />
     <property name="build-release" value="25" />
     <!-- Loaded as a startup -javaagent in test forks so Mockito's inline mock-maker
          doesn't have to self-attach byte-buddy-agent at runtime (which JDK 21+ warns
          about and a future JDK will disallow). Bump in lock-step with byte-buddy-*.jar. -->
     <property name="bytebuddy.agent.jar" value="${basedir}/lib-test/byte-buddy-agent-1.18.10.jar" />
+
+    <!-- Targets that shell out to the Gradle wrapper have to pick the right script:
+         the CI matrix runs `ant test` on windows-latest, where the POSIX `gradlew`
+         is not executable. -->
+    <condition property="gradlew.executable" value="${basedir}/../gradlew.bat" else="${basedir}/../gradlew">
+        <os family="windows" />
+    </condition>
 
     <path id="project.classpath">
         <fileset dir=".">
@@ -180,6 +187,19 @@
         <ant antfile="build.xml" target="unittest" dir="../modules/docviewer" />
     </target>
 
+    <!-- PF-171: the gradle-plugin's TestKit suite. It lives in a separate Gradle
+         build, so nothing in the ant sourcesets reaches it and `ant test` used to
+         pass while the plugin shipped untested — which is how a Windows defect in
+         a plugin *resource* (bundle-play.sh) reached a user. Wired into `test`
+         rather than `unittest` so the fast inner loop stays fast. Mirrors
+         module-unittest: a sibling build's tests, run after the framework's own. -->
+    <target name="gradle-plugin-test" description="run the gradle-plugin's TestKit suite">
+        <exec executable="${gradlew.executable}" dir="${basedir}/.." failonerror="true">
+            <arg value=":gradle-plugin:test" />
+            <arg value="--console=plain" />
+        </exec>
+    </target>
+
     <!-- Tests -->
     <!-- PF-79: depend on agent-jar so consumers (integration-test, test-single,
          unittest) that fork a JVM with -javaagent:play-${version}.jar
@@ -252,6 +272,9 @@
 
         <echo message="Running integration tests" />
         <antcall target="integration-test" />
+
+        <echo message="Running gradle-plugin tests" />
+        <antcall target="gradle-plugin-test" />
 
         <antcall target="test-success" />
     </target>
@@ -366,7 +389,7 @@
         <mkdir dir="dist" />
         <mkdir dir="dist/play-${version}" />
         <copy todir="dist/play-${version}">
-            <fileset dir=".." excludes=".github/**,**/cobertura.ser,**/*.pyc,**/*.log,hs_err*,.*,.*/*,build/**,framework/gradle-plugin/build/**,**/.gradle/**,**/.kotlin/**,framework/dist/**,framework/tailwindcss,framework/test-src/**,id,**/.bzr/**,**/.git/**,*.bzrignore,framework/classes/**,framework/tests-results/**,test-result/**,framework/test-result/**,docs/**,renovate.json5,modules/**,openspec/**,.claude/**,CLAUDE.md,CONTRIBUTING.md,CODE_OF_CONDUCT.md,_bmad/**,_bmad-output/**,.agents/**,AGENTS.md" />
+            <fileset dir=".." excludes=".github/**,**/cobertura.ser,**/*.pyc,**/*.log,hs_err*,.*,.*/*,build/**,framework/gradle-plugin/build/**,framework/gradle-plugin/bin/**,**/.gradle/**,**/.kotlin/**,framework/dist/**,framework/tailwindcss,framework/test-src/**,id,**/.bzr/**,**/.git/**,*.bzrignore,framework/classes/**,framework/tests-results/**,test-result/**,framework/test-result/**,docs/**,renovate.json5,modules/**,openspec/**,.claude/**,CLAUDE.md,CONTRIBUTING.md,CODE_OF_CONDUCT.md,_bmad/**,_bmad-output/**,.agents/**,AGENTS.md" />
             <fileset dir=".." includes="modules/docviewer/**,modules/testrunner/**" excludes="**/*.pyc" />
         </copy>
     </target>

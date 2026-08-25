@@ -51,7 +51,10 @@ jobs:
         with:
           name: tests-results-${{ matrix.os }}
           if-no-files-found: ignore
-          path: ./framework/tests-results/
+          path: |
+            ./framework/tests-results/
+            ./framework/gradle-plugin/build/reports/tests/
+            ./framework/gradle-plugin/build/test-results/
 
   build:
     needs:

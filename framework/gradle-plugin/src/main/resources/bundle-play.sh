@@ -16,6 +16,25 @@ FW_JAR="framework/play-${FW_VERSION}.jar"
 PID_FILE="${PLAY_PID_FILE:-server.pid}"
 PLAY_ID="${PLAY_ID:-prod}"
 
+# Git Bash / MSYS2 / Cygwin drive a *native* Windows JVM from a POSIX shell,
+# so values handed to java must be in Windows form even though the shell is
+# not. Two of them differ: java.exe splits -classpath on ';' rather than ':',
+# and it cannot resolve '/c/Users/...' (it reads the leading slash as the
+# current drive's root and looks for C:\c\Users\...). Relative values need no
+# translation and are deliberately left alone -- the .classpath entries and
+# -javaagent below resolve against this script's own `cd "$SCRIPT_DIR"`, which
+# the native process inherits already translated. Where a relative path will
+# do, it is the portable answer (PF-171).
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) WINDOWS_JVM=1; CP_SEP=';' ;;
+    *)                    WINDOWS_JVM=0; CP_SEP=':' ;;
+esac
+
+# Absolute POSIX path -> native form. No-op off Windows.
+native_path() {
+    if [ "$WINDOWS_JVM" = 1 ]; then cygpath -w "$1"; else printf '%s\n' "$1"; fi
+}
+
 CMD="${1:-help}"
 [ $# -gt 0 ] && shift
 
@@ -104,12 +123,12 @@ fi
 build_java_cmd() {
     [ -f "$FW_JAR" ]   || { echo "play: $FW_JAR not found (run from bundle root)" >&2; exit 1; }
     [ -f .classpath ]  || { echo "play: .classpath not found at $SCRIPT_DIR" >&2; exit 1; }
-    CP=$(tr '\n' ':' < .classpath | sed 's/:$//')
+    CP=$(tr '\n' "$CP_SEP" < .classpath | sed "s/${CP_SEP}\$//")
     JAVA_CMD=(
         java
         --enable-native-access=ALL-UNNAMED
         -javaagent:"$FW_JAR"
-        -Dapplication.path="$SCRIPT_DIR"
+        -Dapplication.path="$(native_path "$SCRIPT_DIR")"
         # Pin frameworkPath to the bundle's framework/ subdir so it stays
         # distinct from application.path (= $SCRIPT_DIR). Without this,
         # Play.init's auto-detect computes frameworkPath from the play jar
@@ -121,7 +140,7 @@ build_java_cmd() {
         # precompiled template "from_play/conf/routes" because precompile
         # produced "conf/routes". Server.main reads this property and
         # sets Play.frameworkPath before Play.init runs.
-        -Dframework.path="$SCRIPT_DIR/framework"
+        -Dframework.path="$(native_path "$SCRIPT_DIR/framework")"
         -Dplay.id="$PLAY_ID"
         -Dplay.version="$FW_VERSION"
         -Dprecompiled=true

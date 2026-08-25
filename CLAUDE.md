@@ -86,7 +86,8 @@ ant compile                      # Compile only (no clean)
 # Tests
 ant unittest                     # Framework JUnit tests only (fast inner loop)
 ant integration-test             # Real-Netty integration tests (test-src/integration/)
-ant test                         # Full verification: clean + jar + unittest + integration-test
+ant test                         # Full verification: clean + jar + unittest + integration-test + gradle-plugin-test
+ant gradle-plugin-test           # The gradle-plugin's TestKit suite alone (shells out to :gradle-plugin:test)
 ant test-single -Dtestclass=play.mvc.RouterTest  # Single test class (no package prefix in path, use dots)
 ant compile-tests                # Compile tests + copy fixture resources, no run
 
@@ -97,6 +98,7 @@ ant resolve                      # Resolve framework/dependencies.yml via Ivy an
 ```
 
 The Gradle plugin lives at `framework/gradle-plugin/` and is built via `./gradlew :gradle-plugin:build` from the repo root.
+Its own tests are gated by `ant test` via the `gradle-plugin-test` target (PF-171) — see Testing Patterns.
 
 ## Architecture
 
@@ -140,6 +142,7 @@ Built-in modules in `modules/`: `testrunner` and `docviewer`. Each has its own `
 - Framework unit tests: `framework/test-src/play/**/*Test.java` (JUnit 5) — invoked by `ant unittest`
 - Integration tests: `framework/test-src/integration/**/*Test.java` (JUnit 5) — bind a real Netty server, exercise HTTP/1.1, h2 ALPN, h3, the SSE pipeline, and PlayHandler error paths. Invoked by `ant integration-test`. Test-app fixture lives at `framework/test-src/integration/testapp/`.
 - Module tests: each `modules/*/build.xml` has a `unittest` target run by the framework's `module-unittest` (itself invoked at the end of `ant unittest`). docviewer implements it; testrunner is still a no-op. A module's target only sees what that build compiles — for docviewer that is `src/` alone.
+- Gradle-plugin tests: `framework/gradle-plugin/src/test/kotlin/**/*Test.kt` (JUnit 5 + Gradle TestKit) — invoked by `ant gradle-plugin-test`, which `ant test` calls after the integration suite. The plugin is a separate Gradle build, so no ant sourceset reaches it; before PF-171 the suite ran only on a manual `./gradlew :gradle-plugin:build` and the plugin shipped untested by CI. Wired into `test` rather than `unittest` so the fast inner loop stays fast. `BundleLauncherTest` is `@DisabledOnOs(WINDOWS)` — it drives the `#!/bin/bash` bundle launcher through ProcessBuilder and simulates the MSYS branch from macOS/Linux with stubbed `uname`/`cygpath`.
 - Test data via YAML fixtures loaded with `Fixtures.load("data.yml")`
 
 **Testing module `app/` code (PF-164).** A module's `app/` — controllers, helpers, `*Plugin` — is compiled at *runtime* by `ApplicationClassloader` when the module is mounted, so it is not part of any ant-compiled sourceset and no JUnit test can reference it. Cover it by mounting the module into the integration fixture instead: `testapp/modules/<name>` is a marker file containing a path (`../modules/docviewer`), which `Play.loadModules()` resolves. Two gotchas — `Play.addModule` puts the module's `app/` on `javaPath` but *not* its `lib/*.jar` on the classpath, so module jars need adding explicitly (see `classpath.integration` in `framework/build.xml`); and the integration suite boots one shared `Play` in a single JVM, so a mounted module's routes and plugin are live for every integration test. This matters for real bugs: PF-163 was an infinite redirect loop arising from the interaction of the enhancer's cross-action redirect, reverse routing, and `prependRoute` precedence — reproducible only in a booted app, never in a unit test.
