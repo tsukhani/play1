@@ -73,7 +73,13 @@ Batch-merge per ecosystem and run **one** gate per ecosystem. Dependency bumps w
     SKEL=$(mktemp -d) && cp -R resources/nuxt-skel/. "$SKEL"/ \
       && cd "$SKEL" && pnpm install && pnpm run generate
     ```
+    Bare `pnpm` is correct here — pnpm's `manage-package-manager-versions` is on by default, so it reads the skel's `packageManager` field and self-switches to the version under test rather than using your ambient one.
+
     The `package.json` carries `%APPLICATION_IDENTIFIER%-frontend` as its name — a placeholder the scaffolder substitutes. pnpm tolerates it; if a future pnpm major rejects it, that is a real finding about the skel, not a reason to hand-edit the copy. Delete the scratch dir when done. A green generate is the gate; a failure means the bump is reported and dropped, not forced through.
+
+    **On a failure, run the control before blaming the bump.** Rebuild an identical scratch copy with `packageManager` pinned back to the *previous* version and repeat `pnpm install && pnpm run generate`. If the control is green, the bump caused it and you can name the mechanism; if the control fails too, you have found a pre-existing skel defect and the bump is innocent. This is the difference between a report the user can act on and one they have to re-investigate — the pnpm 10→11 finding (`dc80c8cb1`) was only trustworthy because the control isolated the single variable.
+
+    **When testing a fix, force a real reinstall.** A change to `pnpm-workspace.yaml` (or any pnpm setting) will not take effect on a tree that already has `node_modules/` — pnpm's surface-hash check reports `Already up to date` and skips re-resolution, so a working fix looks broken. `rm -rf node_modules .nuxt pnpm-lock.yaml` first. This is the same false-green shape as the vendored-jar trap in step 13: a tool reporting success while ignoring the change you just made.
 
 13. **WRAPPER + JAVA — merge all, resolve, verify, commit, then one `ant test`.**
     - Merge each in sequence: `/usr/bin/git merge --no-edit github/renovate/<b>`. On a `dependencies.yml` version-pin conflict, resolve toward the renovate bump (take the higher/incoming version) and note it; on a non-trivial conflict, stop and surface it.
