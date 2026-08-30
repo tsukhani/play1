@@ -211,11 +211,11 @@ require:    &allDependencies
     # legacy io.prometheus:simpleclient line. HdrHistogram + LatencyUtils are
     # micrometer-core runtime transitives — declared explicitly because
     # transitiveDependencies is off.
-    - io.micrometer -> micrometer-core 1.17.0
-    - io.micrometer -> micrometer-commons 1.17.0
-    - io.micrometer -> micrometer-observation 1.17.0
-    - io.micrometer -> micrometer-registry-prometheus 1.17.0
-    - io.micrometer -> micrometer-registry-otlp 1.17.0
+    - io.micrometer -> micrometer-core 1.17.1
+    - io.micrometer -> micrometer-commons 1.17.1
+    - io.micrometer -> micrometer-observation 1.17.1
+    - io.micrometer -> micrometer-registry-prometheus 1.17.1
+    - io.micrometer -> micrometer-registry-otlp 1.17.1
     # micrometer-registry-otlp transitives: opentelemetry-proto serializes the
     # push payload, protobuf-java is its peer. The Prometheus side ships its
     # own shaded protobuf so the unshaded one declared here is OTLP-only.
