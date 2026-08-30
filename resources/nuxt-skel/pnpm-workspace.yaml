@@ -1,0 +1,12 @@
+# pnpm 11 refuses to install when a dependency's build script is neither
+# approved nor declined -- it exits 1 with ERR_PNPM_IGNORED_BUILDS where
+# pnpm 10 only warned. `pnpm run` triggers this through its implicit
+# deps-status install, so without this file `pnpm run generate` fails
+# before Nuxt starts. esbuild arrives transitively via Nuxt's Vite build.
+#
+# The setting lives here rather than under a `pnpm` key in package.json:
+# pnpm 11 reads settings from this file only. It is also spelled
+# `allowBuilds`, not the `onlyBuiltDependencies` pnpm 10 used -- pnpm 11
+# auto-migrates the old key and rewrites this file if it finds it.
+allowBuilds:
+  esbuild: true
