@@ -151,12 +151,12 @@ require:    &allDependencies
     # across the platforms users run Play on (macOS arm64/x86_64, Linux
     # arm64/x86_64, Windows x86_64). tcnative selects the matching native at
     # runtime; unused ones are dead weight but don't load.
-    - io.netty -> netty-tcnative-classes 2.0.81.Final
-    - io.netty -> netty-tcnative-boringssl-static 2.0.81.Final osx-aarch_64
-    - io.netty -> netty-tcnative-boringssl-static 2.0.81.Final osx-x86_64
-    - io.netty -> netty-tcnative-boringssl-static 2.0.81.Final linux-aarch_64
-    - io.netty -> netty-tcnative-boringssl-static 2.0.81.Final linux-x86_64
-    - io.netty -> netty-tcnative-boringssl-static 2.0.81.Final windows-x86_64
+    - io.netty -> netty-tcnative-classes 2.0.83.Final
+    - io.netty -> netty-tcnative-boringssl-static 2.0.83.Final osx-aarch_64
+    - io.netty -> netty-tcnative-boringssl-static 2.0.83.Final osx-x86_64
+    - io.netty -> netty-tcnative-boringssl-static 2.0.83.Final linux-aarch_64
+    - io.netty -> netty-tcnative-boringssl-static 2.0.83.Final linux-x86_64
+    - io.netty -> netty-tcnative-boringssl-static 2.0.83.Final windows-x86_64
     # com.aayushatharva.brotli4j is the JNI wrapper around the Brotli C lib that
     # StandardCompressionOptions.brotli() loads. brotli4j publishes per-platform
     # natives as separate artifactIds (NOT Ivy classifiers); the `service` jar is
