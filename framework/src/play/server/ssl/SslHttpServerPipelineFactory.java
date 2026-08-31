@@ -74,6 +74,18 @@ public class SslHttpServerPipelineFactory extends HttpServerPipelineFactory {
         // membership is mutated.
         pipeline.addLast("handshake-exc-suppressor", new SslHandshakeExceptionSuppressor());
 
+        // PF-172: the handshake suppressor above self-removes on a successful handshake, so
+        // steady-state traffic on the HTTPS port had no suppressor at all — the gap between
+        // PF-109 (TLS handshake window) and PF-110 (plain-HTTP, all windows). This one does
+        // not self-remove. Ordered AFTER the handshake suppressor so PF-109 keeps first refusal
+        // during its window and its behaviour is unchanged byte for byte; once it removes
+        // itself this handler inherits the same position — downstream of ssl, upstream of
+        // everything protocol-specific. That single position covers both ALPN outcomes: the h2
+        // parent channel (which has no catch-all, PlayHandler being per-stream) and the
+        // http/1.1 chain (where SslPlayHandler would otherwise log the reset as an
+        // empty-message ERROR with a stack trace). One instance per channel — not @Sharable.
+        pipeline.addLast("steady-exc-suppressor", new SslSteadyStateExceptionSuppressor());
+
         // Defer protocol-specific pipeline construction to the ALPN negotiation handler.
         // The h2 branch installs the frame codec and multiplex handler; the http/1.1
         // branch calls back into installHttp1Chain so the configurable

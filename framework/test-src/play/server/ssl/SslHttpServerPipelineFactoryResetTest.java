@@ -6,10 +6,18 @@ import java.net.Socket;
 import java.net.SocketException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.SecureRandom;
+import java.security.cert.X509Certificate;
 import java.util.Properties;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLParameters;
+import javax.net.ssl.SSLSocket;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -26,9 +34,11 @@ import io.netty.channel.socket.nio.NioServerSocketChannel;
 
 import play.Play;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * PF-109: end-to-end wiring check that a {@code "Connection reset"} IOException
@@ -58,8 +68,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * position. The pre-existing {@link SslHandshakeExceptionSuppressorTest}
  * covers the handler's branch behavior (which messages are suppressed, which
  * propagate, self-removal on handshake completion).
+ *
+ * <p>PF-172 adds the second half of the story: the handshake suppressor removes
+ * itself once the handshake succeeds, so
+ * {@link #connectionResetAfterH2NegotiationDoesNotReachDefaultPipelineTail} drives a
+ * real TLS handshake to the point where the h2 pipeline is live and re-runs the same
+ * assertion against {@code SslSteadyStateExceptionSuppressor}. The h2 leg is the one
+ * that actually produced the reported WARN — on that leg the parent channel has no
+ * catch-all at all, {@code PlayHandler} being installed per-stream.
  */
-class SslHttpServerPipelineFactoryHandshakeResetTest {
+class SslHttpServerPipelineFactoryResetTest {
 
     private Properties savedConfig;
     private File savedApplicationPath;
@@ -171,6 +189,131 @@ class SslHttpServerPipelineFactoryHandshakeResetTest {
                         + "before it reaches the tail proxy. Reaching the proxy means the same exception would "
                         + "have reached DefaultChannelPipeline.tail and triggered the \"reached at the tail of "
                         + "the pipeline\" WARN.");
+    }
+
+    @Test
+    void connectionResetAfterH2NegotiationDoesNotReachDefaultPipelineTail() throws Exception {
+        generatePemCertAndKey("certs/host.cert", "certs/host.key");
+        Play.configuration.setProperty("certificate.file", "certs/host.cert");
+        Play.configuration.setProperty("certificate.key.file", "certs/host.key");
+
+        EventLoopGroup boss = new NioEventLoopGroup(1);
+        EventLoopGroup worker = new NioEventLoopGroup();
+        AtomicReference<Channel> childChannelRef = new AtomicReference<>();
+        AtomicReference<Throwable> reachedTail = new AtomicReference<>();
+        CountDownLatch childActive = new CountDownLatch(1);
+
+        try {
+            SslHttpServerPipelineFactory productionFactory = new SslHttpServerPipelineFactory();
+            ServerBootstrap b = new ServerBootstrap()
+                    .group(boss, worker)
+                    .channel(NioServerSocketChannel.class)
+                    .childHandler(new ChannelInitializer<Channel>() {
+                        @Override
+                        protected void initChannel(Channel ch) throws Exception {
+                            ch.pipeline().addLast("test-probe", new ChannelInboundHandlerAdapter() {
+                                @Override
+                                public void channelActive(ChannelHandlerContext ctx) {
+                                    childChannelRef.set(ctx.channel());
+                                    childActive.countDown();
+                                    ctx.fireChannelActive();
+                                }
+                            });
+                            productionFactory.initChannel(ch);
+                            // No tail-spy here, unlike the test above: ALPN appends the h2 chain
+                            // on handshake completion, so a spy installed now would end up in
+                            // the middle of the pipeline rather than proxying for its tail. It
+                            // is added below, once negotiation has finished.
+                        }
+                    });
+            Channel server = b.bind(0).sync().channel();
+            int port = ((InetSocketAddress) server.localAddress()).getPort();
+
+            try (SSLSocket s = openH2TlsClient(port)) {
+                // A real handshake, unlike the test above — only a completed handshake makes
+                // SslHandshakeExceptionSuppressor self-remove and makes Http2OrHttp1Negotiator
+                // install the h2 chain. That is precisely the state the bug report describes,
+                // and the state neither PF-109 nor PF-110 covered.
+                s.startHandshake();
+                assertEquals("h2", s.getApplicationProtocol(),
+                        "client must negotiate h2 — the leg whose parent channel has no catch-all");
+                assertTrue(childActive.await(5, TimeUnit.SECONDS),
+                        "server child channel did not become active");
+                Channel child = childChannelRef.get();
+                assertNotNull(child);
+                awaitPipelineContains(child, "h2-frame-codec");
+
+                // Preconditions that keep this test from passing vacuously.
+                assertNull(child.pipeline().get("handshake-exc-suppressor"),
+                        "PF-109's suppressor must have self-removed; otherwise it, not PF-172's "
+                                + "handler, would be doing the suppressing");
+                assertNotNull(child.pipeline().get("steady-exc-suppressor"),
+                        "PF-172's suppressor must survive handshake completion");
+
+                // Install the tail-spy as the genuine last handler, then fire from the same
+                // event loop so pipeline mutation and traversal cannot race.
+                child.eventLoop().submit(() -> {
+                    child.pipeline().addLast("tail-spy", new ChannelInboundHandlerAdapter() {
+                        @Override
+                        public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
+                            reachedTail.set(cause);
+                        }
+                    });
+                    child.pipeline().fireExceptionCaught(new SocketException("Connection reset"));
+                }).sync();
+                // Yield to let the exceptionCaught chain land.
+                Thread.sleep(150);
+            }
+            server.close().sync();
+        } finally {
+            boss.shutdownGracefully(0, 1, TimeUnit.SECONDS);
+            worker.shutdownGracefully(0, 1, TimeUnit.SECONDS);
+        }
+
+        assertNull(reachedTail.get(),
+                "PF-172: SslSteadyStateExceptionSuppressor must consume the post-handshake "
+                        + "SocketException(\"Connection reset\") before it reaches the tail proxy. "
+                        + "Http2ConnectionHandler re-fires anything without an embedded Http2Exception, "
+                        + "so reaching the proxy means the same exception would have reached "
+                        + "DefaultChannelPipeline.tail and triggered the \"reached at the tail of the "
+                        + "pipeline\" WARN reported from JClaw.");
+    }
+
+    /**
+     * Open a JDK TLS client that offers only {@code h2} via ALPN. Trust-all: the cert is
+     * self-signed and generated per test run, so verification would only be testing openssl.
+     * Hostname verification is off by default on {@link SSLSocket} (no
+     * {@code endpointIdentificationAlgorithm} set), which is what we want for {@code localhost}.
+     */
+    private static SSLSocket openH2TlsClient(int port) throws Exception {
+        SSLContext clientCtx = SSLContext.getInstance("TLS");
+        clientCtx.init(null, new TrustManager[]{TRUST_ALL}, new SecureRandom());
+        SSLSocket socket = (SSLSocket) clientCtx.getSocketFactory().createSocket("localhost", port);
+        SSLParameters params = socket.getSSLParameters();
+        params.setApplicationProtocols(new String[]{"h2"});
+        socket.setSSLParameters(params);
+        socket.setSoTimeout(5000);
+        return socket;
+    }
+
+    private static final X509TrustManager TRUST_ALL = new X509TrustManager() {
+        @Override public void checkClientTrusted(X509Certificate[] chain, String authType) { }
+        @Override public void checkServerTrusted(X509Certificate[] chain, String authType) { }
+        @Override public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
+    };
+
+    /**
+     * The h2 chain is installed by the ALPN handler on the server's event loop, asynchronously
+     * with respect to the client's {@code startHandshake()} returning. Poll rather than sleep
+     * so the test is neither flaky nor slower than it needs to be.
+     */
+    private static void awaitPipelineContains(Channel ch, String handlerName) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (System.nanoTime() < deadline) {
+            if (ch.pipeline().get(handlerName) != null) return;
+            Thread.sleep(25);
+        }
+        fail("handler \"" + handlerName + "\" was never installed — ALPN negotiation did not complete");
     }
 
     private void generatePemCertAndKey(String certRelative, String keyRelative) throws Exception {

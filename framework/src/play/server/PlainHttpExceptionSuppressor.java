@@ -11,8 +11,10 @@ import play.Logger;
  * PF-110: consumes benign {@link IOException}s ({@code Connection reset},
  * {@code Broken pipe}) on the plain-HTTP pipeline before they can reach the
  * {@code DefaultChannelPipeline} tail and emit the "reached at the tail of the
- * pipeline" WARN. Symmetric to {@code SslHandshakeExceptionSuppressor} (PF-109)
- * which covers the TLS pipeline.
+ * pipeline" WARN. Symmetric to {@code SslHandshakeExceptionSuppressor} (PF-109),
+ * which covers the TLS handshake window, and to
+ * {@code SslSteadyStateExceptionSuppressor} (PF-172), which covers the TLS steady
+ * state.
  *
  * <p>Browsers routinely pre-open six speculative TCP connections per host and
  * tear down the losers via TCP RST as soon as a sibling wins (six-per-host
@@ -34,14 +36,15 @@ import play.Logger;
  *
  * <p>Unlike PF-109's SSL suppressor this handler does not self-remove: there is
  * no handshake event on the plain-HTTP pipeline, and steady-state RSTs are
- * exactly the case we want to keep silent. The handler is not {@code @Sharable}
+ * exactly the case we want to keep silent. PF-172 gave the TLS pipeline a
+ * non-self-removing handler of its own for the same reason. The handler is not {@code @Sharable}
  * because pipeline membership is per-channel.
  */
 final class PlainHttpExceptionSuppressor extends ChannelInboundHandlerAdapter {
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception {
-        if (cause instanceof IOException && isBenignReset(cause.getMessage())) {
+        if (BenignIoExceptions.isBenignReset(cause)) {
             if (Logger.isDebugEnabled()) {
                 Logger.debug("Plain-HTTP connection aborted by peer (%s); closing channel quietly",
                         cause.getMessage());
@@ -50,10 +53,5 @@ final class PlainHttpExceptionSuppressor extends ChannelInboundHandlerAdapter {
             return;
         }
         ctx.fireExceptionCaught(cause);
-    }
-
-    private static boolean isBenignReset(String message) {
-        if (message == null) return false;
-        return message.contains("Connection reset") || message.contains("Broken pipe");
     }
 }

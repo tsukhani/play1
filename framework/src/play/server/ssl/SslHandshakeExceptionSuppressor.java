@@ -9,6 +9,7 @@ import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.handler.ssl.SslHandshakeCompletionEvent;
 
 import play.Logger;
+import play.server.BenignIoExceptions;
 
 /**
  * PF-109: consumes benign IOExceptions that fire on the SSL pipeline during the TLS
@@ -35,7 +36,9 @@ import play.Logger;
  * </ul>
  *
  * <p>Self-removal: on a successful {@link SslHandshakeCompletionEvent} the handler
- * removes itself from the pipeline, so steady-state traffic is unaffected. The
+ * removes itself from the pipeline, so steady-state traffic is unaffected —
+ * post-handshake resets are the job of {@link SslSteadyStateExceptionSuppressor}
+ * (PF-172), which sits directly below this handler and does not self-remove. The
  * event is re-fired upstream first so {@code Http2OrHttp1Negotiator}'s own
  * removal logic still runs. The handler is not {@code @Sharable} because its
  * pipeline membership is mutated per channel.
@@ -48,7 +51,7 @@ final class SslHandshakeExceptionSuppressor extends ChannelInboundHandlerAdapter
             ctx.fireExceptionCaught(cause);
             return;
         }
-        if (cause instanceof IOException && isBenignReset(cause.getMessage())) {
+        if (BenignIoExceptions.isBenignReset(cause)) {
             if (Logger.isDebugEnabled()) {
                 Logger.debug("SSL handshake aborted by peer (%s); closing channel quietly",
                         cause.getMessage());
@@ -72,10 +75,5 @@ final class SslHandshakeExceptionSuppressor extends ChannelInboundHandlerAdapter
             return;
         }
         ctx.fireUserEventTriggered(evt);
-    }
-
-    private static boolean isBenignReset(String message) {
-        if (message == null) return false;
-        return message.contains("Connection reset") || message.contains("Broken pipe");
     }
 }
