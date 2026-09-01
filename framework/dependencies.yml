@@ -178,7 +178,7 @@ require:    &allDependencies
     - org.postgresql -> postgresql 42.7.13
     - org.slf4j -> slf4j-api 2.0.18
     - org.apache.logging.log4j -> log4j-slf4j2-impl 2.26.1
-    - org.yaml -> snakeyaml 2.6
+    - org.yaml -> snakeyaml 2.7
     # PF-26: Jackson XML replaces XStream for renderXml(Object). Jackson 2.12+
     # requires a non-default Stax provider, so woodstox-core + stax2-api are
     # mandatory companions, not optional. jackson-annotations versions are
@@ -227,7 +227,7 @@ require:    &allDependencies
     # opentelemetry-proto 1.10.0-alpha's gencode targets protobuf-java 4.34.0, and
     # the 4.35.x runtime is compatible with that gencode (runtime >= gencode, same
     # major). transitiveDependencies is off, so this explicit pin governs.
-    - com.google.protobuf -> protobuf-java 4.36.0
+    - com.google.protobuf -> protobuf-java 4.36.1
     - io.prometheus -> prometheus-metrics-core 1.8.0
     - io.prometheus -> prometheus-metrics-model 1.8.0
     - io.prometheus -> prometheus-metrics-config 1.8.0
