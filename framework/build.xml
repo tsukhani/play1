@@ -267,6 +267,9 @@
          tests (fastest signal first), then real-Netty integration tests. -->
     <target name="test" depends="clean,jar" description="full verification: unit + integration tests">
 
+        <echo message="Auditing framework/lib" />
+        <antcall target="audit-deps" />
+
         <echo message="Running unit tests" />
         <antcall target="unittest" />
 
@@ -357,6 +360,26 @@
         <antcall target="module-unittest" />
 
         <fail if="junit.failure" message="Unit test(s) failed. See reports!"/>
+    </target>
+
+    <!-- PF: fail the build on a jar in lib/ that nothing reaches and nobody has
+         justified in dependencies-audit.conf. Cheap (seconds) and placed first in
+         `test` so a dependency mistake surfaces before the suites run. Depends on
+         modules because a bundled module's jar is one of the analysis roots — asm is
+         reached only from testrunner, and auditing the framework alone would condemn
+         it. -Daudit.strict=false reports without failing, for triage. -->
+    <target name="audit-deps" depends="compile,modules" description="fail on unjustified jars in framework/lib (see dependencies-audit.conf)">
+        <property name="audit.strict" value="true"/>
+        <java classname="play.deps.DependencyAudit" fork="true" failonerror="true">
+            <classpath>
+                <pathelement location="classes"/>
+                <fileset dir="lib">
+                    <include name="*.jar"/>
+                </fileset>
+            </classpath>
+            <sysproperty key="framework.path" value="${basedir}"/>
+            <sysproperty key="audit.strict" value="${audit.strict}"/>
+        </java>
     </target>
 
     <target name="package" depends="artifact">

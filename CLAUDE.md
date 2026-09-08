@@ -86,7 +86,7 @@ ant compile                      # Compile only (no clean)
 # Tests
 ant unittest                     # Framework JUnit tests only (fast inner loop)
 ant integration-test             # Real-Netty integration tests (test-src/integration/)
-ant test                         # Full verification: clean + jar + unittest + integration-test + gradle-plugin-test
+ant test                         # Full verification: clean + jar + audit-deps + unittest + integration-test + gradle-plugin-test
 ant gradle-plugin-test           # The gradle-plugin's TestKit suite alone (shells out to :gradle-plugin:test)
 ant test-single -Dtestclass=play.mvc.RouterTest  # Single test class (no package prefix in path, use dots)
 ant compile-tests                # Compile tests + copy fixture resources, no run
@@ -95,6 +95,7 @@ ant compile-tests                # Compile tests + copy fixture resources, no ru
 ant javadoc                      # Generate API docs
 ant package                      # Create distribution ZIP
 ant resolve                      # Resolve framework/dependencies.yml via Ivy and update framework/lib/ in place. Run after editing dependencies.yml. Idempotent. -Dprune=true to delete stray jars; -Dverbose for Ivy detail (PF-62)
+ant audit-deps                   # Fail on a jar in framework/lib/ that nothing reaches and dependencies-audit.conf doesn't justify. -Daudit.strict=false to report without failing
 ```
 
 The Gradle plugin lives at `framework/gradle-plugin/` and is built via `./gradlew :gradle-plugin:build` from the repo root.
