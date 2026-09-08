@@ -72,7 +72,13 @@ require:    &allDependencies
     - org.bouncycastle -> bcutil-jdk18on 1.85
     - org.codehaus.groovy -> groovy 3.0.25
     - org.codehaus.groovy -> groovy-xml 3.0.25
-    - org.eclipse.jdt -> org.eclipse.jdt.core 3.47.0
+    # PF: ecj is the whole JDT dependency. ApplicationCompiler is the only file that
+    # imports org.eclipse.jdt.* and every symbol it uses -- including
+    # org.eclipse.jdt.core.compiler.IProblem -- ships in ecj. The sibling
+    # org.eclipse.jdt.core artifact was added upstream in 2011 when it still carried
+    # the batch compiler; ecj was bolted on beside it in 2023 (2c281f016) and the now
+    # redundant jdt.core was never dropped. The two jars share no classes, and no
+    # other vendored jar references org/eclipse/jdt at all.
     - org.eclipse.jdt -> ecj 3.46.100
     - org.hibernate.orm -> hibernate-core 7.4.7.Final
     - org.hibernate.models -> hibernate-models 1.3.0
