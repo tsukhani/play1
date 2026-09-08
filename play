@@ -128,9 +128,47 @@ task_for() {
     esac
 }
 
+# Does the current directory hold a Gradle build? Same file set Gradle itself
+# looks for, so this agrees with what a bare `gradle` invocation would decide.
+is_gradle_build_dir() {
+    for f in settings.gradle settings.gradle.kts settings.gradle.dcl \
+             build.gradle build.gradle.kts build.gradle.dcl; do
+        if [ -f "$f" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Standing one directory too high is the usual way to reach the error below —
+# e.g. in the directory you unzipped the distribution into, with the app beside
+# it. Name any application directly underneath so the fix is the next line read
+# rather than another guess. Always succeeds; silent when there is nothing to say.
+suggest_nearby_apps() {
+    _nearby=""
+    for d in */; do
+        if [ -d "$d" ] && [ -f "$d/build.gradle.kts" ] && [ -f "$d/conf/application.conf" ]; then
+            _nearby="$_nearby    cd ${d%/}
+"
+        fi
+    done
+    if [ -n "$_nearby" ]; then
+        printf '\nThere is an application directly below this one:\n\n%s' "$_nearby"
+    fi
+    return 0
+}
+
 # --- Locate a gradlew/gradle to invoke ------------------------------------
 # Order: ./gradlew (CWD) → $PLAY_HOME/gradlew (when in framework dir) →
-# system `gradle` on PATH → install-instructions error.
+# system `gradle` on PATH, but only once the CWD is known to be a Gradle build.
+#
+# That last qualifier is the point. Falling through to `gradle` from any
+# directory meant that running `play run` from, say, the parent of an
+# application handed off to Gradle, which answered with its own "Directory '/x'
+# does not contain a Gradle build" — leaving the advice below unreachable for
+# anyone who had Gradle installed, which is exactly the people most likely to
+# have it. Decide whether this is an application directory first; only then pick
+# a runner.
 find_gradle() {
     if [ -x "./gradlew" ]; then
         echo "./gradlew"
@@ -140,19 +178,28 @@ find_gradle() {
         echo "$PLAY_HOME/gradlew"
         return 0
     fi
+    if ! is_gradle_build_dir; then
+        cat >&2 <<EOF
+play: $PWD is not a Play application directory.
+
+Most play commands (run, start, test, precompile, ...) run from inside an
+application — a directory holding build.gradle.kts, and normally ./gradlew too.
+Either:
+  - cd into your Play 1 application, or
+  - run \`play new <name>\` to scaffold a new one.
+EOF
+        suggest_nearby_apps >&2
+        return 1
+    fi
     if command -v gradle >/dev/null 2>&1; then
         echo "gradle"
         return 0
     fi
     cat >&2 <<EOF
-play: no Gradle wrapper found in this directory and 'gradle' is not on PATH.
+play: no Gradle wrapper (./gradlew) here, and 'gradle' is not on PATH.
 
-Most play commands run from inside an application directory (one containing a
-./gradlew script). Either:
-  - cd into your Play 1 application, or
-  - run \`play new <name>\` to scaffold a new one.
-
-If you intend to run Gradle directly without a wrapper, install Gradle:
+$PWD does look like a Gradle build, so the wrapper is probably just missing —
+restore it with \`gradle wrapper\`, or install Gradle:
   macOS:    brew install gradle
   Linux:    sdk install gradle             (or your distro's package manager)
   Windows:  winget install Gradle.Gradle
