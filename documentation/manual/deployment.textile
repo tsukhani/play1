@@ -172,6 +172,33 @@ Server-sent events also work over standard @proxy_pass@, but make sure response 
 
 bc. proxy_buffering off;
 
+h3. Serving the Nuxt frontend
+
+An application scaffolded with @play new <name> --frontend@ keeps its Nuxt sources in @frontend/@. The @playFrontendSpa@ task — which both @play dist@ and @play bundle@ depend on — runs @pnpm install@ and @pnpm run generate@, then copies @frontend/.output/public@ into @public/spa/@, so the built SPA travels inside the production artifact.
+
+Nuxt generates that build for the **site root**: the emitted markup references its assets as @/_nuxt/...@. Serve @public/spa/@ at @/@ and proxy only the API paths through to Play:
+
+bc. location / {
+    root      /var/www/myapp/public/spa;
+    try_files $uri $uri/ /index.html;
+}
+
+location /api/ {
+    proxy_pass         http://127.0.0.1:9000;
+    proxy_http_version 1.1;
+    proxy_set_header   Host              $host;
+    proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header   X-Forwarded-Proto $scheme;
+}
+
+The @try_files ... /index.html@ fallback is what makes client-side routing work: a deep link such as @/settings/profile@ has no file behind it and must still be answered with the SPA shell, so the router can take over in the browser.
+
+Play's @staticDir:public@ route also serves these same files, at @/public/spa/...@, but that URL is not usable as-is — the generated markup asks for its assets at the root, so the page itself loads while every script and stylesheet 404s. If you would rather serve the SPA from Play than from the proxy, generate it with a matching base path so the two agree:
+
+bc. NUXT_APP_BASE_URL=/public/spa/ pnpm run generate
+
+and reach it at @/public/spa/@.
+
 h3. Heroku and other PaaS
 
 PaaS platforms generally just need the app to honor a @PORT@ environment variable. Read it in @application.conf@:

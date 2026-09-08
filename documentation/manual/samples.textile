@@ -9,7 +9,7 @@ play run myapp
 
 For a frontend-integrated starter:
 
-bc. play new myapp --frontend nuxt
+bc. play new myapp --frontend
 
 The @play new@ command sets up a complete app skeleton with sensible defaults: an HTTPS-ready Netty server on port 9000, a @conf/routes@ file with one example route, a stub controller, and a @conf/application.conf@ pre-populated with documented configuration keys. Add features (CORS, OpenAPI generation, metrics) by enabling the relevant @*.enabled@ keys in your config — see the corresponding manual sections.
 
