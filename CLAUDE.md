@@ -96,6 +96,7 @@ ant javadoc                      # Generate API docs
 ant package                      # Create distribution ZIP
 ant resolve                      # Resolve framework/dependencies.yml via Ivy and update framework/lib/ in place. Run after editing dependencies.yml. Idempotent. -Dprune=true to delete stray jars; -Dverbose for Ivy detail (PF-62)
 ant audit-deps                   # Fail on a jar in framework/lib/ that nothing reaches and dependencies-audit.conf doesn't justify. -Daudit.strict=false to report without failing
+ant audit-census                 # Runtime half of the audit: drives the suites under -Xlog:class+load and reports which framework/lib/ jars actually supplied a loaded class. Opt-in, never fails the build
 ```
 
 The Gradle plugin lives at `framework/gradle-plugin/` and is built via `./gradlew :gradle-plugin:build` from the repo root.

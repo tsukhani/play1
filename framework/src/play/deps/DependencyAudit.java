@@ -243,7 +243,7 @@ public class DependencyAudit {
         return seen;
     }
 
-    private static List<Entry> readAllowlist(File f) throws IOException {
+    static List<Entry> readAllowlist(File f) throws IOException {
         List<Entry> entries = new ArrayList<>();
         if (!f.isFile()) {
             throw new IllegalStateException("Missing allowlist " + f);
@@ -279,7 +279,7 @@ public class DependencyAudit {
         }
     }
 
-    private static Set<String> jarNamesIn(File dir) {
+    static Set<String> jarNamesIn(File dir) {
         String[] names = dir.list((d, n) -> n.endsWith(".jar"));
         return names == null ? Set.of() : new LinkedHashSet<>(Arrays.asList(names));
     }
@@ -297,7 +297,7 @@ public class DependencyAudit {
         return v;
     }
 
-    private static final class Entry {
+    static final class Entry {
         final String glob;
         final String category;
         final String reason;

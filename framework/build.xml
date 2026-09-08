@@ -252,6 +252,11 @@
                          harness runs only on demand (otherwise it aborts via assumeTrue and
                          normal `ant test` never executes it). Enable: ant integration-test -Dsse.bench=1 -->
                     <jvmarg value="-Dsse.bench=true" if:set="sse.bench" />
+                    <!-- PF: class-load census (ant audit-census). This is the fork that
+                         matters for the unverified Hibernate-side entries: it boots a real
+                         Play with JPA against H2, so whatever Hibernate genuinely loads
+                         reflectively shows up here. -->
+                    <jvmarg value="-Xlog:class+load=info:file=${basedir}/census/integration-%p.log" if:set="census" />
                 </fork>
             </testclasses>
             <classpath>
@@ -346,6 +351,9 @@
                     <jvmarg value="-javaagent:${basedir}/play-${version}.jar" />
                     <jvmarg value="-javaagent:${bytebuddy.agent.jar}" />
                     <sysproperty key="tests-tmp" value="${basedir}/tests-tmp" />
+                    <!-- PF: class-load census (ant audit-census). %p is the JVM's own pid
+                         substitution, so repeated forks cannot clobber a single file. -->
+                    <jvmarg value="-Xlog:class+load=info:file=${basedir}/census/unittest-%p.log" if:set="census" />
                 </fork>
             </testclasses>
             <classpath>
@@ -379,6 +387,34 @@
             </classpath>
             <sysproperty key="framework.path" value="${basedir}"/>
             <sysproperty key="audit.strict" value="${audit.strict}"/>
+        </java>
+    </target>
+
+    <!-- PF: the runtime half of the dependency audit. Drives the suites with
+         -Xlog:class+load and reports which lib/ jars actually supplied a loaded class.
+         Opt-in, and deliberately never fails the build: "never loaded" means these suites
+         did not exercise it (they drive H2, not PostgreSQL, and never run an end-user
+         application's own tests), so the trustworthy direction is the positive one — a jar
+         the census loads is proven necessary. That is what settles the 'unverified'
+         entries in dependencies-audit.conf. -->
+    <target name="audit-census" depends="compile-tests,modules" description="report which framework/lib jars actually get loaded while the suites run">
+        <delete dir="${basedir}/census" />
+        <mkdir dir="${basedir}/census" />
+        <antcall target="unittest">
+            <param name="census" value="true" />
+        </antcall>
+        <antcall target="integration-test">
+            <param name="census" value="true" />
+        </antcall>
+        <java classname="play.deps.ClassLoadCensus" fork="true" failonerror="true">
+            <classpath>
+                <pathelement location="classes"/>
+                <fileset dir="lib">
+                    <include name="*.jar"/>
+                </fileset>
+            </classpath>
+            <sysproperty key="framework.path" value="${basedir}"/>
+            <sysproperty key="census.dir" value="${basedir}/census"/>
         </java>
     </target>
 

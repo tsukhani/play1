@@ -35,6 +35,7 @@ eclipse
 .project
 id
 framework/tests-tmp
+framework/census
 dist
 play-*.jar
 tmp
