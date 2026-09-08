@@ -22,7 +22,13 @@ public class DBPlugin extends PlayPlugin {
     protected DataSourceFactory factory(Configuration dbConfig) {
         String dbFactory = dbConfig.getProperty("db.factory", "play.db.hikaricp.HikariDataSourceFactory");
         try {
-            return (DataSourceFactory) Class.forName(dbFactory).getDeclaredConstructor().newInstance();
+            // PF-174: resolve through the application classloader, exactly as the db.driver lookup
+            // below does. The one-arg Class.forName resolves against the caller's loader (the
+            // framework's), which cannot see an app/ class at all under the bundle launcher and
+            // under Gradle finds a second copy off the JVM classpath with its own statics.
+            // Play.classloader delegates framework and lib classes to its parent, so the default
+            // factory and any jar-shipped one still resolve identically.
+            return (DataSourceFactory) Class.forName(dbFactory, true, Play.classloader).getDeclaredConstructor().newInstance();
         }
         catch (Exception e) {
             throw new IllegalArgumentException("Expected implementation of " + DataSourceFactory.class.getName() + 

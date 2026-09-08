@@ -362,7 +362,7 @@ Factory class that will create DataSource instances.
 
 bc. db.factory=play.db.hikaricp.HikariDataSourceFactory
 
-The default and only built-in factory is @play.db.hikaricp.HikariDataSourceFactory@. Custom factories may be supplied by implementing @play.db.DataSourceFactory@.
+The default and only built-in factory is @play.db.hikaricp.HikariDataSourceFactory@. Custom factories may be supplied by implementing @play.db.DataSourceFactory@. The class is resolved with the application classloader, so it may live in a jar on the classpath or directly in your application's @app/@ tree.
 
 Default:
 
