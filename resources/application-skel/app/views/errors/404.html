@@ -4,6 +4,13 @@
     <head>
         <title>Not found</title>
         <meta http-equiv="Content-Type" content="text/html; charset=${_response_encoding}"/>    
+        #{if play.mode.name() == 'DEV'}
+        *{ The dev-mode error tags below emit Tailwind-classed markup, which needs the
+           bundled stylesheet to mean anything. Scoped to DEV on purpose: play-tailwind.css
+           carries Tailwind's preflight, whose h1..h6 font-size:inherit rule would strip the
+           prod branch's plain heading of its styling. }*
+        <link rel="stylesheet" href="@{'/public/stylesheets/play-tailwind.css'}" type="text/css" media="screen" charset="${_response_encoding}">
+        #{/if}
     </head>
     <body>
         #{if play.mode.name() == 'DEV'}
