@@ -1177,6 +1177,13 @@ private fun buildFrontendAndCopySpa(
     // Probe for pnpm. Without a pre-flight check the user gets a cryptic
     // "Cannot run program 'pnpm'" from ProcessBuilder; we'd rather fail
     // with an actionable message naming the tool and where to install it.
+    //
+    // The message reports the PATH *this process* sees, because the common failure is
+    // not a missing pnpm at all: a Gradle daemon keeps the environment of the client
+    // that started it, so a daemon started before pnpm was added to PATH keeps failing
+    // here while `which pnpm` in the developer's shell answers happily. Saying only
+    // "not found on PATH" sends them looking for an installation problem they do not
+    // have. Printing the PATH makes the mismatch self-evident, and `--stop` is the fix.
     try {
         execOps.exec {
             commandLine("pnpm", "--version")
@@ -1184,10 +1191,26 @@ private fun buildFrontendAndCopySpa(
             standardOutput = ByteArrayOutputStream()
             errorOutput = ByteArrayOutputStream()
         }
-    } catch (_: Exception) {
+    } catch (e: Exception) {
         throw GradleException(
-            "pnpm not found on PATH but ${frontendDir.absolutePath} is a Nuxt frontend. " +
-            "Install pnpm (https://pnpm.io/installation) or remove the frontend directory."
+            """
+            Could not run pnpm, but ${frontendDir.absolutePath} is a Nuxt frontend.
+
+            Cause: ${e.message}
+
+            If pnpm works in your shell, this is most likely a stale Gradle daemon: a daemon
+            inherits the environment of whichever client started it, so a PATH change made
+            afterwards never reaches it. Stop the daemons and retry:
+
+                ./gradlew --stop
+
+            Otherwise install pnpm: https://pnpm.io/installation
+            (or remove the frontend directory if this app no longer has one).
+
+            PATH as this build sees it:
+                ${System.getenv("PATH") ?: "<unset>"}
+            """.trimIndent(),
+            e,
         )
     }
 

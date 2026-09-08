@@ -101,5 +101,22 @@ class FrontendSpaTaskTest {
             result.output.contains("frontend"),
             "The failure should reference the frontend directory it tried to build.\n${result.output}"
         )
+
+        // Which of the two failures happens depends on whether the machine running the
+        // suite has pnpm on PATH, so this is asserted only when the probe is the one that
+        // fired. When it does, the message has to be actionable: the most common cause is
+        // a stale Gradle daemon holding a PATH from before pnpm was installed, and a bare
+        // "not found on PATH" sends people hunting for an installation problem they do not
+        // have. The PATH dump is what makes that mismatch visible.
+        if (result.output.contains("Could not run pnpm")) {
+            assertTrue(
+                result.output.contains("./gradlew --stop"),
+                "The probe failure must name the stale-daemon fix.\n${result.output}"
+            )
+            assertTrue(
+                result.output.contains("PATH as this build sees it"),
+                "The probe failure must show the PATH the build actually sees.\n${result.output}"
+            )
+        }
     }
 }
