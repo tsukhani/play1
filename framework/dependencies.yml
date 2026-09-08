@@ -254,7 +254,7 @@ require:    &allDependencies
     - com.squareup.okhttp3 -> okhttp-sse 5.5.0
     - com.squareup.okio -> okio 3.18.2
     - com.squareup.okio -> okio-jvm 3.18.2
-    - org.jetbrains.kotlin -> kotlin-stdlib 2.4.10
+    - org.jetbrains.kotlin -> kotlin-stdlib 2.4.20
 
 # Default repositories, used for all projects
 repositories:
