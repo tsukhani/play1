@@ -306,11 +306,19 @@ class SslHttpServerPipelineFactoryResetTest {
      * The h2 chain is installed by the ALPN handler on the server's event loop, asynchronously
      * with respect to the client's {@code startHandshake()} returning. Poll rather than sleep
      * so the test is neither flaky nor slower than it needs to be.
+     *
+     * <p>Each probe runs <em>on</em> the event loop, not the test thread. The h2 chain is
+     * added mid-dispatch of {@code SslHandshakeCompletionEvent}, and
+     * {@link SslHandshakeExceptionSuppressor} only removes itself after that dispatch
+     * returns. Read from the test thread, the pipeline can show {@code h2-frame-codec}
+     * present with the handshake suppressor not yet gone, which failed the self-removal
+     * precondition on CI. A task queued to the event loop cannot run until the dispatch
+     * has finished, so it only ever sees the settled pipeline.
      */
     private static void awaitPipelineContains(Channel ch, String handlerName) throws InterruptedException {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
         while (System.nanoTime() < deadline) {
-            if (ch.pipeline().get(handlerName) != null) return;
+            if (ch.eventLoop().submit(() -> ch.pipeline().get(handlerName) != null).sync().getNow()) return;
             Thread.sleep(25);
         }
         fail("handler \"" + handlerName + "\" was never installed — ALPN negotiation did not complete");

@@ -342,6 +342,7 @@
     </target>
 
     <target name="unittest" depends="version,compile-tests,modules">
+        <mkdir dir="tests-results" />
         <mkdir dir="${basedir}/tests-tmp" />
         <junitlauncher haltonfailure="false" failureproperty="junit.failure" printSummary="true">
             <classpath refid="classpath.test" />
@@ -360,6 +361,11 @@
                 <pathelement location="test-classes"/>
                 <path refid="classpath.test"/>
             </classpath>
+            <!-- printSummary only reports per-class counts ("Failures: 1"), never which
+                 test or assertion failed. The per-class report is what CI's "Upload
+                 tests-results on failure" step collects; without it that step finds
+                 nothing and a failure is undiagnosable from the run. -->
+            <listener type="legacy-plain" sendSysOut="true" sendSysErr="true" outputdir="tests-results" />
         </junitlauncher>
         <delete dir="${basedir}/tests-tmp" />
 
