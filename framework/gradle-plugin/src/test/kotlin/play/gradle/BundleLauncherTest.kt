@@ -75,6 +75,31 @@ class BundleLauncherTest {
         return out.lines().filter { it.isNotEmpty() }
     }
 
+    /**
+     * Run `./play start [args]` in [bundle] against the stub `java` and return the
+     * application-logging line, after checking the line before it names
+     * logs/system.out as console output.
+     */
+    private fun startLogConfigLine(bundle: File, stubs: File, vararg args: String): String {
+        // The stub java from a previous start may not have exited yet.
+        File(bundle, "server.pid").delete()
+        val proc = ProcessBuilder("./play", "start", *args)
+            .directory(bundle)
+            .redirectErrorStream(true)
+            .apply { environment()["PATH"] = "${stubs.absolutePath}${File.pathSeparator}${System.getenv("PATH")}" }
+            .start()
+        val out = proc.inputStream.bufferedReader().readText()
+        assertEquals(0, proc.waitFor(), "launcher should exit cleanly\n$out")
+        val lines = out.lines()
+        val console = lines.indexOfFirst { it.startsWith("~ console output (stdout/stderr) -> ") }
+        assertTrue(console >= 0, "start printed no console-output line:\n$out")
+        assertEquals(
+            File(bundle, "logs/system.out").canonicalPath,
+            File(lines[console].substringAfter(" -> ")).canonicalPath
+        )
+        return lines[console + 1]
+    }
+
     private fun classpathOf(argv: List<String>) = argv[argv.indexOf("-classpath") + 1]
 
     private fun valueOf(argv: List<String>, prop: String) =
@@ -161,6 +186,38 @@ class BundleLauncherTest {
         assertEquals(
             listOf("org.apache.logging.log4j.jul.LogManager", "com.example.AppLogManager"),
             julManagers(launcherArgv(bundle, stubs, "-Djava.util.logging.manager=com.example.AppLogManager"))
+        )
+    }
+
+    @Test
+    fun `start names system out as console output and the log4j2 config for the play id`(@TempDir tmp: File) {
+        // PF-176: same two lines as playStart/playRestart -- see OutputBannerTest.
+        val bundle = File(tmp, "app").apply { mkdirs() }
+        writeBundle(bundle)
+        File(bundle, "conf").mkdirs()
+        File(bundle, "conf/application.conf").writeText(
+            "application.log.path=/log4j2.xml\n%prod.application.log.path=/log4j2-prod.xml\n"
+        )
+        val stubs = File(tmp, "bin")
+        writeStubs(stubs, windows = false)
+
+        // The bundle's play id defaults to prod, so its %prod. entry wins over the bare key.
+        assertEquals("~ application logging follows /log4j2-prod.xml", startLogConfigLine(bundle, stubs))
+        assertEquals("~ application logging follows /log4j2.xml", startLogConfigLine(bundle, stubs, "--%staging"))
+    }
+
+    @Test
+    fun `start reports the default config when application log path is unset`(@TempDir tmp: File) {
+        val bundle = File(tmp, "app").apply { mkdirs() }
+        writeBundle(bundle)
+        File(bundle, "conf").mkdirs()
+        File(bundle, "conf/application.conf").writeText("application.name=testapp\n")
+        val stubs = File(tmp, "bin")
+        writeStubs(stubs, windows = false)
+
+        assertEquals(
+            "~ application logging follows the default log4j2 configuration (application.log.path is unset)",
+            startLogConfigLine(bundle, stubs)
         )
     }
 }

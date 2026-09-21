@@ -157,6 +157,29 @@ build_java_cmd() {
     )
 }
 
+# PF-176: the application.log.path in effect for $PLAY_ID -- its %<id>. entry
+# ahead of the bare key, the way confValue() in Play1Plugin.kt resolves it for
+# playStart/playRestart. Prints nothing when neither is set.
+conf_log_path() {
+    local conf="conf/application.conf" key value
+    [ -f "$conf" ] || return 0
+    for key in "%$PLAY_ID.application.log.path" "application.log.path"; do
+        value=$(awk -v k="$key" '
+            index($0, k) == 1 && substr($0, length(k) + 1) ~ /^[[:space:]]*=/ {
+                v = substr($0, length(k) + 1)
+                sub(/^[[:space:]]*=[[:space:]]*/, "", v)
+                sub(/[[:space:]]+$/, "", v)
+                print v
+                exit
+            }
+        ' "$conf")
+        if [ -n "$value" ]; then
+            printf '%s\n' "$value"
+            return 0
+        fi
+    done
+}
+
 case "$CMD" in
     run)
         build_java_cmd
@@ -178,7 +201,16 @@ case "$CMD" in
         echo $! > "$PID_FILE"
         echo "~ OK, $SCRIPT_DIR is started"
         echo "~ pid is $(cat "$PID_FILE")"
-        echo "~ output is redirected to $SCRIPT_DIR/logs/system.out"
+        # Same two lines as outputBanner() in Play1Plugin.kt (PF-176): name
+        # system.out as console output, and the log4j2 config as what governs
+        # where the application log goes.
+        echo "~ console output (stdout/stderr) -> $SCRIPT_DIR/logs/system.out"
+        log_config=$(conf_log_path)
+        if [ -n "$log_config" ]; then
+            echo "~ application logging follows $log_config"
+        else
+            echo "~ application logging follows the default log4j2 configuration (application.log.path is unset)"
+        fi
         ;;
     stop)
         if [ ! -f "$PID_FILE" ]; then

@@ -1040,6 +1040,23 @@ private fun confValue(config: String, key: String, playId: String): String? {
     return activeValue(config, key)
 }
 
+// PF-176: what playStart and playRestart print about where output goes.
+// logs/system.out is the one path the launcher creates itself, so it is named
+// for what it holds -- console output -- rather than as "the log": an app's
+// log4j2 file appender writes the application log to a path set inside the
+// config that application.log.path names, which this (Gradle) JVM cannot read
+// back. So the second line names that config for the active play id instead.
+// bundle-play.sh prints the same two lines; keep the wording in step.
+private fun outputBanner(appDir: File, playId: String): List<String> {
+    val confFile = File(appDir, "conf/application.conf")
+    val logConfig = if (confFile.isFile) confValue(confFile.readText(), "application.log.path", playId) else null
+    return listOf(
+        "~ console output (stdout/stderr) -> ${File(appDir, "logs/system.out").absolutePath}",
+        logConfig?.takeIf { it.isNotBlank() }?.let { "~ application logging follows $it" }
+            ?: "~ application logging follows the default log4j2 configuration (application.log.path is unset)",
+    )
+}
+
 // PF-175: route java.util.logging into log4j2 through the log4j-jul bridge in
 // framework/lib, so JUL-logging dependencies (Lucene, the OpenTelemetry SDK)
 // reach the application's appenders instead of stderr. JUL reads the property
@@ -1319,9 +1336,8 @@ abstract class PlayStartTask : DefaultTask() {
         val process = spawnPlay(appDir, frameworkPath.get().asFile, frameworkVersion.get(),
             playId.get(), httpPort.orNull, httpsPort.orNull, playClasspath.asPath, jvmArgsList)
         pidFile.writeText(process.pid().toString())
-        val sysOut = File(appDir, "logs/system.out")
         logger.lifecycle("~ OK, ${appDir.absolutePath} is started")
-        logger.lifecycle("~ output is redirected to ${sysOut.absolutePath}")
+        outputBanner(appDir, playId.get()).forEach { logger.lifecycle(it) }
         logger.lifecycle("~ pid is ${process.pid()}")
     }
 }
@@ -1401,9 +1417,8 @@ abstract class PlayRestartTask : DefaultTask() {
         val process = spawnPlay(appDir, frameworkPath.get().asFile, frameworkVersion.get(),
             playId.get(), httpPort.orNull, httpsPort.orNull, playClasspath.asPath, jvmArgsList)
         pidFile.writeText(process.pid().toString())
-        val sysOut = File(appDir, "logs/system.out")
         logger.lifecycle("~ OK, ${appDir.absolutePath} is restarted")
-        logger.lifecycle("~ output is redirected to ${sysOut.absolutePath}")
+        outputBanner(appDir, playId.get()).forEach { logger.lifecycle(it) }
         logger.lifecycle("~ New pid is ${process.pid()}")
     }
 }
