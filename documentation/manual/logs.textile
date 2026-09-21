@@ -52,6 +52,20 @@ h3. <a name="production">Production configuration</a>
 See: "configure logging for production":production#logging for another example.
 
 
+h2. <a name="jul">Libraries that log through java.util.logging</a>
+
+Some libraries, Lucene and the OpenTelemetry SDK among them, log through @java.util.logging@ rather than Log4j or SLF4J. Play routes that output into Log4j as well. Every JVM started by @play run@, @play start@, @play test@, @play autotest@ or a @play bundle@ launcher sets
+
+bc. -Djava.util.logging.manager=org.apache.logging.log4j.jul.LogManager
+
+which activates the @log4j-jul@ bridge shipped in @framework/lib@. Those records then reach your configured appenders under their own logger names, so you configure them like any other logger:
+
+bc. logger.lucene.name = org.apache.lucene
+logger.lucene.level = WARN
+
+To use a different JUL manager, set the property yourself in @jvm.memory@ in @application.conf@, which accepts any JVM flags, not just heap sizes. A @play bundle@ launcher does not read @jvm.memory@, so there pass @-Djava.util.logging.manager=...@ on its command line instead. Either way your value takes precedence over the framework's.
+
+
 h2. <a name="json">Structured JSON logging</a>
 
 For deployments that ship logs to "Loki":https://grafana.com/oss/loki/, "Datadog":https://www.datadoghq.com, "Splunk":https://www.splunk.com, or the Elastic stack, plain-text @PatternLayout@ output forces fragile regex parsing in the log pipeline. Play 1.12 supports first-class JSON logging (PF-9) via Log4j 2's "JsonTemplateLayout":https://logging.apache.org/log4j/2.x/manual/json-template-layout.html with the bundled "Elastic Common Schema":https://www.elastic.co/guide/en/ecs/current/index.html template.

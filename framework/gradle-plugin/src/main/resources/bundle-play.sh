@@ -145,6 +145,11 @@ build_java_cmd() {
         -Dplay.version="$FW_VERSION"
         -Dprecompiled=true
         -Dfile.encoding=utf-8
+        # PF-175: route java.util.logging into log4j2 (log4j-jul ships in
+        # framework/lib). Same value as JUL_LOG_MANAGER_ARG in Play1Plugin.kt.
+        # Ahead of JVM_EXTRA so a -Djava.util.logging.manager=... given on
+        # the command line wins -- the JVM honours the last -D for a key.
+        -Djava.util.logging.manager=org.apache.logging.log4j.jul.LogManager
         "${JVM_EXTRA[@]}"
         -classpath "$CP"
         play.server.Server

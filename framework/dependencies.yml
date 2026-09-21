@@ -58,6 +58,13 @@ require:    &allDependencies
     - org.apache.logging.log4j -> log4j-api 2.26.1
     - org.apache.logging.log4j -> log4j-core 2.26.1
     - org.apache.logging.log4j -> log4j-layout-template-json 2.26.1
+    # PF-175: java.util.logging -> log4j2 bridge, the JUL counterpart of
+    # log4j-slf4j2-impl below. Activated by the -Djava.util.logging.manager arg
+    # the gradle-plugin and bundle launcher put on every Play JVM; without it,
+    # JUL-logging dependencies (Lucene, the OpenTelemetry SDK) write to stderr
+    # and never reach the application's appenders. Must match log4j-core
+    # exactly -- log4j rejects a mismatched pair at runtime, not build time.
+    - org.apache.logging.log4j -> log4j-jul 2.26.1
     - net.sf.oval -> oval 4.0.0
     - org.apache.ivy -> ivy 2.6.0
     - org.bouncycastle -> bcprov-jdk18on 1.86

@@ -498,6 +498,11 @@ class Play1Plugin : Plugin<Project> {
                 "-Dfile.encoding=utf-8",
                 "-Dapplication.path=${project.projectDir.absolutePath}"
             )
+            // PF-175: a systemProperty, not a -D in jvmArgs. Gradle emits system
+            // properties ahead of jvmArgs, so here an app's own systemProperty(...)
+            // replaces it and a -D from jvm.memory, -PjvmArgs or the app's jvmArgs(...)
+            // lands after it; as a jvmArgs -D it would beat the first of those.
+            systemProperty(JUL_MANAGER_PROPERTY, LOG4J_JUL_MANAGER)
             // Built-in tasks (playTest, playPrecompile, playAutotest) hardcode
             // playIdOverride = "test". For playRun and other "no override" tasks,
             // honor -PplayId from the command line; else default to empty (no
@@ -823,6 +828,8 @@ abstract class PlayAutotestTask : DefaultTask() {
             add(javaExecutable())
             add("--enable-native-access=ALL-UNNAMED")
             add("-javaagent:${playJar.absolutePath}")
+            // Ahead of confJvmArgs so a conf-set JUL manager still wins.
+            add(JUL_LOG_MANAGER_ARG)
             addAll(confJvmArgs(appDir, "test"))
             add("-Dfile.encoding=utf-8")
             add("-Dapplication.path=${appDir.absolutePath}")
@@ -1032,6 +1039,19 @@ private fun confValue(config: String, key: String, playId: String): String? {
     }
     return activeValue(config, key)
 }
+
+// PF-175: route java.util.logging into log4j2 through the log4j-jul bridge in
+// framework/lib, so JUL-logging dependencies (Lucene, the OpenTelemetry SDK)
+// reach the application's appenders instead of stderr. JUL reads the property
+// once, before its first use, so it can only be a JVM arg. Every Play JVM
+// carries it: registerPlayJvmTask, spawnPlay, playAutotest's server JVM, and
+// bundle-play.sh (which spells it out itself). Each places it ahead of the
+// conf- and command-line-supplied args (registerPlayJvmTask by making it a
+// systemProperty -- see there), so an app that sets the property itself keeps
+// its value: the JVM honours the last -D for a key.
+private const val JUL_MANAGER_PROPERTY = "java.util.logging.manager"
+private const val LOG4J_JUL_MANAGER = "org.apache.logging.log4j.jul.LogManager"
+private const val JUL_LOG_MANAGER_ARG = "-D$JUL_MANAGER_PROPERTY=$LOG4J_JUL_MANAGER"
 
 // PF-92: lift conf entries that are JVM-level flags (not in-process config)
 // onto the spawned JVM's command line, mirroring the 1.12 Python launcher's
@@ -1501,6 +1521,7 @@ private fun spawnPlay(
         add("-Dapplication.path=${appDir.absolutePath}")
         add("-Dplay.id=$playId")
         add("-Dplay.version=$frameworkVersion")
+        add(JUL_LOG_MANAGER_ARG)
         // PF-92: conf-driven JVM flags (javaagent.path, agentlib, jvm.memory,
         // jmx.{port,hostname}) lifted from application.conf with %<playId>.
         // priority. Comes before extraJvmArgs so a user's -PjvmArgs overrides

@@ -63,9 +63,9 @@ class BundleLauncherTest {
         }
     }
 
-    /** Run `./play run` in [bundle] with [stubs] prepended to PATH; return java's argv. */
-    private fun launcherArgv(bundle: File, stubs: File): List<String> {
-        val proc = ProcessBuilder("./play", "run")
+    /** Run `./play run [args]` in [bundle] with [stubs] prepended to PATH; return java's argv. */
+    private fun launcherArgv(bundle: File, stubs: File, vararg args: String): List<String> {
+        val proc = ProcessBuilder("./play", "run", *args)
             .directory(bundle)
             .redirectErrorStream(true)
             .apply { environment()["PATH"] = "${stubs.absolutePath}${File.pathSeparator}${System.getenv("PATH")}" }
@@ -141,5 +141,26 @@ class BundleLauncherTest {
             // Translating it would be a regression, not a fix.
             assertEquals("-javaagent:framework/play-$fwVersion.jar", agent, "windows=$windows")
         }
+    }
+
+    @Test
+    fun `launcher bridges java util logging and lets the command line override it`(@TempDir tmp: File) {
+        val bundle = File(tmp, "app").apply { mkdirs() }
+        writeBundle(bundle)
+        val stubs = File(tmp, "bin")
+        writeStubs(stubs, windows = false)
+        fun julManagers(argv: List<String>) =
+            argv.filter { it.startsWith("-Djava.util.logging.manager=") }.map { it.substringAfter('=') }
+
+        // PF-175: without it, JUL output from bundled dependencies bypasses log4j2.
+        assertEquals(
+            listOf("org.apache.logging.log4j.jul.LogManager"),
+            julManagers(launcherArgv(bundle, stubs))
+        )
+        // An operator's own manager must come after ours: the JVM honours the last -D.
+        assertEquals(
+            listOf("org.apache.logging.log4j.jul.LogManager", "com.example.AppLogManager"),
+            julManagers(launcherArgv(bundle, stubs, "-Djava.util.logging.manager=com.example.AppLogManager"))
+        )
     }
 }
