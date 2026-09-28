@@ -18,17 +18,22 @@
   // one in framework/lib/. Renovate PRs for Java deps therefore arrive
   // INCOMPLETE: the YAML is bumped but the lib/ jars are stale.
   //
-  // To finish a Java-dep PR locally:
-  //   gh pr checkout <number>
+  // CI still goes green on such a PR — the Ant build compiles against the
+  // vendored jars and never reads dependencies.yml — so do NOT merge it on
+  // GitHub. The /renovate Claude Code command (.claude/commands/renovate.md)
+  // merges the renovate/* branches into local main instead; /deploy pushes.
+  // By hand, the Java leg of that is:
+  //   git fetch github
+  //   git merge --no-edit github/renovate/<branch>
   //   cd framework
   //   ant resolve -Dprune=true   # downloads new jar + removes the old
   //   git add framework/lib framework/dependencies.yml
-  //   git commit -m "ant resolve"
-  //   git push
+  //   git commit -m "chore(deps): resolve vendored jars for the merged Renovate bumps"
+  //   ant test                   # the only run that tests the new jars
   //
-  // Then merge as usual. Some PRs (Netty, Micrometer, Hibernate) carry
-  // multiple jars and may need transitive deps to be added by hand —
-  // see the dependencies.yml header comments for examples.
+  // Some PRs (Netty, Micrometer, Hibernate) carry multiple jars and may
+  // need transitive deps to be added by hand — see the dependencies.yml
+  // header comments for examples.
   $schema: "https://docs.renovatebot.com/renovate-schema.json",
 
   extends: [
