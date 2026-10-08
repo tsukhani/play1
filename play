@@ -70,6 +70,9 @@ Build / test / package:
 
 Project setup:
   new <name>           Scaffold a new application in <cwd>/<name>
+                       <name> may be a path (absolute, or relative to <cwd>):
+                       the application is created there and named after the
+                       path's last segment
                        Optional: --frontend (Nuxt 4 frontend)
                                  --dest=<path> (override destination directory)
   secret               Generate a new application secret
@@ -99,6 +102,15 @@ Information:
 Argument forwarding:
   --key=value          Pass a property override to the build
   --key                Pass a boolean property flag
+EOF
+}
+
+# Printed by the `play new` argument checks; they send it to stderr.
+print_new_usage() {
+    cat <<'EOF'
+Usage: play new <name> [--frontend] [--dest=<path>]
+       <name> may be a path: the application is created there and named after
+       the path's last segment.
 EOF
 }
 
@@ -297,7 +309,7 @@ case "$CMD" in
         case "${1:-}" in
             '' | -*)
                 echo "play new: missing application name." >&2
-                echo "Usage: play new <name> [--frontend] [--dest=<path>]" >&2
+                print_new_usage >&2
                 exit 1
                 ;;
         esac
@@ -308,6 +320,28 @@ case "$CMD" in
         # cd to PLAY_HOME so relative dest paths resolve correctly.
         ORIG_CWD="$PWD"
         DEST="$ORIG_CWD/$APP_NAME"
+        # PF-182: an argument containing a slash is a path, as the 1.12 CLI took
+        # it — the destination is that path (made absolute further down, the same
+        # way as --dest) and the name its last segment. Treated as a plain name,
+        # the whole path went out as -Pname and the app was scaffolded in
+        # $PWD/<path> even when <path> was absolute.
+        case "$APP_NAME" in
+            */*)
+                DEST="$APP_NAME"
+                while [ "$APP_NAME" != "${APP_NAME%/}" ]; do
+                    APP_NAME="${APP_NAME%/}"
+                done
+                APP_NAME="${APP_NAME##*/}"
+                # `play new /`, `./`, `apps/..`: nothing left to name the app after.
+                case "$APP_NAME" in
+                    '' | . | ..)
+                        echo "play new: '$DEST' does not end in an application name." >&2
+                        print_new_usage >&2
+                        exit 1
+                        ;;
+                esac
+                ;;
+        esac
         EXTRA=""
         for arg in "$@"; do
             case "$arg" in

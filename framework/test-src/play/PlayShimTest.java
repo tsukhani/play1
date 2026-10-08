@@ -6,6 +6,7 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.DisabledOnOs;
@@ -32,12 +33,25 @@ import org.junit.jupiter.api.io.TempDir;
  * <p>Sibling of {@code BundleLauncherTest} in the gradle-plugin suite, which drives the other
  * shipped shell script the same way. This one lives in the framework suite because the shim is
  * a repo-root file that {@code ant package} bundles, not a gradle-plugin resource.
+ *
+ * <p>Also covers how {@code play new} reads its first argument (PF-182). Those cases run a copy
+ * of the shim out of a stand-in PLAY_HOME whose {@code gradlew} only echoes its arguments — see
+ * {@link #fakeHome} — so the -Pname/-Pdest handed to the scaffolder are asserted without ever
+ * launching a real Gradle.
  */
 @DisabledOnOs(value = OS.WINDOWS, disabledReason = "the play shim is #!/bin/sh and needs a POSIX shell")
 public class PlayShimTest {
 
     /** Marker the stub Gradle prints, so a delegation is distinguishable from a refusal. */
     private static final String DELEGATED = "STUB-GRADLE-INVOKED";
+
+    /** Marker the stub gradlew puts in front of each argument it was handed, one per line. */
+    private static final String GRADLEW_ARG = "STUB-GRADLEW-ARG";
+
+    /** The line the stub gradlew prints for [arg]; bracketed so a longer value cannot match. */
+    private static String gradlewArg(String arg) {
+        return GRADLEW_ARG + "[" + arg + "]";
+    }
 
     private static File shim() {
         // The forked test JVM runs with basedir = framework/, so the shim is one level up.
@@ -61,19 +75,68 @@ public class PlayShimTest {
 
     /** Run the shim in [cwd] with the stub bin prepended to PATH; return exit code + output. */
     private static Result run(File cwd, File stubBin, String... args) throws Exception {
+        return run(shim(), Map.of(), cwd, stubBin, args);
+    }
+
+    /**
+     * Run the copy of the shim in [home] (see {@link #fakeHome}) from [cwd]. TMPDIR is [home]'s
+     * {@code scratch}, so the directory {@code play new} stages its Gradle run in stays inside
+     * the test instead of landing in the host's temp dir.
+     */
+    private static Result runFrom(File home, File cwd, File stubBin, String... args) throws Exception {
+        return run(new File(home, "play"),
+            Map.of("TMPDIR", new File(home, "scratch").getAbsolutePath()), cwd, stubBin, args);
+    }
+
+    private static Result run(File shim, Map<String, String> env, File cwd, File stubBin,
+            String... args) throws Exception {
         String[] cmd = new String[args.length + 1];
-        cmd[0] = shim().getAbsolutePath();
+        cmd[0] = shim.getAbsolutePath();
         System.arraycopy(args, 0, cmd, 1, args.length);
 
         ProcessBuilder pb = new ProcessBuilder(cmd).directory(cwd).redirectErrorStream(true);
         pb.environment().put("PATH",
             stubBin.getAbsolutePath() + File.pathSeparator + System.getenv("PATH"));
+        pb.environment().putAll(env);
         Process p = pb.start();
         String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         return new Result(p.waitFor(), out);
     }
 
     private record Result(int exitCode, String output) {}
+
+    /**
+     * A stand-in PLAY_HOME under [parent] for the {@code play new} cases. The shim derives
+     * PLAY_HOME from its own location and {@code new} runs that home's {@code gradlew}, so a
+     * copy of the shim beside a stub {@code gradlew} shows exactly what the scaffolder would be
+     * handed. {@code gradle/} is there because the branch copies it; {@code scratch/} is the
+     * TMPDIR {@link #runFrom} points it at.
+     */
+    private static File fakeHome(File parent) throws IOException {
+        File home = new File(parent, "fakehome");
+        new File(home, "gradle").mkdirs();
+        new File(home, "scratch").mkdirs();
+        File play = new File(home, "play");
+        Files.copy(shim().toPath(), play.toPath());
+        play.setExecutable(true);
+        File gradlew = new File(home, "gradlew");
+        Files.writeString(gradlew.toPath(),
+            "#!/bin/sh\nfor a in \"$@\"; do printf '" + GRADLEW_ARG + "[%s]\\n' \"$a\"; done\n",
+            StandardCharsets.UTF_8);
+        gradlew.setExecutable(true);
+        return home;
+    }
+
+    /**
+     * The directory {@code play} is invoked from in the {@code play new} cases. Canonical,
+     * because the shim resolves relative paths against $PWD, which a freshly started sh reports
+     * with symlinks resolved — /var is /private/var on macOS, where @TempDir lives.
+     */
+    private static File invokingDir(File tmp) throws IOException {
+        File cwd = new File(tmp.getCanonicalFile(), "work");
+        cwd.mkdirs();
+        return cwd;
+    }
 
     /** Give [dir] the marker file that makes Gradle — and now the shim — call it a build. */
     private static void makeGradleBuild(File dir) throws IOException {
@@ -156,5 +219,89 @@ public class PlayShimTest {
 
         assertThat(r.output()).contains("Usage: play new <name>");
         assertThat(r.output()).doesNotContain("is not a Play application directory");
+    }
+
+    @Test
+    public void newWithAnAbsolutePathScaffoldsThereAndNamesTheAppAfterItsLastSegment(@TempDir File tmp)
+            throws Exception {
+        // PF-182: the argument used to be both appended to the invoking directory — so
+        // /tmp/apps/demo landed in <cwd>/tmp/apps/demo — and passed whole as -Pname, where it
+        // became application.name.
+        File cwd = invokingDir(tmp);
+        String target = new File(tmp.getCanonicalFile(), "apps/demo").getPath();
+
+        Result r = runFrom(fakeHome(tmp), cwd, stubGradleBin(tmp), "new", target);
+
+        assertThat(r.output()).contains(gradlewArg("-Pname=demo"));
+        assertThat(r.output()).contains(gradlewArg("-Pdest=" + target));
+        assertThat(r.exitCode()).isZero();
+    }
+
+    @Test
+    public void newWithARelativePathResolvesItAgainstTheInvokingDirectory(@TempDir File tmp)
+            throws Exception {
+        // Against where the user stands, not PLAY_HOME: the fake home is a sibling of cwd, so a
+        // destination resolved against it would not be under cwd.
+        File cwd = invokingDir(tmp);
+
+        Result r = runFrom(fakeHome(tmp), cwd, stubGradleBin(tmp), "new", "apps/demo");
+
+        assertThat(r.output()).contains(gradlewArg("-Pname=demo"));
+        assertThat(r.output()).contains(gradlewArg("-Pdest=" + new File(cwd, "apps/demo").getPath()));
+        assertThat(r.exitCode()).isZero();
+    }
+
+    @Test
+    public void newIgnoresTrailingSlashesAndKeepsAPathWithSpacesWhole(@TempDir File tmp) throws Exception {
+        File cwd = invokingDir(tmp);
+
+        Result r = runFrom(fakeHome(tmp), cwd, stubGradleBin(tmp), "new", "my apps/demo//");
+
+        assertThat(r.output()).contains(gradlewArg("-Pname=demo"));
+        // Open-ended on purpose: whether the slashes survive into -Pdest is not the point, that
+        // the space did not split it into two arguments is.
+        assertThat(r.output()).contains(GRADLEW_ARG + "[-Pdest=" + new File(cwd, "my apps/demo").getPath());
+        assertThat(r.exitCode()).isZero();
+    }
+
+    @Test
+    public void newRejectsAPathWhoseLastSegmentIsNotAName(@TempDir File tmp) throws Exception {
+        File cwd = invokingDir(tmp);
+        File home = fakeHome(tmp);
+        File stubBin = stubGradleBin(tmp);
+        // With nowhere to stage the Gradle run, reaching mktemp aborts the shim before it says
+        // anything useful — so seeing the usage text also shows the path was refused before any
+        // temp directory was created.
+        new File(home, "scratch").delete();
+
+        for (String path : new String[] { "/", "./", "../", "apps/..", "apps/./" }) {
+            Result r = runFrom(home, cwd, stubBin, "new", path);
+
+            assertThat(r.output()).as(path).contains("Usage: play new <name>");
+            assertThat(r.output()).as(path).doesNotContain(GRADLEW_ARG);
+            assertThat(r.exitCode()).as(path).isNotZero();
+        }
+    }
+
+    @Test
+    public void newWithAPlainNameStillScaffoldsDirectlyBelowTheInvokingDirectory(@TempDir File tmp)
+            throws Exception {
+        File cwd = invokingDir(tmp);
+
+        Result r = runFrom(fakeHome(tmp), cwd, stubGradleBin(tmp), "new", "demo");
+
+        assertThat(r.output()).contains(gradlewArg("-Pname=demo"));
+        assertThat(r.output()).contains(gradlewArg("-Pdest=" + new File(cwd, "demo").getPath()));
+        assertThat(r.exitCode()).isZero();
+    }
+
+    @Test
+    public void destStillOverridesTheDestinationOfAPathArgument(@TempDir File tmp) throws Exception {
+        File cwd = invokingDir(tmp);
+
+        Result r = runFrom(fakeHome(tmp), cwd, stubGradleBin(tmp), "new", "apps/demo", "--dest=elsewhere/x");
+
+        assertThat(r.output()).contains(gradlewArg("-Pname=demo"));
+        assertThat(r.output()).contains(gradlewArg("-Pdest=" + new File(cwd, "elsewhere/x").getPath()));
     }
 }

@@ -177,7 +177,7 @@ End-user apps use Gradle. The Play 1 plugin is at `framework/gradle-plugin/src/m
 The `/opt/play1/play` shell script is a thin wrapper that:
 - Locates `./gradlew` (CWD), then `$PLAY_HOME/gradlew` (when in framework dir), then system `gradle` on PATH.
 - Translates 1.12-era flags to Gradle wire format: `--http.port=X` → `-PhttpPort=X`, `--%test` → `-PplayId=test`, `-Xmx...` etc. accumulate into `-PjvmArgs="..."`.
-- `play new <name>` runs the framework's `gradlew playNewApp -Pname=<name> -Pdest=<absolute>`.
+- `play new <name>` runs the framework's `gradlew playNewApp -Pname=<name> -Pdest=<absolute>`. `<name>` may be a path (PF-182): the app is created there and `-Pname` is its last segment.
 - Removed commands (`play deps`, `play idealize`, `play install`, `play list-modules`, `play check`, etc.) print a redirect message and exit non-zero.
 
 Module loading happens via the plugin's `extractPlayModules` task: each module declared in `play1 { modules(...) }` is sourced from the framework distribution and unzipped under the app's `modules/` directory. `Play.loadModules()` and `VirtualFile` are unchanged from 1.12 — modules remain real directories on disk so overlays and hot reload keep working.
