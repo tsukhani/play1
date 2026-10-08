@@ -47,6 +47,8 @@ bc. %production.application.secret=c12d1c59af499d20f4955d07255ed8ea333
 
 You can use the @play secret@ command to generate a new secure and random key (at least on a ‘real’ OS). If you plan to distribute your application to several servers, remember to use the @same key@ for all application instances!
 
+@play secret@ writes the key to @certs/.env@. See "The certs/.env file":configuration#dotenv for that file's syntax and for how it combines with variables the host already defines.
+
 
 h2. <a name="logging">Logging configuration</a>
 

@@ -11,6 +11,85 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# Warnings are one line on stderr each, so stdout stays machine-readable
+# (`pid`, `status`). `restart` re-runs this script for its stop and start
+# halves and sets PLAY_LAUNCHER_REEXEC on both so nothing is reported twice
+# (PF-183); un-exported here to keep it out of the JVM's environment. The
+# trailing `|| :` is for a stderr that is closed: under `set -e` the failed
+# echo would otherwise end the launcher over a warning.
+export -n PLAY_LAUNCHER_REEXEC
+warn() {
+    [ -n "$PLAY_LAUNCHER_REEXEC" ] || echo "play: $*" >&2 || :
+}
+
+# PF-184: certs/.env carries what the app needs at runtime (PLAY_SECRET,
+# CERT_KEY_PASSWORD, ...) in a gitignored file rather than committed config.
+# It is read, never sourced, with the grammar of loadDotEnv in Play1Plugin.kt:
+# KEY=VALUE per line, split at the first '=', both sides trimmed, one
+# surrounding pair of "..." and then of '...' removed, last duplicate wins.
+# The value is literal text -- `pa$$word`, $(...) and backticks arrive as
+# written. A variable the host environment already defines is left alone,
+# even when empty, so `docker run -e` beats the file.
+#
+# Entries are only collected here and exported by launch(), at the last
+# moment: they are the application's environment, not the launcher's, so IFS,
+# PATH or one of this script's own variable names in the file cannot change
+# what the launcher does. The two it does read are picked up as the defaults
+# below, which is why this runs first.
+JVM_ENV=()
+
+# Whether bash will carry $2 into the environment as $1 -- not for a name it
+# keeps readonly (UID, EUID) or rewrites itself (_). Tried in a subshell: in
+# POSIX mode a refused assignment ends the shell that attempted it.
+exportable() (
+    unset -v "$1" && export "$1=$2" && [ "${!1}" = "$2" ]
+) 2>/dev/null
+
+load_dotenv() {
+    # Locals, so no host variable is overwritten; underscored because a local
+    # also hides its namesake from the `declare -p` test below. The whitespace
+    # set is spelled out (it includes the CR of a CRLF file): [[:space:]]
+    # follows the locale and could clip a byte off a non-ASCII value.
+    local _line _key _value _attrs _n=0 _ws=$' \t\r\f\v'
+    [ -f certs/.env ] || return 0
+    while IFS= read -r _line || [ -n "$_line" ]; do
+        _n=$((_n + 1))
+        _line="${_line#"${_line%%[!$_ws]*}"}"
+        _line="${_line%"${_line##*[!$_ws]}"}"
+        # Comment, nothing before the '=', or no '=' at all (blank included).
+        case "$_line" in '#'*|=*) continue ;; *=*) ;; *) continue ;; esac
+        _key="${_line%%=*}"
+        _key="${_key%"${_key##*[!$_ws]}"}"
+        _value="${_line#*=}"
+        _value="${_value#"${_value%%[!$_ws]*}"}"
+        case "$_value" in \"*\") _value="${_value#\"}"; _value="${_value%\"}" ;; esac
+        case "$_value" in \'*\') _value="${_value#\'}"; _value="${_value%\'}" ;; esac
+        # Every letter is listed: before bash 5 a range such as A-Z follows the
+        # locale's collation, and the Estonian one leaves T to Y out of it.
+        case "$_key" in
+            [0-9]*|*[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_]*)
+                # The line number is all it says: the line may hold a secret.
+                warn "certs/.env line $_n ignored: the text before '=' is not a variable name (KEY=VALUE lines only, no 'export')"
+                continue ;;
+        esac
+        # Exported means inherited from the host: the script itself exports
+        # nothing before launch().
+        _attrs=$(declare -p "$_key" 2>/dev/null) || _attrs=""
+        _attrs="${_attrs#declare -}"
+        case "${_attrs%% *}" in *x*) continue ;; esac
+        if ! exportable "$_key" "$_value"; then
+            warn "certs/.env line $_n ignored: bash reserves that variable name"
+            continue
+        fi
+        JVM_ENV+=("$_key=$_value")
+        case "$_key" in
+            PLAY_ID)       PLAY_ID="$_value" ;;
+            PLAY_PID_FILE) PLAY_PID_FILE="$_value" ;;
+        esac
+    done < certs/.env
+}
+load_dotenv
+
 FW_VERSION="__FW_VERSION__"
 FW_JAR="framework/play-${FW_VERSION}.jar"
 PID_FILE="${PLAY_PID_FILE:-server.pid}"
@@ -93,9 +172,11 @@ EXAMPLE
 }
 
 # Forward dev-shim flag forms into JVM args + app args. Same translation
-# table as framework/play; entries unrecognized here are silently dropped
-# (Gradle-specific flags like --info / --stacktrace have no analog at
-# runtime).
+# table as framework/play, extended with the module, preview and assertion
+# switches: the command line is the only route for JVM options in a bundle
+# (PF-183). Anything unrecognized is dropped with a warning -- Gradle-specific
+# flags like --info / --stacktrace have no analog at runtime, but a JVM option
+# dropped without a word is one the operator believes is in effect.
 JVM_EXTRA=()
 APP_ARGS=()
 for arg in "$@"; do
@@ -104,19 +185,16 @@ for arg in "$@"; do
         --http.port=*|--https.port=*)                      APP_ARGS+=("$arg") ;;
         --pid-file=*)                                      PID_FILE="${arg#--pid-file=}" ;;
         -X*|-D*|-XX:*|-Xlog:*|-javaagent:*|-agentlib:*)    JVM_EXTRA+=("$arg") ;;
-        *)                                                 : ;;
+        # Long options in their =-joined form only: the launcher cannot tell
+        # that the word after a bare --add-opens belongs to it.
+        --add-modules=*|--add-opens=*|--add-exports=*|--add-reads=*|\
+        --enable-native-access=*|--enable-preview|\
+        -ea|-ea:*|-da|-da:*|-esa|-dsa|\
+        -enableassertions|-enableassertions:*|-disableassertions|-disableassertions:*|\
+        -enablesystemassertions|-disablesystemassertions)  JVM_EXTRA+=("$arg") ;;
+        *)  warn "ignoring unrecognized argument '$arg' (see './play help' for what is forwarded)" ;;
     esac
 done
-
-# Load certs/.env into the environment if present. Matches the dev shim's
-# semantics: PLAY_SECRET, CERT_KEY_PASSWORD, etc. live in a gitignored .env
-# rather than committed config. `set -a` auto-exports each variable assigned
-# by the sourced file.
-if [ -f certs/.env ]; then
-    set -a
-    . ./certs/.env
-    set +a
-fi
 
 # Build JAVA_CMD lazily inside run/start so config-mutation commands like
 # `secret` don't require the framework jar / classpath to exist yet.
@@ -157,6 +235,23 @@ build_java_cmd() {
     )
 }
 
+# launch NAME=VALUE... -- command...: export the certs/.env entries and become
+# the command (PF-184). Exported, not handed to env(1): an env command line
+# would show the secrets to ps and to execve auditing. Positional on purpose --
+# no variable of this script is read once the first entry lands, so no name in
+# the file can derail the loop or the exec. The unset drops whatever the name
+# already is in this shell (a launcher array, bash's RANDOM), so the file's
+# value is the one that arrives.
+launch() {
+    while [ "$1" != -- ]; do
+        unset -v "${1%%=*}"
+        export "$1"
+        shift
+    done
+    shift
+    exec "$@"
+}
+
 # PF-176: the application.log.path in effect for $PLAY_ID -- its %<id>. entry
 # ahead of the bare key, the way confValue() in Play1Plugin.kt resolves it for
 # playStart/playRestart. Prints nothing when neither is set.
@@ -183,7 +278,7 @@ conf_log_path() {
 case "$CMD" in
     run)
         build_java_cmd
-        exec "${JAVA_CMD[@]}"
+        launch "${JVM_ENV[@]}" -- "${JAVA_CMD[@]}"
         ;;
     start)
         if [ -f "$PID_FILE" ]; then
@@ -197,7 +292,9 @@ case "$CMD" in
         fi
         build_java_cmd
         mkdir -p logs
-        nohup "${JAVA_CMD[@]}" >> logs/system.out 2>&1 &
+        # A subshell, so the entries are exported for the JVM only; exec keeps
+        # $! the JVM's pid.
+        ( launch "${JVM_ENV[@]}" -- nohup "${JAVA_CMD[@]}" ) >> logs/system.out 2>&1 &
         echo $! > "$PID_FILE"
         echo "~ OK, $SCRIPT_DIR is started"
         echo "~ pid is $(cat "$PID_FILE")"
@@ -243,8 +340,10 @@ case "$CMD" in
         fi
         ;;
     restart)
-        "$0" stop
-        "$0" start "$@"
+        # PF-183: both halves re-run this script and would repeat every
+        # warning this invocation has already printed.
+        PLAY_LAUNCHER_REEXEC=1 "$0" stop
+        PLAY_LAUNCHER_REEXEC=1 "$0" start "$@"
         ;;
     status)
         if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
@@ -289,11 +388,22 @@ Argument forwarding (same shape as the dev-time \`play\` shim):
   --http.port=X          HTTP listen port
   --https.port=X         HTTPS listen port
   --pid-file=<path>      Override pid file (default: server.pid)
-  -X*, -D*, -XX:*, ...   JVM tuning forwarded to the spawned JVM
+
+JVM options, forwarded to the spawned JVM in the order given:
+  -X*  -XX:*  -Xlog:*  -D*  -javaagent:*  -agentlib:*
+  --add-modules=*  --add-opens=*  --add-exports=*  --add-reads=*
+  --enable-native-access=*  --enable-preview
+  -ea[:*]  -da[:*]  -esa  -dsa
+  -enableassertions[:*]  -disableassertions[:*]
+  -enablesystemassertions  -disablesystemassertions
+Long options are forwarded in the joined form only (--add-modules=a,b, not
+--add-modules a,b). Any other argument is ignored, with a warning on stderr.
 
 Environment:
   PLAY_ID                Default play.id (overridden by --%<id>)
   PLAY_PID_FILE          Default pid file path
+Variables the environment does not define are taken from certs/.env: one
+KEY=VALUE per line, read as literal text (no shell expansion).
 
 This bundle is self-contained: java 25+ is the only runtime dependency.
 EOF

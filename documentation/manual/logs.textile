@@ -63,7 +63,7 @@ which activates the @log4j-jul@ bridge shipped in @framework/lib@. Those records
 bc. logger.lucene.name = org.apache.lucene
 logger.lucene.level = WARN
 
-To use a different JUL manager, set the property yourself in @jvm.memory@ in @application.conf@, which accepts any JVM flags, not just heap sizes. A @play bundle@ launcher does not read @jvm.memory@, so there pass @-Djava.util.logging.manager=...@ on its command line instead. Either way your value takes precedence over the framework's.
+To use a different JUL manager, set the property yourself in @jvm.memory@ in @application.conf@, which accepts any JVM flags, not just heap sizes. A @play bundle@ launcher does not read @jvm.memory@, so there pass @-Djava.util.logging.manager=...@ on its command line instead ("JVM options for a play bundle":deployment#bundle-jvm lists everything it forwards). Either way your value takes precedence over the framework's.
 
 
 h2. <a name="json">Structured JSON logging</a>

@@ -182,6 +182,8 @@ The `/opt/play1/play` shell script is a thin wrapper that:
 
 Module loading happens via the plugin's `extractPlayModules` task: each module declared in `play1 { modules(...) }` is sourced from the framework distribution and unzipped under the app's `modules/` directory. `Play.loadModules()` and `VirtualFile` are unchanged from 1.12 — modules remain real directories on disk so overlays and hot reload keep working.
 
+`certs/.env` is loaded into the JVM's environment by whatever launches it, never by Play itself — in the same four places as the JUL arg: `registerPlayJvmTask`, `spawnPlay` and `PlayAutotestTask` (through `loadDotEnv`), and `bundle-play.sh` (`load_dotenv`, a bash port of the same grammar). One rule everywhere (PF-184): a variable the host environment already defines wins, even when empty, and the file is literal `KEY=VALUE` text that is read, never sourced. Guarded by the gradle-plugin's `DotEnvPrecedenceTest` (the three plugin sites) and `BundleLauncherTest` (the launcher).
+
 ### Precompilation and packaged artifacts
 
 `play precompile` (and the `playBundle`/`playDist` tasks that depend on it) boots the framework once with `-Dprecompile=yes` under `play.id=test`, writing enhanced bytecode to `precompiled/java/` and parsed templates to `precompiled/templates/`. `precompiled/` is packaged into the production artifact; in a self-contained bundle it is force-loaded at startup (`-Dprecompiled=true` → `ApplicationClassloader.scanPrecompiled` loads *every* class under `precompiled/java/`). Two things are therefore deliberately kept **out** of `precompiled/`, even though precompile still *compiles* them so build errors surface (since 1.13.26):

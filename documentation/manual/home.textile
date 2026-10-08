@@ -152,6 +152,7 @@ Everything you need to know about Play.
 ## "The framework ID":ids#id
 ## "Setting the framework ID from the command line":ids#command
 ## "Environment variable interpolation":configuration#envvar
+## "The certs/.env file":configuration#dotenv
 # "Production deployment":production
 ## "Configure your application.conf":production#application
 ## "Configure logging":production#logging

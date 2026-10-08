@@ -547,8 +547,11 @@ class Play1Plugin : Plugin<Project> {
             }
 
             val dotenv = loadDotEnv(File(project.projectDir, "certs/.env"))
+            // PF-184: certs/.env only fills in what the host leaves undefined, as in
+            // spawnPlay and playAutotest. `environment` starts out as the build's own
+            // environment, so a key already in it -- even one set to "" -- is the host's.
             dotenv.forEach { (k, v) ->
-                environment(k, v)
+                if (k !in environment) environment(k, v)
             }
             // Hermetic test runs (playTest, playPrecompile, playAutotest) — if
             // certs/.env and the host env both lack the application.secret env

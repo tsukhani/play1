@@ -32,6 +32,44 @@ Unresolved placeholders with no default log a @WARN@ at startup and resolve to t
 Configurations without any @${...}@ syntax behave identically to before — there is no migration needed when upgrading.
 
 
+h2. <a name="dotenv">The certs/.env file</a>
+
+The environment variables that @${...}@ placeholders refer to do not have to be exported by hand. @certs/.env@ is a gitignored file of environment variables in the application directory, written by @play new@ and @play secret@. It typically holds the @PLAY_SECRET@ that @application.conf@ references: Play refuses to start when @application.secret@ is a literal value rather than a @${VAR}@ placeholder, so the secret has to come from outside the configuration file.
+
+bc. # certs/.env
+PLAY_SECRET=wM3kq0ZtR8…
+DATABASE_URL=jdbc:postgresql://db.internal:5432/myapp
+
+Play itself never reads this file. Whatever starts the JVM loads it into the process environment first: the Gradle plugin for @play run@, @play start@, @play restart@, @play test@, @play autotest@, @play precompile@ and @play evolutions@, and the @play@ launcher inside a @play bundle@. The application then sees ordinary environment variables.
+
+h3. Syntax
+
+Every launcher parses the file by the same rules:
+
+* It is read line by line; the last line does not need a trailing newline.
+* Leading and trailing whitespace is trimmed from each line, carriage returns included, so files with CRLF line endings work.
+* Empty lines and lines starting with @#@ are skipped.
+* Each remaining line is split at its *first* @=@. Lines with no @=@, or with nothing before it, are skipped.
+* The key is the text before the @=@ and the value is the text after it, each trimmed.
+* The key should be a variable name: letters, digits and underscores, not starting with a digit. A bundle's launcher skips any other key, and names bash reserves for itself such as @UID@, and reports the line number on standard error.
+* If the value is wrapped in double quotes, that one pair is removed; the same then applies to single quotes.
+* When a key appears more than once, the last occurrence wins.
+
+The value is otherwise literal text — the file is *not* a shell script. These are not supported:
+
+* an @export@ prefix: @export FOO=bar@ does not define @FOO@
+* @$@ expansion, backticks and command substitution: @${HOME}/data@ and @$(hostname)@ are passed through as written
+* backslash escapes
+* inline comments: @FOO=bar # note@ sets @FOO@ to @bar # note@
+* multi-line values
+
+h3. Precedence
+
+A variable that is already present in the host environment is never overridden by @certs/.env@: the file only supplies variables the host does not define. A host variable set to the empty string still counts as set, so its empty value is kept. This holds on every launch path listed above (PF-184).
+
+In a container, for example, a variable passed with @docker run -e@ wins over the same key in a @certs/.env@ that is baked into the image or mounted into it.
+
+
 h2(#application). Application configuration
 
 
