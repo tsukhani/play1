@@ -14,7 +14,7 @@ import java.io.File
  */
 class PluginApplicationTest {
 
-    /** Every task the plugin promises in its play1 group (see CLAUDE.md). */
+    /** Every task the plugin promises in its play1 group (see AGENTS.md). */
     private val expectedPlay1Tasks = listOf(
         "playRun", "playStart", "playStop", "playRestart",
         "playTest", "playAutotest", "playPrecompile", "playBundle", "playDist",
