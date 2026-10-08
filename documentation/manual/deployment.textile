@@ -45,13 +45,48 @@ bc. play start /path/to/myapp -Xms2g -Xmx2g -XX:MaxRAMPercentage=75
 
 Virtual threads make per-request stack memory negligible, so the historical "tune @play.pool@ to match cores" guidance no longer applies — those keys are gone in 1.12 (see the boot @WARN@ if your config still references them).
 
+h3. <a name="conf-jvm">JVM settings in application.conf</a>
+
+JVM flags can also live in @application.conf@, where they apply however the application is launched: @play run@, @play start@, @play test@ and the launcher inside a @play bundle@ all read the same keys. A key prefixed with the framework ID, such as @%prod.jvm.memory@, beats the bare key. Flags given on the command line come after these, so the command line wins where a flag is repeated.
+
+* @jvm.memory@ — JVM flags separated by whitespace. Despite the name it takes any flag, not only heap sizes: @jvm.memory=-Xms512m -Xmx2g --add-modules=jdk.incubator.vector@
+* @javaagent.path@ — a Java agent jar, passed as @-javaagent:<path>@
+* @agentlib@ — a native agent, passed as @-agentlib:<value>@
+* @jmx.port@ and @jmx.hostname@ — start "the JMX agent":deployment#jmx on that address. Both are required; one alone does nothing.
+
+h3. <a name="jmx">The JMX agent</a>
+
+@jmx.port@ and @jmx.hostname@ start the JMX agent, and it requires a login and TLS (PF-183). Name the files that hold the users and the keystore settings:
+
+bc. jmx.port=9010
+jmx.hostname=10.0.0.5
+jmx.password.file=conf/jmx.password
+jmx.access.file=conf/jmx.access
+jmx.ssl.config.file=conf/jmx-ssl.properties
+
+* @jmx.password.file@ lists the users, one @name password@ pair per line, and @jmx.access.file@ gives each name @readonly@ or @readwrite@.
+* @jmx.ssl.config.file@ names a properties file holding @javax.net.ssl.keyStore@ and @javax.net.ssl.keyStorePassword@. JMX runs over RMI rather than HTTP, so this is TLS and not HTTPS, and it takes a Java keystore (PKCS12 or JKS), not the PEM certificate and key the HTTPS listener uses. The connector and its RMI registry are both encrypted.
+
+Paths are relative to the application directory. The password file and the keystore settings file must be readable by their owner only (@chmod 600@). Without a password file the JVM refuses to start; without keystore settings it starts, but no client can connect to the agent.
+
+Either protection can be turned off, and only the literal value @false@ does it:
+
+bc. jmx.authenticate=false
+jmx.ssl=false
+
+With both off the agent accepts connections without a login or encryption, and anyone who can reach the port can control the JVM, so keep that to a loopback address on a development machine. Earlier releases always started the agent that way. An application that sets @jmx.port@ and @jmx.hostname@ therefore has to add the files above, or these two lines, before it will start on this release.
+
+Each key is the JDK's @com.sun.management.jmxremote.<name>@ property under a shorter name, and takes effect only together with @jmx.port@ and @jmx.hostname@. Setting the same properties through @jvm.memory@ does not work, because the agent's own flags follow it and the JVM keeps the last value given.
+
 h3. <a name="bundle-jvm">JVM options for a play bundle</a>
 
-A self-contained @play bundle@ ships its own @play@ launcher, which starts the JVM directly rather than through Gradle. That launcher does not read @jvm.memory@ from @application.conf@, so JVM options go on its command line:
+A self-contained @play bundle@ ships its own @play@ launcher, which starts the JVM directly rather than through Gradle. It reads the "application.conf keys above":deployment#conf-jvm and takes further options on its command line:
 
 bc. ./play start --%prod -Xmx2g -ea --add-opens=java.base/java.lang=ALL-UNNAMED
 
-It forwards the following to the JVM (PF-183):
+When upgrading, note that bundle launchers before PF-183 ignored the @application.conf@ keys. Check the file for JVM settings that will now take effect in production: a heap size written for development, an agent, or @jmx.port@ with @jmx.hostname@, which now start "the JMX agent":deployment#jmx and stop the JVM from starting until its password file is in place.
+
+From the command line it forwards the following to the JVM (PF-183):
 
 * @-X...@, @-XX:...@, @-Xlog:...@ and @-D...@
 * @-javaagent:...@ and @-agentlib:...@

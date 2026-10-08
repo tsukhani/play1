@@ -173,10 +173,10 @@ EXAMPLE
 
 # Forward dev-shim flag forms into JVM args + app args. Same translation
 # table as framework/play, extended with the module, preview and assertion
-# switches: the command line is the only route for JVM options in a bundle
-# (PF-183). Anything unrecognized is dropped with a warning -- Gradle-specific
-# flags like --info / --stacktrace have no analog at runtime, but a JVM option
-# dropped without a word is one the operator believes is in effect.
+# switches (PF-183). Anything unrecognized is dropped with a warning --
+# Gradle-specific flags like --info / --stacktrace have no analog at runtime,
+# but a JVM option dropped without a word is one the operator believes is in
+# effect.
 JVM_EXTRA=()
 APP_ARGS=()
 for arg in "$@"; do
@@ -202,6 +202,7 @@ build_java_cmd() {
     [ -f "$FW_JAR" ]   || { echo "play: $FW_JAR not found (run from bundle root)" >&2; exit 1; }
     [ -f .classpath ]  || { echo "play: .classpath not found at $SCRIPT_DIR" >&2; exit 1; }
     CP=$(tr '\n' "$CP_SEP" < .classpath | sed "s/${CP_SEP}\$//")
+    conf_jvm_args
     JAVA_CMD=(
         java
         --enable-native-access=ALL-UNNAMED
@@ -225,9 +226,12 @@ build_java_cmd() {
         -Dfile.encoding=utf-8
         # PF-175: route java.util.logging into log4j2 (log4j-jul ships in
         # framework/lib). Same value as JUL_LOG_MANAGER_ARG in Play1Plugin.kt.
-        # Ahead of JVM_EXTRA so a -Djava.util.logging.manager=... given on
-        # the command line wins -- the JVM honours the last -D for a key.
+        # Ahead of the conf and command-line flags so a
+        # -Djava.util.logging.manager=... given in either wins -- the JVM
+        # honours the last -D for a key. Conf before command line, for the
+        # same reason: what the operator types overrides application.conf.
         -Djava.util.logging.manager=org.apache.logging.log4j.jul.LogManager
+        "${CONF_JVM[@]}"
         "${JVM_EXTRA[@]}"
         -classpath "$CP"
         play.server.Server
@@ -252,13 +256,13 @@ launch() {
     exec "$@"
 }
 
-# PF-176: the application.log.path in effect for $PLAY_ID -- its %<id>. entry
-# ahead of the bare key, the way confValue() in Play1Plugin.kt resolves it for
-# playStart/playRestart. Prints nothing when neither is set.
-conf_log_path() {
+# PF-176: the value of application.conf key $1 in effect for $PLAY_ID -- its
+# %<id>. entry ahead of the bare key, the way confValue() in Play1Plugin.kt
+# resolves it for the Gradle launch paths. Prints nothing when neither is set.
+conf_value() {
     local conf="conf/application.conf" key value
     [ -f "$conf" ] || return 0
-    for key in "%$PLAY_ID.application.log.path" "application.log.path"; do
+    for key in "%$PLAY_ID.$1" "$1"; do
         value=$(awk -v k="$key" '
             index($0, k) == 1 && substr($0, length(k) + 1) ~ /^[[:space:]]*=/ {
                 v = substr($0, length(k) + 1)
@@ -273,6 +277,54 @@ conf_log_path() {
             return 0
         fi
     done
+}
+
+# PF-183: the JVM flags application.conf asks for -- javaagent.path, agentlib,
+# jvm.memory, and the jmx.* keys -- a bash port of confJvmArgs() in
+# Play1Plugin.kt, which does this for the Gradle launch paths. Keep the two in
+# step (BundleLauncherTest compares their output): a bundle that skipped these
+# keys ran without options the app's own conf requests.
+conf_jvm_args() {
+    local value port host ssl auth name
+    local -a flags
+    CONF_JVM=()
+    value=$(conf_value javaagent.path)
+    [ -z "$value" ] || CONF_JVM+=("-javaagent:$value")
+    value=$(conf_value agentlib)
+    [ -z "$value" ] || CONF_JVM+=("-agentlib:$value")
+    # A whitespace-separated bag of flags. read -a splits without globbing, so
+    # a `*` in a flag is not expanded against the bundle directory.
+    value=$(conf_value jvm.memory)
+    if [ -n "$value" ]; then
+        IFS=$' \t' read -r -a flags <<< "$value"
+        CONF_JVM+=("${flags[@]}")
+    fi
+    # Both keys or nothing. The agent demands a login and TLS unless the conf
+    # turns one off with the literal word false -- the JDK reads anything but
+    # "true" as off, so a typo passed through would open the agent. The files
+    # hold the credentials and the keystore settings; files because a -D is
+    # readable in `ps`. The registry follows jmx.ssl: left plain it would hand
+    # out the connector stub unencrypted.
+    port=$(conf_value jmx.port)
+    host=$(conf_value jmx.hostname)
+    if [ -n "$port" ] && [ -n "$host" ]; then
+        case "$(conf_value jmx.ssl)" in [Ff][Aa][Ll][Ss][Ee]) ssl=false ;; *) ssl=true ;; esac
+        case "$(conf_value jmx.authenticate)" in [Ff][Aa][Ll][Ss][Ee]) auth=false ;; *) auth=true ;; esac
+        CONF_JVM+=(
+            -Dcom.sun.management.jmxremote
+            "-Dcom.sun.management.jmxremote.port=$port"
+            "-Dcom.sun.management.jmxremote.ssl=$ssl"
+            "-Dcom.sun.management.jmxremote.authenticate=$auth"
+            -Dcom.sun.management.jmxremote.local.only=false
+            "-Dcom.sun.management.jmxremote.host=$host"
+            "-Djava.rmi.server.hostname=$host"
+            "-Dcom.sun.management.jmxremote.registry.ssl=$ssl"
+        )
+        for name in ssl.config.file password.file access.file; do
+            value=$(conf_value "jmx.$name")
+            [ -z "$value" ] || CONF_JVM+=("-Dcom.sun.management.jmxremote.$name=$value")
+        done
+    fi
 }
 
 case "$CMD" in
@@ -302,7 +354,7 @@ case "$CMD" in
         # system.out as console output, and the log4j2 config as what governs
         # where the application log goes.
         echo "~ console output (stdout/stderr) -> $SCRIPT_DIR/logs/system.out"
-        log_config=$(conf_log_path)
+        log_config=$(conf_value application.log.path)
         if [ -n "$log_config" ]; then
             echo "~ application logging follows $log_config"
         else
@@ -398,6 +450,11 @@ JVM options, forwarded to the spawned JVM in the order given:
   -enablesystemassertions  -disablesystemassertions
 Long options are forwarded in the joined form only (--add-modules=a,b, not
 --add-modules a,b). Any other argument is ignored, with a warning on stderr.
+JVM flags are also taken from conf/application.conf, ahead of the command
+line so that the command line wins: jvm.memory, javaagent.path, agentlib,
+and jmx.port with jmx.hostname (a %<id>. entry beats the bare key). The JMX
+agent requires a login and TLS (jmx.password.file, jmx.access.file,
+jmx.ssl.config.file) unless jmx.authenticate=false / jmx.ssl=false.
 
 Environment:
   PLAY_ID                Default play.id (overridden by --%<id>)

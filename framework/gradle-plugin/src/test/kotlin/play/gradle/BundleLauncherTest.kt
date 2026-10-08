@@ -163,7 +163,24 @@ class BundleLauncherTest {
         return bundle to stubs
     }
 
+    /** A bundle under [tmp] whose conf/application.conf holds exactly [conf], and its stub directory. */
+    private fun bundleWithConf(tmp: File, conf: String): Pair<File, File> {
+        val bundle = File(tmp, "app").apply { mkdirs() }
+        writeBundle(bundle)
+        File(bundle, "conf").mkdirs()
+        File(bundle, "conf/application.conf").writeText(conf)
+        val stubs = File(tmp, "bin")
+        writeStubs(stubs, windows = false)
+        return bundle to stubs
+    }
+
     private fun classpathOf(argv: List<String>) = argv[argv.indexOf("-classpath") + 1]
+
+    /** What the app asked for: java's argv between the launcher's own flags and -classpath. */
+    private fun appJvmFlags(argv: List<String>) = argv.subList(
+        argv.indexOf("-Djava.util.logging.manager=org.apache.logging.log4j.jul.LogManager") + 1,
+        argv.indexOf("-classpath")
+    )
 
     private fun valueOf(argv: List<String>, prop: String) =
         argv.single { it.startsWith("-D$prop=") }.substringAfter('=')
@@ -286,8 +303,7 @@ class BundleLauncherTest {
 
     @Test
     fun `module, preview and assertion switches reach the JVM in the order given`(@TempDir tmp: File) {
-        // PF-183: the command line is the only route for JVM options in a bundle,
-        // and the launcher used to forward six forms and drop the rest unannounced.
+        // PF-183: the launcher used to forward six forms and drop the rest unannounced.
         val bundle = File(tmp, "app").apply { mkdirs() }
         writeBundle(bundle)
         val stubs = File(tmp, "bin")
@@ -311,6 +327,150 @@ class BundleLauncherTest {
         assertEquals(emptyList<String>(), run.stderr, "a forwarded option is not a dropped one")
         // Directly ahead of -classpath, where every other command-line JVM option goes.
         assertEquals(forwarded, run.stdout.subList(0, run.stdout.indexOf("-classpath")).takeLast(forwarded.size))
+    }
+
+    @Test
+    fun `JVM flags in application conf reach the JVM ahead of the command line`(@TempDir tmp: File) {
+        // PF-183: the Gradle launch paths lift these keys out of application.conf
+        // (confJvmArgs in Play1Plugin.kt); a bundle ignored them, so an app whose conf
+        // asks for --add-modules ran without it in production only.
+        val (bundle, stubs) = bundleWithConf(
+            tmp,
+            "application.name=testapp\n" +
+                "javaagent.path=/opt/agents/otel.jar\n" +
+                "agentlib=jdwp=transport=dt_socket,server=y,address=8000\n" +
+                "jvm.memory=-Xmx999m   --add-modules=jdk.incubator.vector\t-Dpattern=A*\n"
+        )
+        // Would be what -Dpattern=A* turns into if the flags were split by an unquoted expansion.
+        File(bundle, "-Dpattern=A1").writeText("")
+
+        assertEquals(
+            listOf(
+                "-javaagent:/opt/agents/otel.jar",
+                "-agentlib:jdwp=transport=dt_socket,server=y,address=8000",
+                "-Xmx999m", "--add-modules=jdk.incubator.vector", "-Dpattern=A*",
+                // Last, so it is the -Xmx the JVM keeps.
+                "-Xmx1g"
+            ),
+            appJvmFlags(launcherArgv(bundle, stubs, "-Xmx1g"))
+        )
+    }
+
+    @Test
+    fun `a conf JVM flag for the play id beats the bare key`(@TempDir tmp: File) {
+        val (bundle, stubs) = bundleWithConf(tmp, "jvm.memory=-Xmx111m\n%prod.jvm.memory=-Xmx222m\n")
+
+        assertEquals(listOf("-Xmx222m"), appJvmFlags(launcherArgv(bundle, stubs)))
+        assertEquals(listOf("-Xmx111m"), appJvmFlags(launcherArgv(bundle, stubs, "--%staging")))
+    }
+
+    @Test
+    fun `jmx port and hostname alone start an agent that demands a login and TLS`(@TempDir tmp: File) {
+        // The 1.12 launcher hard-coded both protections off, so these two keys used to mean
+        // an agent anyone who reached the port could drive. Now that is something to ask for.
+        val (bundle, stubs) = bundleWithConf(tmp, "jmx.port=9010\njmx.hostname=127.0.0.1\n")
+        assertEquals(
+            listOf(
+                "-Dcom.sun.management.jmxremote",
+                "-Dcom.sun.management.jmxremote.port=9010",
+                "-Dcom.sun.management.jmxremote.ssl=true",
+                "-Dcom.sun.management.jmxremote.authenticate=true",
+                "-Dcom.sun.management.jmxremote.local.only=false",
+                "-Dcom.sun.management.jmxremote.host=127.0.0.1",
+                "-Djava.rmi.server.hostname=127.0.0.1",
+                // The registry is a listener of its own and has to follow jmx.ssl.
+                "-Dcom.sun.management.jmxremote.registry.ssl=true"
+            ),
+            appJvmFlags(launcherArgv(bundle, stubs))
+        )
+
+        // One key alone opens nothing, and blank values are no flags at all.
+        File(bundle, "conf/application.conf").writeText("jmx.port=9010\njvm.memory=   \njavaagent.path=\n")
+        assertEquals(emptyList<String>(), appJvmFlags(launcherArgv(bundle, stubs)))
+    }
+
+    @Test
+    fun `only the literal word false turns jmx authentication or TLS off`(@TempDir tmp: File) {
+        val (bundle, stubs) = bundleWithConf(tmp, "")
+        fun switches(conf: String): List<String> {
+            File(bundle, "conf/application.conf").writeText("jmx.port=9010\njmx.hostname=10.0.0.5\n$conf")
+            return appJvmFlags(launcherArgv(bundle, stubs))
+                .filter { it.contains(".ssl=") || it.contains(".authenticate=") }
+                .map { it.removePrefix("-Dcom.sun.management.jmxremote.") }
+        }
+
+        assertEquals(
+            listOf("ssl=false", "authenticate=false", "registry.ssl=false"),
+            switches("jmx.authenticate=false\njmx.ssl=FALSE\n")
+        )
+        assertEquals(
+            listOf("ssl=true", "authenticate=false", "registry.ssl=true"),
+            switches("jmx.authenticate=false\n")
+        )
+        // The JDK reads anything but "true" as off; passed through, a typo would open the agent.
+        assertEquals(
+            listOf("ssl=true", "authenticate=true", "registry.ssl=true"),
+            switches("jmx.authenticate=ture\njmx.ssl=no\n")
+        )
+        // jvm.memory cannot switch it off either: the agent's flags follow it and the JVM
+        // keeps the last -D, which is why these are keys of their own.
+        assertEquals(
+            listOf("authenticate=false", "ssl=true", "authenticate=true", "registry.ssl=true"),
+            switches("jvm.memory=-Dcom.sun.management.jmxremote.authenticate=false\n")
+        )
+    }
+
+    @Test
+    fun `the files jmx authentication and TLS need are named in application conf`(@TempDir tmp: File) {
+        val (bundle, stubs) = bundleWithConf(
+            tmp,
+            "jmx.port=9010\njmx.hostname=10.0.0.5\n" +
+                "jmx.password.file=conf/jmx.password\njmx.access.file=conf/jmx.access\n" +
+                "jmx.ssl.config.file=conf/jmx-ssl.properties\n"
+        )
+        // As files, not values: a credential or a keystore password given as a -D is readable in `ps`.
+        assertEquals(
+            listOf(
+                "-Dcom.sun.management.jmxremote.ssl.config.file=conf/jmx-ssl.properties",
+                "-Dcom.sun.management.jmxremote.password.file=conf/jmx.password",
+                "-Dcom.sun.management.jmxremote.access.file=conf/jmx.access"
+            ),
+            appJvmFlags(launcherArgv(bundle, stubs)).takeLast(3)
+        )
+    }
+
+    @Test
+    fun `the launcher derives the same JVM flags from application conf as the Gradle launch paths`(@TempDir tmp: File) {
+        // conf_jvm_args in bundle-play.sh is a bash port of confJvmArgs in Play1Plugin.kt.
+        // One application.conf has to mean one JVM however the app is launched, so the
+        // two are compared directly rather than each against its own expectations.
+        val confs = listOf(
+            "application.name=testapp\n",
+            "jvm.memory=-Xms256m -Xmx2g\t-XX:+UseZGC   --add-modules=jdk.incubator.vector\n",
+            "javaagent.path=bin/agent.jar\nagentlib=jdwp=transport=dt_socket,server=y,address=8000\n",
+            "jvm.memory=-Xmx111m\n%prod.jvm.memory=-Xmx222m\n%test.javaagent.path=bin/jacocoagent.jar\n",
+            // A blank value is unset; the Gradle-side reader used to take the next line for it.
+            "jvm.memory=\njavaagent.path=bin/agent.jar\n",
+            "javaagent.path=   \njvm.memory=-Xmx1g\nagentlib=\n",
+            "jmx.port=9010\n",
+            "jmx.port=\njmx.hostname=127.0.0.1\n",
+            "jmx.port = 9010\njmx.hostname = 127.0.0.1\n",
+            "jmx.port=9010\njmx.hostname=127.0.0.1\njmx.authenticate=false\njmx.ssl=False\n",
+            "jmx.port=9010\njmx.hostname=127.0.0.1\njmx.authenticate=ture\njmx.ssl=\n",
+            "jmx.port=9010\njmx.hostname=10.0.0.5\njmx.ssl=true\n%prod.jmx.ssl=false\n" +
+                "jmx.password.file=conf/jmx.password\njmx.access.file=conf/jmx.access\n" +
+                "jmx.ssl.config.file=conf/jmx-ssl.properties\njvm.memory=-Xmx1g\njavaagent.path=bin/agent.jar\n"
+        )
+        confs.forEachIndexed { i, conf ->
+            val (bundle, stubs) = bundleWithConf(File(tmp, "case$i").apply { mkdirs() }, conf)
+            listOf("prod", "staging").forEach { id ->
+                assertEquals(
+                    confJvmArgs(bundle, id),
+                    appJvmFlags(launcherArgv(bundle, stubs, "--%$id")),
+                    "play id '$id', application.conf:\n$conf"
+                )
+            }
+        }
     }
 
     @Test

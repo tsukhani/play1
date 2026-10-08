@@ -1026,7 +1026,9 @@ private fun loadDotEnv(envFile: File): Map<String, String> {
 }
 
 private fun activeValue(config: String, key: String): String? {
-    val m = Regex("""^${Regex.escape(key)}\s*=\s*(.+?)\s*$""", RegexOption.MULTILINE).find(config)
+    // [ \t], not \s: \s matches the line break too, so `key=` with nothing after
+    // it used to capture the *next* line as its value. A blank value is unset.
+    val m = Regex("""^${Regex.escape(key)}[ \t]*=[ \t]*(\S.*?)[ \t]*$""", RegexOption.MULTILINE).find(config)
     return m?.groupValues?.get(1)?.trim()
 }
 
@@ -1093,11 +1095,19 @@ private const val JUL_LOG_MANAGER_ARG = "-D$JUL_MANAGER_PROPERTY=$LOG4J_JUL_MANA
 //   - jvm.memory       -> whitespace-split into discrete JVM args
 //   - jmx.port + jmx.hostname (both required) -> JMX agent flags
 //
-// JMX defaults (ssl=false, authenticate=false, local.only=false) match the
-// 1.12 launcher verbatim. They are insecure-by-default but only fire when
-// an operator explicitly sets both jmx.port and jmx.hostname; harden the
-// agent with -D overrides via -PjvmArgs if exposing JMX off-host.
-private fun confJvmArgs(appDir: File, playId: String): List<String> {
+// The JMX agent demands a login and TLS unless the conf turns them off with
+// a literal jmx.authenticate=false / jmx.ssl=false (PF-183). The 1.12
+// launcher, and this one before PF-183, hard-coded both off, so jmx.port +
+// jmx.hostname always meant an agent anyone who reached the port could
+// drive. The files the protections need are named by jmx.password.file,
+// jmx.access.file and jmx.ssl.config.file; every key is the JDK's
+// com.sun.management.jmxremote.<name> under a shorter name. They have to be
+// keys of their own: these flags come after jvm.memory, so a -D given there
+// loses to the ones below.
+//
+// bundle-play.sh's conf_jvm_args is a bash port of this function for the
+// bundle launcher; BundleLauncherTest holds the two to the same output.
+internal fun confJvmArgs(appDir: File, playId: String): List<String> {
     val confFile = File(appDir, "conf/application.conf")
     if (!confFile.isFile) return emptyList()
     val confText = confFile.readText()
@@ -1118,13 +1128,26 @@ private fun confJvmArgs(appDir: File, playId: String): List<String> {
         val jmxPort = confValue(confText, "jmx.port", playId)?.takeIf { it.isNotBlank() }
         val jmxHost = confValue(confText, "jmx.hostname", playId)?.takeIf { it.isNotBlank() }
         if (jmxPort != null && jmxHost != null) {
+            fun jmx(name: String) = confValue(confText, "jmx.$name", playId)?.takeIf { it.isNotBlank() }
+            // On unless the conf says the word: the JDK reads anything but "true"
+            // as off, so passing a typo through would open the agent.
+            fun switch(name: String) = if (jmx(name).equals("false", ignoreCase = true)) "false" else "true"
+            val ssl = switch("ssl")
             add("-Dcom.sun.management.jmxremote")
             add("-Dcom.sun.management.jmxremote.port=$jmxPort")
-            add("-Dcom.sun.management.jmxremote.ssl=false")
-            add("-Dcom.sun.management.jmxremote.authenticate=false")
+            add("-Dcom.sun.management.jmxremote.ssl=$ssl")
+            add("-Dcom.sun.management.jmxremote.authenticate=${switch("authenticate")}")
             add("-Dcom.sun.management.jmxremote.local.only=false")
             add("-Dcom.sun.management.jmxremote.host=$jmxHost")
             add("-Djava.rmi.server.hostname=$jmxHost")
+            // The RMI registry is a second listener; left plain it would hand
+            // out the connector stub unencrypted, so it follows jmx.ssl.
+            add("-Dcom.sun.management.jmxremote.registry.ssl=$ssl")
+            // Files, not values: a keystore password or a credential given as
+            // a -D would be readable in `ps`.
+            for (name in listOf("ssl.config.file", "password.file", "access.file")) {
+                jmx(name)?.let { add("-Dcom.sun.management.jmxremote.$name=$it") }
+            }
         }
     }
 }
