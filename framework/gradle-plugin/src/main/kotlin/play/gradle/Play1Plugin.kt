@@ -1837,6 +1837,15 @@ abstract class PlayBundleTask : DefaultTask() {
                 }
             }
 
+            // 3b. PF-181: the framework's default messages (validation.*, since.*).
+            //     MessagesPlugin reads them from <framework.path>/resources/messages,
+            //     and the bundled `play` sets framework.path to this framework/ dir.
+            //     Read as a plain file, so it gets no .classpath entry.
+            val defaultMessages = File(fwDir, "resources/messages")
+            if (defaultMessages.isFile) {
+                copyToZipfs(defaultMessages.toPath(), zipfs.getPath("/$appName/framework/resources/messages"))
+            }
+
             // 4. Gradle-resolved deps under lib/.
             gradleResolvedDeps.sortedBy { it.name }.forEach { jar ->
                 copyToZipfs(jar.toPath(), zipfs.getPath("/$appName/lib/${jar.name}"))
