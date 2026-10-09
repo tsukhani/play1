@@ -28,14 +28,17 @@ private const val FORKS_JVMS = "forks detached JVMs from TestKit, and aot-gen re
 
 /**
  * PF-185: an application started through Gradle with -Dprecompiled=true -- from its working
- * copy or from a `play dist` install -- runs on a classpath of jars only and from the JDK's
- * AOT cache, as a bundle does. The JVM refuses to write a cache while a non-empty directory is
- * on the classpath, and a Gradle start had three: conf/, Gradle's compile output and its copy
- * of conf/. A start that compiles needs them and keeps them.
+ * copy or from a `play dist` install -- starts from the JDK's AOT cache once it has one, as a
+ * bundle does. The JVM refuses to write a cache while a non-empty directory is on the
+ * classpath, and a Gradle start has three: conf/, Gradle's compile output and its copy of
+ * conf/. So the training run and every start that is given the cache run on a classpath of
+ * files only. Nothing else changes: an application that has no cache, and any start that
+ * compiles, is launched as it always was.
  *
- * `playAotGen` is the training run that writes the cache (app.aot in the application
- * directory); playRun, playStart and playRestart use it. BundleLauncherTest covers the same
- * command of the bundle launcher, and holds the two to one rule for leaving -XX:AOTCache out.
+ * `playAotGen` is the training run that writes the cache, build/play/aot/app.aot: under
+ * Gradle's build directory, which an application's .gitignore already excludes. playRun,
+ * playStart and playRestart use it. BundleLauncherTest covers the same command of the bundle
+ * launcher, and holds the two to one rule for leaving -XX:AOTCache out.
  *
  * Every task runs for real against a fake framework whose play.server.Server reports what
  * the JVM was started with, or plays the application a training run needs.
@@ -51,30 +54,37 @@ class PrecompiledStartTest {
     @ParameterizedTest
     @ValueSource(strings = ["playRun", "playStart", "playRestart"])
     @DisabledOnOs(OS.WINDOWS, disabledReason = FORKS_JVMS)
-    fun `a precompiled start has only files on its JVM classpath, and any other start is launched as before`(
+    fun `a start from the cache has only files on its JVM classpath, and any other start is launched as before`(
         task: String, @TempDir tmp: File
     ) {
         val app = writeApp(tmp)
 
-        val compiling = report(app, task).classpath
-        val fromPrecompiled = report(app, task, precompiled).classpath
-
         // A start that compiles: conf/ first and Gradle's compile output behind it, which
         // javassist reads while the application's classes are enhanced (PF-94).
+        val compiling = report(app, task).classpath
         assertEquals(File(app, "conf").canonicalFile, compiling.first().canonicalFile)
         assertTrue(
             File(app, "build/classes/java/main").canonicalFile in compiling.map { it.canonicalFile },
             "$compiling"
         )
 
-        // A precompiled one: the same entries in the same order, without the directories.
-        assertEquals(emptyList<File>(), fromPrecompiled.filter { it.isDirectory })
-        assertEquals(compiling.filter { it.isFile }, fromPrecompiled)
+        // Precompiled, with no cache to start from: nothing changes for an application
+        // that never ran aot-gen.
+        assertEquals(compiling, report(app, task, precompiled).classpath)
+
+        // With a cache: the same entries in the same order, without the directories.
+        cacheOf(app).writeText("a cache, for all the plugin can tell")
+        val fromCache = report(app, task, precompiled).classpath
+        assertEquals(emptyList<File>(), fromCache.filter { it.isDirectory })
+        assertEquals(compiling.filter { it.isFile }, fromCache)
         assertEquals(
             listOf("play-$fwVersion.jar", "extra.jar"),
-            fromPrecompiled.map { it.name },
+            fromCache.map { it.name },
             "the framework and the application's own jar stay"
         )
+
+        // A cache is no reason to change a start that compiles, which cannot use it.
+        assertEquals(compiling, report(app, task).classpath)
     }
 
     @Test
@@ -82,7 +92,9 @@ class PrecompiledStartTest {
     fun `what the JVM is given decides whether a start is precompiled`(@TempDir tmp: File) {
         // Server.main takes -Dprecompiled=true and nothing else for it, and the JVM keeps the
         // last -D of a key: application.conf first, then the command line.
+        // With a cache in place, the classpath shows which way a start was taken.
         val app = writeApp(tmp, conf = "jvm.memory=-Xmx64m -Dprecompiled=true\n")
+        cacheOf(app).writeText("a cache, for all the plugin can tell")
         fun directories(task: String, vararg args: String) = report(app, task, *args).classpath.filter { it.isDirectory }
 
         assertEquals(emptyList<File>(), directories("playStart"))
@@ -117,7 +129,7 @@ class PrecompiledStartTest {
         assertEquals(emptyList<String>(), aotFlags(precompiled), "there is no cache yet")
 
         // Not a cache at all, which the JVM answers with a few [aot] lines and a normal start.
-        val cache = File(app, "app.aot").apply { writeText("a cache, for all the plugin can tell") }
+        val cache = cacheOf(app).apply { writeText("a cache, for all the plugin can tell") }
         val run = report(app, task, "-PjvmArgs=-Dprecompiled=true -XX:MaxHeapFreeRatio=60")
         val option = run.jvmArgs.single { it.startsWith("-XX:AOTCache=") }
         assertEquals(cache.canonicalFile, File(option.substringAfter('=')).canonicalFile)
@@ -132,7 +144,10 @@ class PrecompiledStartTest {
         // The operator's own option stays beside it where the JVM lets the later one decide,
         // and replaces it where the JVM would refuse to start with both.
         assertEquals(listOf(option, "-XX:AOTMode=off"), aotFlags("-PjvmArgs=-Dprecompiled=true -XX:AOTMode=off"))
-        assertEquals(emptyList<String>(), aotFlags("-PjvmArgs=-Dprecompiled=true -Xshare:auto"))
+        val refused = report(app, task, "-PjvmArgs=-Dprecompiled=true -Xshare:auto")
+        assertEquals(emptyList<String>(), refused.jvmArgs.filter { it.startsWith("-XX:AOT") })
+        // ...and a start that is not given the cache keeps the classpath it always had.
+        assertTrue(refused.classpath.any { it.isDirectory }, "${refused.classpath}")
     }
 
     // ---- aot-gen -----------------------------------------------------------------------
@@ -145,23 +160,23 @@ class PrecompiledStartTest {
             "-PplayId=staging", "-PhttpPort=${freePort()}", "-PhttpsPort=${freePort()}",
             "-PjvmArgs=-Dprecompiled=true -Dpf185=yes -XX:+UseSerialGC"
         )
+        // The start a cache is for is one that is given the cache.
+        cacheOf(app).writeText("the cache in use")
         val start = report(app, "playStart", *args)
+        val use = start.jvmArgs.single { it.startsWith("-XX:AOTCache=") }
+        assertTrue(start.jvmArgs.indexOf(use) < start.jvmArgs.indexOf(julManager), "${start.jvmArgs}")
 
         // The fake Server reports and returns, which aot-gen takes for a failed start; its
         // command line is the subject here. A cache trained under other options -- another
         // collector, another classpath -- is one the JVM rejects at the next start.
         val training = trainingReport(app, *args)
         val output = training.jvmArgs.single { it.startsWith("-XX:AOTCacheOutput=") }
-        assertEquals(File(app, "app.aot.new").canonicalFile, File(output.substringAfter('=')).canonicalFile)
-        assertEquals(start.jvmArgs.indexOf(julManager), training.jvmArgs.indexOf(output), "${training.jvmArgs}")
-        assertEquals(start.jvmArgs, training.jvmArgs - output)
+        assertEquals(File(app, "build/play/aot/app.aot.new").canonicalFile, File(output.substringAfter('=')).canonicalFile)
+        // The cache being replaced is not an input to its own replacement, and the JVM
+        // refuses -XX:AOTCache next to -XX:AOTCacheOutput: the one takes the place of the other.
+        assertEquals(start.jvmArgs.map { if (it == use) output else it }, training.jvmArgs)
         assertEquals(start.classpath, training.classpath)
         assertEquals(start.args, training.args)
-
-        // The cache being replaced is not an input to its own replacement, and the JVM
-        // refuses -XX:AOTCache next to -XX:AOTCacheOutput.
-        File(app, "app.aot").writeText("the cache in use")
-        assertEquals(listOf(output), trainingReport(app, *args).jvmArgs.filter { it.startsWith("-XX:AOT") })
     }
 
     @Test
@@ -293,24 +308,20 @@ class PrecompiledStartTest {
         assertTrue("REQUEST GET / HTTP/1.1" in jvmOutput, "no request was served:\n$jvmOutput")
         // The JVM writes the cache on its way out of a normal exit, hooks included.
         assertTrue("SHUTDOWN HOOK" in jvmOutput, "the JVM was not stopped gracefully:\n$jvmOutput")
-        val cache = File(app, "app.aot")
+        val cache = cacheOf(app)
         assertTrue(cache.length() > 1_000_000, "app.aot is ${cache.length()} bytes: not a cache")
-        assertEquals(emptyList<String>(), app.list()!!.filter { it.startsWith("app.aot.") }, "leftovers of the training run")
+        assertEquals(listOf("app.aot"), cache.parentFile.list()!!.toList(), "leftovers of the training run")
         assertEquals("4242", File(app, "server.pid").readText(), "aot-gen touched a running instance's pid file")
         // Where it is and how big.
         val where = training.output.lines().single { "the AOT cache is at" in it }
         assertEquals(cache.canonicalFile, File(where.substringAfter(": ").substringBefore(" (")).canonicalFile, where)
         assertTrue(Regex("""\(\d+ MB\)$""").containsMatchIn(where), where)
 
-        // An application whose .gitignore predates the cache is told, once it has one:
-        // git lists an untracked file of this size like any other.
-        assertFalse(training.output.lines().any { ".gitignore" in it }, "not a repository: nothing to say\n${training.output}")
-        assertEquals(0, ProcessBuilder("git", "init", "-q").directory(app).inheritIO().start().waitFor(), "git init failed")
-        val args = arrayOf("playAotGen", "-PhttpPort=${freePort()}", "-PjvmArgs=-Dpf185.mode=listen")
-        val unignored = TestProject.runner(app, *args).build().output.lines().single { ".gitignore" in it }
-        assertTrue("/app.aot*" in unignored, unignored)
-        File(app, ".gitignore").writeText("/app.aot*\n")
-        assertFalse(TestProject.runner(app, *args).build().output.lines().any { ".gitignore" in it })
+        // Under Gradle's build directory and nowhere else: nothing new for git to list.
+        assertEquals(
+            setOf(".gradle", "app", "build", "build.gradle.kts", "conf", "lib", "logs", "modules", "precompiled", "server.pid", "settings.gradle.kts"),
+            app.list()!!.toSet()
+        )
 
         // -XX:AOTMode=on makes the JVM refuse to start unless it can use the cache it is
         // given, so a start that gets as far as reporting is the JVM's own word that the
@@ -319,6 +330,7 @@ class PrecompiledStartTest {
         for (task in listOf("playRun", "playStart")) {
             val start = report(app, task, "-PjvmArgs=-Dprecompiled=true -XX:AOTMode=on")
             assertTrue(start.jvmArgs.any { it.startsWith("-XX:AOTCache=") }, "$task: ${start.jvmArgs}")
+            assertEquals(emptyList<File>(), start.classpath.filter { it.isDirectory }, task)
         }
     }
 
@@ -382,15 +394,18 @@ class PrecompiledStartTest {
     /** What must be true after any `aot-gen` that failed: nothing new, nothing touched. */
     private fun assertLeftAsItWas(app: File) {
         assertEquals("4242", File(app, "server.pid").readText(), "aot-gen touched a running instance's pid file")
-        assertEquals("the cache in use", File(app, "app.aot").readText(), "aot-gen damaged the cache in use")
-        assertEquals(emptyList<String>(), app.list()!!.filter { it.startsWith("app.aot.") }, "a half-written cache was left behind")
+        assertEquals("the cache in use", cacheOf(app).readText(), "aot-gen damaged the cache in use")
+        assertEquals(listOf("app.aot"), cacheOf(app).parentFile.list()!!.toList(), "a half-written cache was left behind")
     }
 
     /** An application that already has a cache and the pid file of an instance playStart is tracking. */
     private fun appInUse(tmp: File): File = writeApp(tmp).also { app ->
         File(app, "server.pid").writeText("4242")
-        File(app, "app.aot").writeText("the cache in use")
+        cacheOf(app).writeText("the cache in use")
     }
+
+    /** Where playAotGen keeps the application's cache; its directory is there on return. */
+    private fun cacheOf(app: File): File = File(app, "build/play/aot/app.aot").apply { parentFile.mkdirs() }
 
     /** A port nothing listens on: handed out by the OS and released again. */
     private fun freePort(): Int = ServerSocket(0).use { it.localPort }

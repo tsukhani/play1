@@ -122,12 +122,13 @@ class PrecompiledJarPackagingTest {
 
     @Test
     fun `a working copy's AOT cache is in neither artifact`(@TempDir tmp: File) {
-        // PF-185: `play aot-gen` leaves app.aot in the application directory, and git lists
-        // an untracked file wherever .gitignore does not name it. The cache fits the machine
-        // it was trained on only; in a bundle it would also be the name the launcher looks for.
+        // PF-185: the cache `play aot-gen` leaves fits the machine it was trained on only.
+        // It is kept under Gradle's build directory for that reason: the packaging tasks ship
+        // what git lists, and an application's .gitignore excludes build/.
         val app = app(tmp)
-        File(app, "app.aot").writeText("fits this machine only")
-        File(app, "app.aot.new").writeText("a training run in progress")
+        File(app, "build/play/aot").mkdirs()
+        File(app, "build/play/aot/app.aot").writeText("fits this machine only")
+        File(app, "build/play/aot/app.aot.new").writeText("a training run in progress")
 
         TestProject.runner(app, "playDist", "playBundle").build()
 

@@ -165,18 +165,20 @@ play start   --%prod -XX:+UseZGC -Dprecompiled=true
 @play aot-gen@ is the training run described "above":#aot-cache and follows the same rules. It starts the application for real with its real configuration, finds its port the same way, waits @PLAY_AOT_TIMEOUT@ seconds for it to listen and writes the application's output to @logs/aot-gen.out@. A failed run leaves a cache already in place as it was, and the pid file is never read or written. What a cache is tied to, and how your own options win over it, are the same as well. The differences:
 
 * **It starts the application from @precompiled/@**, whether or not @-Dprecompiled=true@ is among its arguments, and it does not precompile: run @play precompile@ first. A @play dist@ install has its classes already.
-* **The cache is @app.aot@ in the application directory.** @play run@, @play start@ and @play restart@ pass it to the JVM when the file exists and the start is a precompiled one. Delete the file to go back.
-* **Keep it out of version control.** It is a file of a hundred megabytes that fits one machine. The @.gitignore@ of a new application names it; in an application created earlier add the line @/app.aot*@, which @aot-gen@ reminds you of. @play dist@ and @play bundle@ never package it.
-* **@play precompile@ leaves it in place.** Most of a cache is library classes, and a class of the application that has changed is never taken from it, so a cache trained before the last precompile still works. A change to the application's jars — a new dependency, another framework version — is different: the JVM then rejects the whole cache. Make @play aot-gen@ the last step of a deployment.
+* **The cache is @build/play/aot/app.aot@**, in the application's Gradle build directory. @play run@, @play start@ and @play restart@ pass it to the JVM when the file exists and the start is a precompiled one. Delete the file to go back.
+* **Nothing to add to @.gitignore@.** The cache is a file of a hundred megabytes that fits one machine. An application's @.gitignore@ already excludes @build/@, so it is never committed, and @play dist@ and @play bundle@, which package what git lists, never ship it.
+* **@play precompile@ leaves it in place**; @./gradlew clean@ removes it with the rest of @build/@. Most of a cache is library classes, and a class of the application that has changed is never taken from it, so a cache trained before the last precompile still works. A change to the application's jars — a new dependency, another framework version — is different: the JVM then rejects the whole cache. Make @play aot-gen@ the last step of a deployment.
 * **Not on Windows.** The JVM writes the cache when it exits normally, and a JVM started from Gradle can only be ended at once there.
 
 Measured as the "Started in" line, medians of five starts on JDK 25.0.2: the small application of "the table below":#startup-profile, started from its working copy, went from 1,419 ms to 501 ms. A large one — 2,000 classes, a large JPA model and about fifty start-up jobs, under ZGC — went from about 3.7 s to 2.3 s. The change of classpath alone made no measurable difference to either; the gain is the cache.
 
-**The classpath of a precompiled start**
+**The classpath of a start from the cache**
 
-Until PF-185 every JVM that Gradle started for an application had three directories at the front of its classpath: @conf/@, and Gradle's own @build/classes/java/main@ and @build/resources/main@. A start that compiles needs the second, which the bytecode enhancers read. A precompiled start reads none of the three from the classpath, and the JVM writes no cache while one of them is there. So @play run@, @play start@ and @play restart@ with @-Dprecompiled=true@ now put **jars only** on the classpath, whether or not there is a cache. Dev mode, @play test@ and a production start that compiles are launched as before.
+A JVM that Gradle starts for an application has three directories at the front of its classpath: @conf/@, and Gradle's own @build/classes/java/main@ and @build/resources/main@. The JVM writes no cache while a non-empty directory is on the classpath, and accepts a cache only on the classpath it was written with. So the training run, and after it every start that is given the cache, has **jars only** on its classpath.
 
-For the application this is the change a bundle went through, described under "Upgrading: conf/ is no longer on a bundle's classpath":#bundle-classpath: everything Play does with @conf/@ is unchanged, and a file that a library looks up through the JVM's own class loader has to move into a jar in @lib/@. One thing more goes with @build/classes/java/main@: Gradle's compile of the application's classes, which the JVM's own class loader could see beside the ones Play loads. A library that loaded an application class by name through that loader, rather than through the context class loader or @Play.classloader@, was given that second, unenhanced copy. It now gets a @ClassNotFoundException@.
+Nothing else changes. An application that never runs @play aot-gen@ is launched exactly as before, with or without @-Dprecompiled=true@, and so are dev mode, @play test@ and a production start that compiles. Deleting the cache puts the old classpath back.
+
+For an application that does use a cache, this is the change a bundle went through, described under "Upgrading: conf/ is no longer on a bundle's classpath":#bundle-classpath: everything Play does with @conf/@ is unchanged, and a file that a library looks up through the JVM's own class loader has to move into a jar in @lib/@. One thing more goes with @build/classes/java/main@: Gradle's compile of the application's classes, which the JVM's own class loader could see beside the ones Play loads. A library that loaded an application class by name through that loader, rather than through the context class loader or @Play.classloader@, was given that second, unenhanced copy. From the cache it gets a @ClassNotFoundException@. The training run is the first start on the new classpath, so that is where either would show.
 
 h3. <a name="startup-profile">Where a bundle's startup time goes</a>
 
@@ -232,7 +234,7 @@ bc. jar cf lib/conf-resources.jar -C conf log4j2.component.properties
 
 Make that a step of the build: @lib/@ is in the @.gitignore@ of a new application, and a jar added to the @lib/@ of a bundle that is already unpacked is not used, because the launcher starts the JVM with exactly the jars the bundle's @.classpath@ file lists. Many such files also have a system property that does the same job, which can go in @jvm.memory@.
 
-An application launched through Gradle is affected in the same way when it is started with @-Dprecompiled=true@ (PF-185): see "The classpath of a precompiled start":#aot-cache-precompiled. Started any other way, it still has @conf/@ as its first classpath entry.
+An application launched through Gradle is affected in the same way once it starts from an AOT cache of its own (PF-185): see "The classpath of a start from the cache":#aot-cache-precompiled. Without one it still has @conf/@ as its first classpath entry.
 
 h2. <a name="precompiled">Deploying without source code</a>
 
@@ -274,7 +276,7 @@ bc. play start /path/to/myapp -Dprecompiled=true
 
 The system property forces @prod@ mode and skips both the Java and template compile passes. If @precompiled/@ is missing, the framework logs @"Precompiled classes are missing!!"@ and refuses to start.
 
-A start in this mode runs on a classpath of jars only and can use the JDK's AOT cache, which takes a second or more off it: see "The AOT cache for play start and play run":#aot-cache-precompiled.
+A start in this mode can use the JDK's AOT cache, which takes a second or more off it: see "The AOT cache for play start and play run":#aot-cache-precompiled.
 
 h3. <a name="precompiled-jar">The classes in a bundle or dist: precompiled/classes.jar</a>
 

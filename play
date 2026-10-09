@@ -60,10 +60,11 @@ Application lifecycle:
 Build / test / package:
   clean                Remove generated files
   precompile           Precompile sources and templates for production
-  aot-gen              Write the JDK's AOT cache (app.aot), which a start with
-                       -Dprecompiled=true then uses. A training run: it starts
-                       the precompiled application for real, requests GET /
-                       and stops it. Give it the arguments of that start.
+  aot-gen              Write the JDK's AOT cache (build/play/aot/app.aot), which
+                       a start with -Dprecompiled=true then uses. A training
+                       run: it starts the precompiled application for real,
+                       requests GET / and stops it. Give it the arguments of
+                       that start.
   test                 Run the application's tests interactively
   autotest             Run tests headlessly and exit
                        (--tests=Class,... runs only the named test classes)

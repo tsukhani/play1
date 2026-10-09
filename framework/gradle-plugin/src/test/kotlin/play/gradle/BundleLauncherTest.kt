@@ -1038,7 +1038,11 @@ class BundleLauncherTest {
         assertNull(aotCacheArg(bundle, emptyList()))
         assertEquals(emptyList<String>(), aotFlags(launcherArgv(bundle, stubs)))
 
+        // Each has its cache where it keeps it: the launcher in the bundle's root, the
+        // plugin under the application's build directory.
         File(bundle, "app.aot").writeText("a cache, for all either can tell")
+        File(bundle, "build/play/aot").mkdirs()
+        File(bundle, "build/play/aot/app.aot").writeText("a cache, for all either can tell")
         cases.forEach { (conf, commandLine) ->
             File(bundle, "conf/application.conf").writeText("application.name=testapp\n$conf")
             assertEquals(
