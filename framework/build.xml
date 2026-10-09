@@ -471,9 +471,16 @@
         <!-- framework/gradle-plugin-repo is excluded here: `package` publishes a fresh
              one and copies it in. Whatever sits in the working tree is a leftover from
              an earlier build, and copying it shipped the previous version's plugin jar
-             beside the new one. -->
+             beside the new one.
+
+             This copies the working tree, not what git tracks, so whatever a tool
+             leaves in it ships unless it is named here. The Eclipse project files
+             (.classpath, .project, .settings/), which an IDE or a Java language server
+             writes into every Gradle project it imports and which name paths on the
+             machine that built the release, and test-result/ directories were shipped
+             that way. -->
         <copy todir="dist/play-${version}">
-            <fileset dir=".." excludes=".github/**,**/cobertura.ser,**/*.pyc,**/*.log,hs_err*,.*,.*/*,build/**,framework/gradle-plugin/build/**,framework/gradle-plugin/bin/**,framework/gradle-plugin-repo/**,**/.gradle/**,**/.kotlin/**,framework/dist/**,framework/tailwindcss,framework/test-src/**,id,**/.bzr/**,**/.git/**,*.bzrignore,framework/classes/**,framework/tests-results/**,test-result/**,framework/test-result/**,docs/**,renovate.json5,modules/**,openspec/**,.claude/**,CLAUDE.md,CONTRIBUTING.md,CODE_OF_CONDUCT.md,_bmad/**,_bmad-output/**,.agents/**,AGENTS.md" />
+            <fileset dir=".." excludes=".github/**,**/cobertura.ser,**/*.pyc,**/*.log,hs_err*,.*,.*/*,build/**,framework/gradle-plugin/build/**,framework/gradle-plugin/bin/**,framework/gradle-plugin-repo/**,**/.gradle/**,**/.kotlin/**,**/.classpath,**/.project,**/.settings/**,framework/dist/**,framework/tailwindcss,framework/test-src/**,id,**/.bzr/**,**/.git/**,*.bzrignore,framework/classes/**,framework/tests-results/**,**/test-result/**,docs/**,renovate.json5,modules/**,openspec/**,.claude/**,CLAUDE.md,CONTRIBUTING.md,CODE_OF_CONDUCT.md,_bmad/**,_bmad-output/**,.agents/**,AGENTS.md" />
             <fileset dir=".." includes="modules/docviewer/**,modules/testrunner/**" excludes="**/*.pyc" />
             <!-- Ant leaves every .gitignore and .gitattributes out of a fileset unless told
                  otherwise, and the application skeleton's are part of what `play new`
