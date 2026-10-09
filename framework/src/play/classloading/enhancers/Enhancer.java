@@ -23,6 +23,7 @@ import javassist.bytecode.annotation.MemberValue;
 import play.Logger;
 import play.Play;
 import play.classloading.ApplicationClasses.ApplicationClass;
+import play.classloading.PrecompiledJar;
 
 /**
  * Enhancer support
@@ -76,8 +77,16 @@ public abstract class Enhancer {
 
             if (Play.usePrecompiled) {
                 try {
-                    File file = Play.getFile("precompiled/java/" + className.replace('.', '/') + ".class");
-                    return new FileInputStream(file);
+                    PrecompiledJar jar = Play.classes.precompiledJar();
+                    if (jar == null) {
+                        File file = Play.getFile("precompiled/java/" + className.replace('.', '/') + ".class");
+                        return new FileInputStream(file);
+                    }
+                    byte[] code = jar.read(className);
+                    if (code != null) {
+                        return new ByteArrayInputStream(code);
+                    }
+                    Logger.error("Missing class %s", className);
                 } catch (Exception e) {
                     Logger.error("Missing class %s", className);
                 }

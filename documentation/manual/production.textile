@@ -236,7 +236,7 @@ After the total come @name=milliseconds@ pairs separated by single spaces. The p
 | @logging@ | Setting up logging, which is where log4j initializes. |
 | @modules@ | Finding the application's modules and adding them to its paths. |
 | @plugins@ | Loading every plugin named in a @play.plugins@ file and calling its @onLoad@. |
-| @classes@ | Defining the application's classes. For a precompiled application that is scanning @precompiled/java@ and defining each class in it; otherwise it is compiling and enhancing the Java sources. |
+| @classes@ | Defining the application's classes. For a precompiled application that is reading each class out of @precompiled/classes.jar@ (a bundle or dist) or @precompiled/java@ (a working copy) and defining it; otherwise it is compiling and enhancing the Java sources. |
 | @templates@ | Compiling every template. Only a prod start that is not precompiled does this. |
 | @routes@ | Parsing the @routes@ files. A precompiled application reads them as precompiled templates, so this is also where the template engine is first used. |
 | @onApplicationStart@ | The @onApplicationStart@ of all plugins: opening the database pool, building the JPA entity manager factory, and so on. |

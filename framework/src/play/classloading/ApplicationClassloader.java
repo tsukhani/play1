@@ -140,11 +140,10 @@ public class ApplicationClassloader extends ClassLoader {
 
         if (Play.usePrecompiled) {
             try {
-                File file = Play.getFile("precompiled/java/" + name.replace('.', '/') + ".class");
-                if (!file.exists()) {
+                byte[] code = precompiledCode(name);
+                if (code == null) {
                     return null;
                 }
-                byte[] code = IO.readContent(file);
                 Class<?> clazz = findLoadedClass(name);
                 if (clazz == null) {
                     if (name.endsWith("package-info")) {
@@ -437,14 +436,29 @@ public class ApplicationClassloader extends ClassLoader {
             if (Play.usePrecompiled) {
 
                 List<ApplicationClass> applicationClasses = new ArrayList<>();
-                scanPrecompiled(applicationClasses, "", Play.getVirtualFile("precompiled/java"));
-                Play.classes.clear();
-                for (ApplicationClass applicationClass : applicationClasses) {
-                    Play.classes.add(applicationClass);
-                    Class<?> clazz = loadApplicationClass(applicationClass.name);
-                    applicationClass.javaClass = clazz;
-                    applicationClass.compiled = true;
-                    result.add(clazz);
+                PrecompiledJar jar = Play.classes.precompiledJar();
+                try {
+                    if (jar != null) {
+                        for (String name : jar.names()) {
+                            applicationClasses.add(new ApplicationClass(name));
+                        }
+                    } else {
+                        scanPrecompiled(applicationClasses, "", Play.getVirtualFile("precompiled/java"));
+                    }
+                    Play.classes.clear();
+                    for (ApplicationClass applicationClass : applicationClasses) {
+                        Play.classes.add(applicationClass);
+                        Class<?> clazz = loadApplicationClass(applicationClass.name);
+                        applicationClass.javaClass = clazz;
+                        applicationClass.compiled = true;
+                        result.add(clazz);
+                    }
+                    if (jar != null) {
+                        // Every class is defined now, so the file need not stay open
+                        jar.close();
+                    }
+                } catch (IOException e) {
+                    throw new UnexpectedException("Cannot read " + PrecompiledJar.PATH, e);
                 }
 
             } else {
@@ -589,6 +603,17 @@ public class ApplicationClassloader extends ClassLoader {
                 scan(classes, packageName + current.getName() + ".", virtualFile);
             }
         }
+    }
+
+    // The bytes of a precompiled class, or null if the application has no such class: from
+    // the jar a bundle or dist carries, else from the tree play precompile wrote.
+    private static byte[] precompiledCode(String name) throws IOException {
+        PrecompiledJar jar = Play.classes.precompiledJar();
+        if (jar != null) {
+            return jar.read(name);
+        }
+        File file = Play.getFile("precompiled/java/" + name.replace('.', '/') + ".class");
+        return file.exists() ? IO.readContent(file) : null;
     }
 
     private void scanPrecompiled(List<ApplicationClass> classes, String packageName, VirtualFile current) {

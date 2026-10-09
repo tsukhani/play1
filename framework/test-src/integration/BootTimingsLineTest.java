@@ -3,6 +3,7 @@ package integration;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.lang.module.ModuleFinder;
 import java.lang.module.ModuleReference;
@@ -17,6 +18,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -107,6 +111,37 @@ public class BootTimingsLineTest {
         assertThat(boot).as("the application started").anyMatch(line -> line.contains(LINE));
         assertThat(boot.stream().filter(line -> line.contains(" org.eclipse.jdt.")).limit(5).toList())
                 .as("JDT classes loaded by a start that compiles nothing").isEmpty();
+    }
+
+    @Test
+    public void precompiledProdBootReadsItsClassesFromTheJarABundleOrDistCarries(@TempDir File app) throws Exception {
+        scratchApp(app, "application.mode=dev");
+        boot(app, 0, "-Dprecompile=yes");
+
+        // play bundle and play dist ship the tree play precompile wrote as one jar. The tree
+        // itself is left in place here holding things that are no classes at all: a start that
+        // still read it would fail on the first of them, as one would on a stale tree from an
+        // earlier install that a new artifact was unpacked over.
+        File tree = new File(app, "precompiled/java");
+        List<Path> classFiles;
+        try (Stream<Path> walk = Files.walk(tree.toPath())) {
+            classFiles = walk.filter(file -> file.toString().endsWith(".class")).toList();
+        }
+        assertThat(classFiles).hasSizeGreaterThan(MODEL_CLASSES);
+        try (ZipOutputStream jar = new ZipOutputStream(new FileOutputStream(new File(app, "precompiled/classes.jar")))) {
+            for (Path file : classFiles) {
+                jar.putNextEntry(new ZipEntry(tree.toPath().relativize(file).toString().replace(File.separatorChar, '/')));
+                jar.write(Files.readAllBytes(file));
+                jar.closeEntry();
+                Files.writeString(file, "stale");
+            }
+        }
+
+        List<String> boot = boot(app, 0, "-Dprecompiled=true", "-Xlog:class+load");
+        assertThat(boot).as("the application started").anyMatch(line -> line.contains(LINE));
+        assertThat(boot).as("the application's classes were defined")
+                .anyMatch(line -> line.contains(" models.M000 "))
+                .anyMatch(line -> line.contains(" controllers.Application "));
     }
 
     @Test

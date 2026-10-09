@@ -17,6 +17,7 @@ import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Delete
 import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.InputFile
 import org.gradle.api.tasks.Internal
 import org.gradle.api.tasks.InputFiles
 import org.gradle.api.tasks.JavaExec
@@ -34,14 +35,17 @@ import org.gradle.process.ExecOperations
 import org.gradle.work.DisableCachingByDefault
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URI
 import java.nio.file.FileSystems
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.SecureRandom
+import java.time.LocalDateTime
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
+import java.util.zip.CRC32
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import javax.inject.Inject
@@ -169,6 +173,18 @@ class Play1Plugin : Plugin<Project> {
             // autotest's coverage instrumentation but useless here, and a hard
             // VM-init failure when the agent jar isn't on disk).
             inheritInstrumentation = false)
+
+        // Not part of playDist or playBundle, which pack the jar themselves as they build
+        // the artifact. This is for a build that wants the classes as one jar before that,
+        // as the input of a step that rewrites them; see precompiledJar on those two tasks.
+        project.tasks.register<PlayPrecompiledJarTask>("playPrecompiledJar") {
+            group = "play1"
+            description = "Pack the classes under precompiled/java into build/play/precompiled/classes.jar, the form playDist and playBundle ship them in"
+            dependsOn("playPrecompile")
+            projectDir.set(project.layout.projectDirectory)
+            jar.set(project.layout.buildDirectory.file("play/precompiled/classes.jar"))
+            outputs.upToDateWhen { false }
+        }
 
         // PF-169: shared by playDist and playBundle so one invocation naming both
         // runs the Nuxt build once. Stays always-out-of-date on purpose — declaring
@@ -671,6 +687,15 @@ abstract class PlayDistTask : DefaultTask() {
     @get:OutputFile
     abstract val outputFile: RegularFileProperty
 
+    /**
+     * A jar to ship as the application's precompiled classes, in place of the one this task
+     * packs from precompiled/java: the output of a build step that rewrites the classes,
+     * ProGuard for one, which takes playPrecompiledJar's jar as its input.
+     */
+    @get:InputFile
+    @get:Optional
+    abstract val precompiledJar: RegularFileProperty
+
     @get:Inject
     abstract val execOps: ExecOperations
 
@@ -744,13 +769,19 @@ abstract class PlayDistTask : DefaultTask() {
             "enablePosixFileAttributes" to "true",
         )
         FileSystems.newFileSystem(zipPath, env).use { zipfs ->
+            val precompiledClasses = sortedMapOf<String, File>()
             for (relpath in allFiles) {
                 if (outRelPrefix != null && relpath.startsWith(outRelPrefix)) continue
                 if (ignorePrefixes.any { relpath.startsWith(it) }) continue
                 val srcFile = projDir.resolve(relpath)
                 if (!srcFile.isFile) continue
+                if (relpath.startsWith(PRECOMPILED_TREE)) {
+                    precompiledClasses[relpath.removePrefix(PRECOMPILED_TREE)] = srcFile
+                    continue
+                }
                 copyToZipfs(srcFile.toPath(), zipfs.getPath("/$appName/$relpath"))
             }
+            addPrecompiledJar(zipfs.getPath("/$appName/$PRECOMPILED_JAR"), precompiledJar.orNull?.asFile, precompiledClasses)
         }
         logger.lifecycle("Distribution created at ${outFile.absolutePath}")
     }
@@ -1308,6 +1339,72 @@ private fun buildFrontendAndCopySpa(
 // executable bit (e.g. on shell scripts) survives the round-trip. Plain
 // java.util.zip.ZipOutputStream has no public setter for external
 // attributes; ZipFileSystem with enablePosixFileAttributes does.
+// A bundle or dist carries the application's precompiled classes as one jar, which the
+// framework reads in place of the precompiled/java tree (PrecompiledJar.PATH there). The
+// tree is what play precompile writes and what an application run from its working copy
+// uses; the jar is made for the artifact only and never written into precompiled/.
+internal const val PRECOMPILED_JAR = "precompiled/classes.jar"
+private const val PRECOMPILED_TREE = "precompiled/java/"
+
+// Every entry gets this one time, so the same classes give the same jar whenever it is built.
+private val PRECOMPILED_JAR_ENTRY_TIME = LocalDateTime.of(1980, 2, 1, 0, 0)
+
+/**
+ * Writes [classes] (entry name to file) as that jar. Sorted by name and stored rather than
+ * deflated: the framework reads every entry at each start, and the artifact around the jar
+ * is compressed already.
+ */
+internal fun writePrecompiledJar(out: OutputStream, classes: Map<String, File>) {
+    ZipOutputStream(out).use { jar ->
+        for ((name, file) in classes.toSortedMap()) {
+            val bytes = file.readBytes()
+            val entry = ZipEntry(name).apply {
+                method = ZipEntry.STORED
+                size = bytes.size.toLong()
+                compressedSize = bytes.size.toLong()
+                crc = CRC32().apply { update(bytes) }.value
+                setTimeLocal(PRECOMPILED_JAR_ENTRY_TIME)
+            }
+            jar.putNextEntry(entry)
+            jar.write(bytes)
+            jar.closeEntry()
+        }
+    }
+}
+
+// The jar's place in an artifact: [given] where the build supplies one, else packed from the
+// class files of the tree. Called once the artifact's other files are in, so a build step
+// that rewrote the tree as a dependency of the packaging task has run by now.
+private fun addPrecompiledJar(dest: java.nio.file.Path, given: File?, classes: Map<String, File>) {
+    if (given == null && classes.isEmpty()) return
+    Files.createDirectories(dest.parent)
+    if (given != null) {
+        Files.copy(given.toPath(), dest, StandardCopyOption.REPLACE_EXISTING)
+    } else {
+        Files.newOutputStream(dest).use { writePrecompiledJar(it, classes) }
+    }
+}
+
+@DisableCachingByDefault(because = "Packs whatever play precompile left in precompiled/java, which is not a declared input")
+abstract class PlayPrecompiledJarTask : DefaultTask() {
+    @get:Internal
+    abstract val projectDir: DirectoryProperty
+
+    @get:OutputFile
+    abstract val jar: RegularFileProperty
+
+    @TaskAction
+    fun pack() {
+        val tree = File(projectDir.get().asFile, PRECOMPILED_TREE)
+        val classes = tree.walkTopDown().filter { it.isFile }
+            .associateBy { it.relativeTo(tree).path.replace(File.separatorChar, '/') }
+        val target = jar.get().asFile
+        target.parentFile.mkdirs()
+        target.outputStream().use { writePrecompiledJar(it, classes) }
+        logger.lifecycle("Precompiled classes packed into ${target.absolutePath} (${classes.size} files)")
+    }
+}
+
 private fun copyToZipfs(source: java.nio.file.Path, dest: java.nio.file.Path) {
     Files.createDirectories(dest.parent)
     Files.copy(source, dest, StandardCopyOption.REPLACE_EXISTING)
@@ -1696,6 +1793,15 @@ abstract class PlayBundleTask : DefaultTask() {
     @get:Internal abstract val playClasspath: ConfigurableFileCollection
     @get:OutputFile abstract val outputFile: RegularFileProperty
 
+    /**
+     * A jar to ship as the application's precompiled classes, in place of the one this task
+     * packs from precompiled/java: the output of a build step that rewrites the classes,
+     * ProGuard for one, which takes playPrecompiledJar's jar as its input.
+     */
+    @get:InputFile
+    @get:Optional
+    abstract val precompiledJar: RegularFileProperty
+
     @get:Inject abstract val execOps: ExecOperations
 
     @TaskAction
@@ -1850,14 +1956,21 @@ abstract class PlayBundleTask : DefaultTask() {
         val zipPath = outFile.toPath()
         val env = mapOf("create" to "true", "enablePosixFileAttributes" to "true")
         FileSystems.newFileSystem(zipPath, env).use { zipfs ->
-            // 1. Source files (preserve source POSIX perms).
+            // 1. Source files (preserve source POSIX perms). The precompiled classes among
+            //    them go in as one jar.
+            val precompiledClasses = sortedMapOf<String, File>()
             for (relpath in sourceFiles) {
                 if (outRelPrefix != null && relpath.startsWith(outRelPrefix)) continue
                 if (ignorePrefixes.any { relpath.startsWith(it) }) continue
                 val srcFile = projDir.resolve(relpath)
                 if (!srcFile.isFile) continue
+                if (relpath.startsWith(PRECOMPILED_TREE)) {
+                    precompiledClasses[relpath.removePrefix(PRECOMPILED_TREE)] = srcFile
+                    continue
+                }
                 copyToZipfs(srcFile.toPath(), zipfs.getPath("/$appName/$relpath"))
             }
+            addPrecompiledJar(zipfs.getPath("/$appName/$PRECOMPILED_JAR"), precompiledJar.orNull?.asFile, precompiledClasses)
 
             // 2. Framework jar.
             copyToZipfs(frameworkJar.toPath(), zipfs.getPath("/$appName/framework/play-$fwVersion.jar"))

@@ -183,8 +183,8 @@ What the figures say:
 * **Most of a start is spent loading libraries, not running the application.** Without a cache, @JPAPlugin@ building the Hibernate entity manager factory is two fifths of the start, and @logging@ (Log4j) and @routes@ (the first use of the Groovy template engine) are another third. That is loading and linking thousands of library classes, which is the work the cache keeps, and why those three phases shrink the most.
 * **The cache more than halves the start** with the default collector: 1,306 ms to 483 ms in the log line, 1,767 ms to 794 ms from launch to first answer.
 * **Under ZGC the gain is smaller**, 1,319 ms to 689 ms. The JVM can take loaded classes from a cache under ZGC but not the pre-linked form it uses under the default collector. A cache still has to be trained with the collector it will run under.
-* **The application's own classes are a small share, and the cache hardly changes it.** The same application with 1,500 generated controllers spends 140 ms in @classes@ without a cache and 105 ms with one, against a start of 1,653 ms and 628 ms. Reading and defining the precompiled classes is Play's own loop.
-* **A large application gains less in proportion and more in absolute time.** One with 2,000 classes, a large JPA model and about fifty start-up jobs went from 3,047 ms to 1,926 ms under ZGC, and from 3,031 ms to 1,865 ms with the default collector. Two thirds of what was left was @onApplicationStart@ and @afterApplicationStart@.
+* **The application's own classes are a small share.** An application of 2,000 classes spends about 80 ms in @classes@, reading them out of "precompiled/classes.jar":#precompiled-jar and defining them, and about 40 ms with the cache. From the tree of class files that a working copy has, the same takes about 160 ms and 105 ms.
+* **A large application gains less in proportion and more in absolute time.** One with 2,000 classes, a large JPA model and about fifty start-up jobs went from 3,005 ms to 1,899 ms under ZGC. Two thirds of what was left was @onApplicationStart@ and @afterApplicationStart@.
 * **What remains after the cache is the application's own start-up work**: opening the database pool, validating or updating the schema ("jpa.ddl":configuration#jpa.ddl), and whatever its @OnApplicationStart@ jobs do. The @onApplicationStart.<plugin>@ pairs and @afterApplicationStart@ show where to look.
 
 h3. <a name="bundle-classpath">Upgrading: conf/ is no longer on a bundle's classpath</a>
@@ -249,6 +249,50 @@ Tell the framework to load from @precompiled/@ instead of recompiling at boot:
 bc. play start /path/to/myapp -Dprecompiled=true
 
 The system property forces @prod@ mode and skips both the Java and template compile passes. If @precompiled/@ is missing, the framework logs @"Precompiled classes are missing!!"@ and refuses to start.
+
+h3. <a name="precompiled-jar">The classes in a bundle or dist: precompiled/classes.jar</a>
+
+@play precompile@ writes the classes as a tree of files, @precompiled/java/@, and an application started from its working copy with @-Dprecompiled=true@ runs off that tree. @play bundle@ and @play dist@ pack the tree into one jar as they build the artifact, so a deployed application carries a single @precompiled/classes.jar@ in place of a few thousand class files. The jar is made for the artifact only: nothing is added to the @precompiled/@ of the working copy.
+
+At startup Play reads the jar where the application has one, and the tree otherwise. The jar is not on the JVM's classpath. Play's own class loader takes the classes out of it, exactly as it does from the tree, so nothing else about the application changes. Where both are present — an artifact unpacked over an older installation, say — the jar is used and the tree is ignored. Precompiled templates stay files, under @precompiled/templates/@.
+
+A @.distignore@ entry below @precompiled/java/@ still decides which classes ship: it now keeps them out of the jar.
+
+**Upgrading.** Anything of your own that looks into @precompiled/java/@ of an _installed_ bundle or dist has to look into the jar instead. A jar works wherever a class directory did:
+
+bc. java -cp precompiled/classes.jar utils.SomeTool
+unzip -l precompiled/classes.jar
+
+Scripts that work on the tree in the working copy, between @play precompile@ and packaging, need no change.
+
+**Rewriting the classes before they ship.** A build step that processes the classes — ProGuard, to strip debug information or to obfuscate — can do it in either of two ways.
+
+* _On the tree._ A task that rewrites @precompiled/java/@ in place and that @playBundle@ and @playDist@ depend on keeps working unchanged: the jar is packed from whatever the tree holds when the artifact is built.
+* _On one jar._ The @playPrecompiledJar@ task packs the tree into @build/play/precompiled/classes.jar@. Run the tool from that jar to another, and hand the result to the packaging tasks through their @precompiledJar@ property; they ship it as it is. ProGuard deflates the entries of the jar it writes, and inflating them costs a little at every start (about 25 ms for 2,000 classes); @-dontcompress@ in its configuration keeps them stored, as they are in the jar Play packs itself.
+
+bc. val classesJar = tasks.named<play.gradle.PlayPrecompiledJarTask>("playPrecompiledJar").flatMap { it.jar }
+val processedJar = layout.buildDirectory.file("proguard/classes.jar")
+ 
+val proguardClasses = tasks.register<JavaExec>("proguardClasses") {
+    inputs.file(classesJar)          // also makes this task run after playPrecompiledJar
+    outputs.file(processedJar)
+    classpath = configurations["proguard"]
+    mainClass.set("proguard.ProGuard")
+    argumentProviders.add(CommandLineArgumentProvider {
+        listOf("@conf/proguard.pro",
+            "-injars", classesJar.get().asFile.path,
+            "-outjars", processedJar.get().asFile.path)
+    })
+}
+ 
+tasks.withType<play.gradle.PlayBundleTask>().configureEach {
+    dependsOn(proguardClasses)
+    precompiledJar.set(processedJar)
+}
+tasks.withType<play.gradle.PlayDistTask>().configureEach {
+    dependsOn(proguardClasses)
+    precompiledJar.set(processedJar)
+}
 
 h3. Caveats
 

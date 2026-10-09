@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 import javassist.ClassPool;
@@ -49,6 +50,22 @@ public class ApplicationClasses {
      * Cache of all compiled classes
      */
     Map<String, ApplicationClass> classes = new ConcurrentHashMap<>();
+
+    // Looked for once. An Optional and not the jar itself, so that "this application has
+    // none", the answer in a working copy, is remembered too.
+    private volatile Optional<PrecompiledJar> precompiledJar;
+
+    /**
+     * @return the jar a bundle or dist carries the precompiled classes in, or null where the
+     *         application has the tree under precompiled/java that play precompile writes
+     */
+    public PrecompiledJar precompiledJar() {
+        Optional<PrecompiledJar> found = precompiledJar;
+        if (found == null) {
+            precompiledJar = found = Optional.ofNullable(PrecompiledJar.of(Play.applicationPath));
+        }
+        return found.orElse(null);
+    }
 
     /**
      * Clear the classes cache
