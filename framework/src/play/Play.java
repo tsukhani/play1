@@ -489,7 +489,8 @@ public class Play {
                         continue;
                     }
                 }
-                matcher.appendReplacement(newValue, r.replaceAll("\\\\", "\\\\\\\\"));
+                // The value is literal text: a '$' in it is not a group reference
+                matcher.appendReplacement(newValue, Matcher.quoteReplacement(r));
             }
             matcher.appendTail(newValue);
             propsFromFile.setProperty(key.toString(), newValue.toString());

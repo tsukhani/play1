@@ -101,6 +101,24 @@ public class EnvVarConfigTest {
     }
 
     @Test
+    public void resolvedValueIsTakenLiterally() throws IOException {
+        // A variable's value is data, not a java.util.regex replacement string. "$1" used to
+        // come back as the placeholder's own name, and "$$" or "${name}" aborted the whole
+        // configuration read with an IllegalArgumentException.
+        String uniqueKey = "play.test.sysprop." + System.nanoTime();
+        try {
+            for (String literal : new String[] { "pa$$word", "cost: $1", "Hello ${name}", "back\\slash" }) {
+                System.setProperty(uniqueKey, literal);
+                writeConfig("test.key=<${" + uniqueKey + "}>");
+                Play.readConfiguration();
+                assertThat(Play.configuration.getProperty("test.key")).isEqualTo("<" + literal + ">");
+            }
+        } finally {
+            System.clearProperty(uniqueKey);
+        }
+    }
+
+    @Test
     public void noDefaultAndNoValueLeavesPlaceholder() throws IOException {
         writeConfig("test.key=prefix-${PLAY_TEST_NONEXISTENT_VAR_12345}-suffix");
         Play.readConfiguration();
