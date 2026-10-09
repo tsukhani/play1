@@ -184,6 +184,7 @@ What the figures say:
 * **The cache more than halves the start** with the default collector: 1,306 ms to 483 ms in the log line, 1,767 ms to 794 ms from launch to first answer.
 * **Under ZGC the gain is smaller**, 1,319 ms to 689 ms. The JVM can take loaded classes from a cache under ZGC but not the pre-linked form it uses under the default collector. A cache still has to be trained with the collector it will run under.
 * **The application's own classes are a small share, and the cache hardly changes it.** The same application with 1,500 generated controllers spends 140 ms in @classes@ without a cache and 105 ms with one, against a start of 1,653 ms and 628 ms. Reading and defining the precompiled classes is Play's own loop.
+* **A large application gains less in proportion and more in absolute time.** One with 2,000 classes, a large JPA model and about fifty start-up jobs went from 3,047 ms to 1,926 ms under ZGC, and from 3,031 ms to 1,865 ms with the default collector. Two thirds of what was left was @onApplicationStart@ and @afterApplicationStart@.
 * **What remains after the cache is the application's own start-up work**: opening the database pool, validating or updating the schema ("jpa.ddl":configuration#jpa.ddl), and whatever its @OnApplicationStart@ jobs do. The @onApplicationStart.<plugin>@ pairs and @afterApplicationStart@ show where to look.
 
 h3. <a name="bundle-classpath">Upgrading: conf/ is no longer on a bundle's classpath</a>
