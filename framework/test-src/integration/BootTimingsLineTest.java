@@ -97,6 +97,19 @@ public class BootTimingsLineTest {
     }
 
     @Test
+    public void precompiledProdBootNeverLoadsTheJavaCompiler(@TempDir File app) throws Exception {
+        scratchApp(app, "application.mode=dev");
+        boot(app, 0, "-Dprecompile=yes");
+
+        // The JDT classes come out of a signed jar. Opening it, to build a compiler that a
+        // precompiled start never runs, took about 50 ms of every such start, unreported by any phase.
+        List<String> boot = boot(app, 0, "-Dprecompiled=true", "-Xlog:class+load");
+        assertThat(boot).as("the application started").anyMatch(line -> line.contains(LINE));
+        assertThat(boot.stream().filter(line -> line.contains(" org.eclipse.jdt.")).limit(5).toList())
+                .as("JDT classes loaded by a start that compiles nothing").isEmpty();
+    }
+
+    @Test
     public void prodBootThatCompilesTimesTheCompilationOfClassesAndTemplates(@TempDir File app) throws Exception {
         // play start on an application nobody precompiled: Play.preCompile() does it during the boot,
         // through marks of its own that the precompiled boot never reaches

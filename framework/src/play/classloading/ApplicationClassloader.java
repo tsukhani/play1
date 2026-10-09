@@ -463,7 +463,7 @@ public class ApplicationClassloader extends ClassLoader {
                         }
                     }
 
-                    Play.classes.compiler.compile(classNames.toArray(new String[classNames.size()]));
+                    Play.classes.compiler().compile(classNames.toArray(new String[classNames.size()]));
 
                 }
 

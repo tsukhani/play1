@@ -25,9 +25,26 @@ import play.vfs.VirtualFile;
 public class ApplicationClasses {
 
     /**
-     * Reference to the eclipse compiler.
+     * Reference to the eclipse compiler. Created when something is first compiled and not
+     * before: a precompiled application compiles nothing, and merely loading
+     * ApplicationCompiler pulls the JDT classes out of their signed jar, which took about
+     * 50 ms of every such start.
      */
-    final ApplicationCompiler compiler = new ApplicationCompiler(this);
+    private volatile ApplicationCompiler compiler;
+
+    // Class loads compile concurrently in DEV mode, hence the lock around the creation.
+    ApplicationCompiler compiler() {
+        ApplicationCompiler created = compiler;
+        if (created == null) {
+            synchronized (this) {
+                created = compiler;
+                if (created == null) {
+                    compiler = created = new ApplicationCompiler(this);
+                }
+            }
+        }
+        return created;
+    }
     /**
      * Cache of all compiled classes
      */
@@ -348,7 +365,7 @@ public class ApplicationClasses {
          */
         public byte[] compile() {
             long start = System.currentTimeMillis();
-            Play.classes.compiler.compile(new String[] { this.name });
+            Play.classes.compiler().compile(new String[] { this.name });
 
             if (Logger.isTraceEnabled()) {
                 Logger.trace("%sms to compile class %s", System.currentTimeMillis() - start, name);
