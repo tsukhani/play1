@@ -13,6 +13,7 @@ import org.junit.jupiter.api.condition.EnabledOnOs
 import org.junit.jupiter.api.condition.OS
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
+import java.net.ServerSocket
 import java.util.jar.Attributes
 import java.util.jar.JarEntry
 import java.util.jar.JarOutputStream
@@ -117,7 +118,8 @@ class BundleLauncherTest {
         }
         File(dir, "framework/lib").mkdirs()
         File(dir, "framework/play-$fwVersion.jar").writeText("")
-        File(dir, ".classpath").writeText("conf\nframework/play-$fwVersion.jar\nframework/lib/netty.jar\n")
+        // Jars only, as playBundle writes it (PF-180).
+        File(dir, ".classpath").writeText("framework/play-$fwVersion.jar\nframework/lib/netty.jar\n")
     }
 
     /**
@@ -219,7 +221,7 @@ class BundleLauncherTest {
                 // variables the launcher reads itself may leak in from the
                 // developer's shell. Nor UID/EUID: a shell that exports them (the
                 // docker-compose idiom) makes them host-defined rather than readonly.
-                environment().keys.removeAll(probe + listOf("PLAY_ID", "PLAY_PID_FILE", "UID", "EUID"))
+                environment().keys.removeAll(probe + listOf("PLAY_ID", "PLAY_PID_FILE", "PLAY_AOT_TIMEOUT", "UID", "EUID"))
                 environment()["STUB_PRINT_ENV"] = probe.joinToString(" ")
                 environment().putAll(env)
             }
@@ -275,7 +277,7 @@ class BundleLauncherTest {
         val argv = launcherArgv(bundle, stubs)
 
         assertEquals(
-            "conf:framework/play-$fwVersion.jar:framework/lib/netty.jar",
+            "framework/play-$fwVersion.jar:framework/lib/netty.jar",
             classpathOf(argv),
             "off Windows the .classpath lines join with ':' — unchanged by PF-171"
         )
@@ -293,7 +295,7 @@ class BundleLauncherTest {
         val argv = launcherArgv(bundle, stubs)
 
         assertEquals(
-            "conf;framework/play-$fwVersion.jar;framework/lib/netty.jar",
+            "framework/play-$fwVersion.jar;framework/lib/netty.jar",
             classpathOf(argv),
             "java.exe splits -classpath on ';' — a ':'-joined string is read as one nonexistent entry"
         )
@@ -325,7 +327,7 @@ class BundleLauncherTest {
 
         val argv = launcherArgv(bundle, stubs)
 
-        assertEquals("conf;framework/play-$fwVersion.jar;framework/lib/netty.jar", classpathOf(argv))
+        assertEquals("framework/play-$fwVersion.jar;framework/lib/netty.jar", classpathOf(argv))
         assertEquals(bundle.canonicalPath, File(valueOf(argv, "application.path")).canonicalPath)
         assertEquals(File(bundle, "framework").canonicalPath, File(valueOf(argv, "framework.path")).canonicalPath)
     }
@@ -794,7 +796,7 @@ class BundleLauncherTest {
 
         assertEquals(0, run.exit, "launcher should exit cleanly\n${run.stderr}")
         assertEquals(
-            listOf("conf", "framework/play-$fwVersion.jar", "framework/lib/netty.jar").joinToString(cpSep),
+            listOf("framework/play-$fwVersion.jar", "framework/lib/netty.jar").joinToString(cpSep),
             classpathOf(run.stdout)
         )
         assertEquals(bundle.canonicalPath, File(valueOf(run.stdout, "application.path")).canonicalPath)
@@ -837,11 +839,16 @@ class BundleLauncherTest {
         val bundle = File(tmp, "app").apply { mkdirs() }
         writeBundle(bundle)
         reportingFrameworkJar(File(tmp, "fake"), File(bundle, "framework/play-$fwVersion.jar"))
-        File(bundle, ".classpath").writeText("conf\nframework/play-$fwVersion.jar\n")
+        File(bundle, ".classpath").writeText("framework/play-$fwVersion.jar\nlib/marker.jar\n")
         File(bundle, "conf").mkdirs()
         File(bundle, "conf/application.conf")
             .writeText("jvm.memory=--add-modules=jdk.incubator.vector -Dpf183.from.conf=yes\n")
-        File(bundle, "conf/marker.txt").writeText("only reachable through -classpath")
+        File(bundle, "lib").mkdirs()
+        JarOutputStream(File(bundle, "lib/marker.jar").outputStream()).use { jar ->
+            jar.putNextEntry(JarEntry("marker.txt"))
+            jar.write("only reachable through -classpath".toByteArray())
+            jar.closeEntry()
+        }
         File(bundle, "certs").mkdirs()
         File(bundle, "certs/.env").writeText("PF184_FILE=pa\$\$word#1 from file\nPF184_BOTH=from-file\n")
         val noStubs = File(tmp, "bin").apply { mkdirs() }
@@ -859,8 +866,10 @@ class BundleLauncherTest {
         assertEquals(bundle.canonicalPath, reported("APP"), "application.path is not the bundle")
         assertEquals(File(bundle, "framework").canonicalPath, reported("FRAMEWORK"), "framework.path")
         // The -javaagent keeps the framework jar loadable even when -classpath is
-        // misread, so a file only conf/ holds is what shows the classpath took.
-        assertEquals("true", reported("CONF_ON_CLASSPATH"), "conf is not on the classpath\n${run.stdout}")
+        // misread, so a file only the second jar holds is what shows the classpath
+        // took, separator included. (It was a file in conf/ until PF-180 took
+        // directories off the bundle's classpath.)
+        assertEquals("true", reported("SECOND_JAR_ON_CLASSPATH"), "-classpath did not take\n${run.stdout}")
         assertEquals("true", reported("VECTOR"), "jvm.memory's --add-modules did not reach the JVM")
         assertEquals("yes", reported("FROM_CONF"))
         assertEquals("yes", reported("FROM_CLI"))
@@ -869,33 +878,415 @@ class BundleLauncherTest {
         assertEquals("--http.port=19183", reported("ARGS"))
     }
 
+    // ---- PF-180: the JDK's AOT cache -------------------------------------------------
+    //
+    // `aot-gen` writes app.aot in the bundle root from a training run; `run` and
+    // `start` hand it to the JVM when it is there. Under Git Bash the launcher
+    // refuses to train (kill is a hard kill there, and the JVM writes the cache at
+    // a normal exit), so every test that needs a training run is off on Windows.
+
+    private val julManager = "-Djava.util.logging.manager=org.apache.logging.log4j.jul.LogManager"
+
+    private fun aotFlags(argv: List<String>) = argv.filter { it.startsWith("-XX:AOT") }
+
+    /** A port nothing listens on: handed out by the OS and released again. */
+    private fun freePort(): Int = ServerSocket(0).use { it.localPort }
+
+    /**
+     * Run `./play start [args]` against the stub `java` and return the argv it left
+     * in logs/system.out. `start` returns once the JVM is spawned, so the stub's
+     * output is waited for.
+     */
+    private fun startArgv(bundle: File, stubs: File, vararg args: String): List<String> {
+        File(bundle, "server.pid").delete()
+        val systemOut = File(bundle, "logs/system.out").apply { delete() }
+        val start = launch(bundle, stubs, "start", *args)
+        assertEquals(0, start.exit, "launcher should exit cleanly\n${start.stderr}")
+        val deadline = System.nanoTime() + 10_000_000_000L
+        while (System.nanoTime() < deadline) {
+            if (systemOut.isFile && "play.server.Server" in systemOut.readLines()) break
+            Thread.sleep(50)
+        }
+        return systemOut.readLines().filter { it.isNotEmpty() }
+    }
+
+    /** One `./play aot-gen` run, and what the JVM it started wrote (logs/aot-gen.out). */
+    private class Training(val launch: Launch, val jvmOutput: List<String>)
+
+    private fun aotGen(
+        bundle: File,
+        stubs: File,
+        vararg args: String,
+        env: Map<String, String> = emptyMap(),
+        path: List<File> = emptyList()
+    ): Training {
+        val jvmOut = File(bundle, "logs/aot-gen.out").apply { delete() }
+        val run = launch(bundle, stubs, "aot-gen", *args, env = env, path = path)
+        return Training(run, if (jvmOut.isFile) jvmOut.readLines().filter { it.isNotEmpty() } else emptyList())
+    }
+
+    /** What must be true after any `aot-gen` that failed: nothing new, nothing touched. */
+    private fun assertLeftAsItWas(bundle: File) {
+        assertEquals("4242", File(bundle, "server.pid").readText(), "aot-gen touched a running instance's pid file")
+        assertEquals("the cache in use", File(bundle, "app.aot").readText(), "aot-gen damaged the cache in use")
+        assertEquals(
+            emptyList<String>(),
+            bundle.list()!!.filter { it.startsWith("app.aot.") },
+            "a half-written cache was left behind"
+        )
+    }
+
+    /** A bundle that already has a cache and the pid file of an instance `start` is tracking. */
+    private fun bundleInUse(tmp: File, conf: String = "application.name=testapp\n"): Pair<File, File> {
+        val (bundle, stubs) = bundleWithConf(tmp, conf)
+        File(bundle, "server.pid").writeText("4242")
+        File(bundle, "app.aot").writeText("the cache in use")
+        return bundle to stubs
+    }
+
+    @Test
+    fun `run and start use the AOT cache only when the bundle has one`(@TempDir tmp: File) {
+        val (bundle, stubs) = bundleWithConf(tmp, "jvm.memory=-Xmx111m\n")
+
+        assertEquals(emptyList<String>(), aotFlags(launcherArgv(bundle, stubs)))
+        assertEquals(emptyList<String>(), aotFlags(startArgv(bundle, stubs)))
+
+        File(bundle, "app.aot").writeText("a cache, for all the launcher can tell")
+        val run = launcherArgv(bundle, stubs, "-Xmx1g")
+        // Relative like -javaagent, so a native Windows JVM resolves it too.
+        assertEquals(listOf("-XX:AOTCache=app.aot"), aotFlags(run))
+        assertEquals(listOf("-XX:AOTCache=app.aot"), aotFlags(startArgv(bundle, stubs)))
+        // Ahead of everything application.conf and the command line supply: the JVM
+        // keeps the last value it is given for an option.
+        assertTrue(run.indexOf("-XX:AOTCache=app.aot") < run.indexOf(julManager), "$run")
+        assertEquals(listOf("-Xmx111m", "-Xmx1g"), appJvmFlags(run), "the cache flag is not one of the app's own")
+    }
+
+    @Test
+    fun `an AOT or CDS option of the operator's own wins over the cache the launcher would use`(@TempDir tmp: File) {
+        val (bundle, stubs) = bundleWithConf(tmp, "application.name=testapp\n")
+        File(bundle, "app.aot").writeText("a cache, for all the launcher can tell")
+        fun argv(vararg args: String) = launcherArgv(bundle, stubs, *args)
+
+        // The JVM takes these next to -XX:AOTCache, and the later one decides.
+        assertEquals(
+            listOf("-XX:AOTCache=app.aot", "-XX:AOTCache=/srv/caches/other.aot"),
+            aotFlags(argv("-XX:AOTCache=/srv/caches/other.aot"))
+        )
+        assertEquals(listOf("-XX:AOTCache=app.aot", "-XX:AOTMode=off"), aotFlags(argv("-XX:AOTMode=off")))
+        assertEquals(listOf("-XX:AOTCache=app.aot", "-XX:AOTMode=on"), aotFlags(argv("-XX:AOTMode=on")))
+
+        // With these it refuses to start as long as -XX:AOTCache is there as well,
+        // so for the operator's option to win the launcher's has to go.
+        listOf(
+            listOf("-Xshare:off"),
+            listOf("-Xshare:auto"),
+            listOf("-XX:SharedArchiveFile=app.jsa"),
+            listOf("-XX:SharedClassListFile=app.classlist"),
+            listOf("-XX:DumpLoadedClassList=app.classlist"),
+            listOf("-XX:AOTCacheOutput=new.aot"),
+            listOf("-XX:AOTMode=record", "-XX:AOTConfiguration=app.aotconf"),
+            listOf("-XX:AOTMode=create", "-XX:AOTConfiguration=app.aotconf")
+        ).forEach { own ->
+            val run = argv(*own.toTypedArray())
+            assertFalse("-XX:AOTCache=app.aot" in run, "$own cannot be combined with -XX:AOTCache:\n$run")
+            assertEquals(own, appJvmFlags(run))
+        }
+
+        // application.conf speaks for the operator as well.
+        File(bundle, "conf/application.conf").writeText("jvm.memory=-Xmx1g -Xshare:off\n")
+        assertEquals(emptyList<String>(), aotFlags(argv()))
+        // An unrelated option changes nothing.
+        File(bundle, "conf/application.conf").writeText("jvm.memory=-Xmx1g -XX:+UseZGC\n")
+        assertEquals(listOf("-XX:AOTCache=app.aot"), aotFlags(argv("-XX:MaxGCPauseMillis=50")))
+    }
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS, disabledReason = "aot-gen refuses under Git Bash, where kill cannot stop a JVM gracefully")
+    fun `aot-gen starts the JVM with the options of run plus the cache output flag`(@TempDir tmp: File) {
+        val (bundle, stubs) = bundleWithConf(
+            tmp,
+            "jvm.memory=-Xmx111m -XX:+UseZGC\n%staging.jvm.memory=-Xmx222m -XX:+UseZGC\njavaagent.path=bin/agent.jar\n"
+        )
+        val args = arrayOf(
+            "--%staging", "-Xmx1g", "--add-modules=jdk.incubator.vector", "-Dpf180=yes", "--http.port=${freePort()}"
+        )
+        val run = launcherArgv(bundle, stubs, *args)
+
+        // The stub java exits at once, which aot-gen reports as a failed start; its
+        // argv is the subject here. A cache trained under other options -- another
+        // collector, a missing --add-modules -- is one the JVM rejects in production.
+        val slot = run.indexOf(julManager)
+        assertEquals(
+            run.take(slot) + "-XX:AOTCacheOutput=app.aot.new" + run.drop(slot),
+            aotGen(bundle, stubs, *args).jvmOutput
+        )
+
+        // The cache being replaced is not an input to its own replacement, and the
+        // JVM refuses -XX:AOTCache next to -XX:AOTCacheOutput.
+        File(bundle, "app.aot").writeText("the cache in use")
+        assertEquals(listOf("-XX:AOTCacheOutput=app.aot.new"), aotFlags(aotGen(bundle, stubs, *args).jvmOutput))
+    }
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS, disabledReason = "aot-gen refuses under Git Bash, where kill cannot stop a JVM gracefully")
+    fun `aot-gen takes the port from the command line, then from application conf`(@TempDir tmp: File) {
+        val (bare, staging, given) = Triple(freePort(), freePort(), freePort())
+        val (bundle, stubs) = bundleWithConf(tmp, "http.port=$bare\n%staging.http.port=$staging\n")
+        fun ports(vararg args: String) =
+            aotGen(bundle, stubs, *args).jvmOutput.filter { it.startsWith("--http.port=") }.map { it.substringAfter('=') }
+
+        // The port it waits on is the port it tells the application to use, so the
+        // two cannot differ however application.conf is put together.
+        assertEquals(listOf("$bare"), ports())
+        assertEquals(listOf("$staging"), ports("--%staging"))
+        assertEquals(listOf("$given"), ports("--http.port=$given"))
+
+        // A value the launcher cannot read as a port is not guessed at.
+        File(bundle, "conf/application.conf").writeText("http.port=\${HTTP_PORT}\n")
+        val unreadable = aotGen(bundle, stubs)
+        assertEquals(1, unreadable.launch.exit)
+        assertTrue(unreadable.launch.stderr.any { "--http.port=" in it }, "should say how to give the port:\n${unreadable.launch.stderr}")
+        assertEquals(emptyList<String>(), unreadable.jvmOutput, "the JVM must not have been started")
+        // ...and with the port given, that conf is no obstacle.
+        assertEquals(listOf("$given"), ports("--http.port=$given"))
+    }
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS, disabledReason = "aot-gen refuses under Git Bash, where kill cannot stop a JVM gracefully")
+    fun `aot-gen refuses a port that is in use and starts nothing`(@TempDir tmp: File) {
+        val (bundle, stubs) = bundleInUse(tmp)
+
+        val training = ServerSocket(0).use { taken -> aotGen(bundle, stubs, "--http.port=${taken.localPort}") }
+
+        assertEquals(1, training.launch.exit)
+        assertTrue(training.launch.stderr.any { "already in use" in it }, "${training.launch.stderr}")
+        assertEquals(emptyList<String>(), training.jvmOutput, "the JVM must not have been started")
+        assertLeftAsItWas(bundle)
+    }
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS, disabledReason = "aot-gen refuses under Git Bash, where kill cannot stop a JVM gracefully")
+    fun `aot-gen reports an application that fails to start and leaves no partial cache`(@TempDir tmp: File) {
+        val (bundle, stubs) = bundleInUse(tmp)
+        // A JVM that got as far as opening its output files before it died.
+        File(stubs, "java").writeText(
+            "#!/bin/bash\n" +
+                "for a in \"\$@\"; do case \"\$a\" in -XX:AOTCacheOutput=*) " +
+                "echo partial > \"\${a#*=}\"; echo partial > \"\${a#*=}.config\" ;; esac; done\n" +
+                "echo 'Could not bind on port'\nexit 1\n"
+        )
+
+        val training = aotGen(bundle, stubs, "--http.port=${freePort()}")
+
+        assertEquals(1, training.launch.exit)
+        assertTrue(training.launch.stderr.any { "stopped before" in it }, "${training.launch.stderr}")
+        // Why it stopped is in the application's own output: the tail of it is shown.
+        assertTrue(training.launch.stderr.any { "Could not bind on port" in it }, "${training.launch.stderr}")
+        assertLeftAsItWas(bundle)
+    }
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS, disabledReason = "aot-gen refuses under Git Bash, where kill cannot stop a JVM gracefully")
+    fun `aot-gen gives up on an application that never listens and stops it`(@TempDir tmp: File) {
+        val (bundle, stubs) = bundleInUse(tmp)
+        // Up, but never listening. Its pid shows whether aot-gen stopped it.
+        File(stubs, "java").writeText("#!/bin/bash\necho \$\$ > training.pid\nexec sleep 60\n")
+
+        // Two seconds, not one: the launcher counts in whole seconds, so "1" can
+        // be over before the stub has written its pid.
+        val training = aotGen(bundle, stubs, "--http.port=${freePort()}", env = mapOf("PLAY_AOT_TIMEOUT" to "2"))
+
+        assertEquals(1, training.launch.exit)
+        assertTrue(training.launch.stderr.any { "after 2s" in it }, "${training.launch.stderr}")
+        val pid = File(bundle, "training.pid").readText().trim().toLong()
+        assertFalse(ProcessHandle.of(pid).map { it.isAlive }.orElse(false), "the training run (pid $pid) was left running")
+        assertLeftAsItWas(bundle)
+    }
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS, disabledReason = "aot-gen refuses under Git Bash, where kill cannot stop a JVM gracefully")
+    fun `aot-gen does not take a cache the JVM did not finish assembling`(@TempDir tmp: File) {
+        val (bundle, stubs) = bundleInUse(tmp)
+        listeningFrameworkJar(File(tmp, "fake"), File(bundle, "framework/play-$fwVersion.jar"))
+        File(bundle, ".classpath").writeText("framework/play-$fwVersion.jar\n")
+        // The JVM assembles the cache in a child process of its own. When that
+        // child dies part way -- out of memory in a container, say -- the JVM still
+        // exits as it does for any SIGTERM, but leaves what was written of the
+        // cache and, beside it, the recording it removes once a cache is complete
+        // (seen on 25.0.2 by killing the child). This `java` runs the application
+        // for real, without the cache option, and leaves exactly that behind.
+        File(stubs, "java").writeText(
+            "#!/bin/bash\n" +
+                "args=()\n" +
+                "for a in \"\$@\"; do case \"\$a\" in -XX:AOTCacheOutput=*) out=\"\${a#*=}\" ;; *) args+=(\"\$a\") ;; esac; done\n" +
+                "\"\$REAL_JAVA\" \"\${args[@]}\" &\n" +
+                "app=\$!\n" +
+                "trap 'kill \$app; wait \$app; echo partial > \"\$out\"; echo recording > \"\$out.config\"; " +
+                "echo \"[9.9s][error  ][aot] Child process failed; status = 137\"; exit 143' TERM\n" +
+                "wait \$app\n"
+        )
+
+        val training = aotGen(
+            bundle, stubs, "--http.port=${freePort()}",
+            env = mapOf("REAL_JAVA" to File(System.getProperty("java.home"), "bin/java").absolutePath)
+        )
+
+        assertTrue("REQUEST GET / HTTP/1.1" in training.jvmOutput, "the run never got as far as stopping:\n${training.jvmOutput}")
+        assertEquals(1, training.launch.exit, "${training.launch.stdout}\n${training.launch.stderr}")
+        assertTrue(training.launch.stderr.any { "without completing the cache" in it }, "${training.launch.stderr}")
+        // The JVM's own word on why, which is an [aot] line like its warnings.
+        assertTrue(training.launch.stderr.any { "Child process failed" in it }, "${training.launch.stderr}")
+        assertLeftAsItWas(bundle)
+    }
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS, disabledReason = "aot-gen refuses under Git Bash, where kill cannot stop a JVM gracefully")
+    fun `aot-gen reads PLAY_AOT_TIMEOUT as a decimal number`(@TempDir tmp: File) {
+        val (bundle, stubs) = bundleInUse(tmp)
+
+        // bash arithmetic takes a leading zero for octal: 08 is an error there, and
+        // it used to surface after the JVM had been started. The stub java exits at
+        // once, so a timeout that is understood ends in the ordinary failed start.
+        val training = aotGen(bundle, stubs, "--http.port=${freePort()}", env = mapOf("PLAY_AOT_TIMEOUT" to "08"))
+
+        assertEquals(1, training.launch.exit)
+        assertTrue(training.launch.stderr.any { "stopped before" in it }, "${training.launch.stderr}")
+        assertFalse(training.launch.stderr.any { "value too great" in it }, "${training.launch.stderr}")
+        assertLeftAsItWas(bundle)
+    }
+
+    @Test
+    fun `aot-gen refuses under MSYS and run still uses a cache that is there`(@TempDir tmp: File) {
+        val (bundle, _) = bundleInUse(tmp)
+        val stubs = File(tmp, "msys-bin")
+        writeStubs(stubs, windows = true)
+
+        val training = aotGen(bundle, stubs, "--http.port=${freePort()}")
+
+        assertEquals(1, training.launch.exit)
+        assertTrue(training.launch.stderr.any { "aot-gen" in it && "Git Bash" in it }, "${training.launch.stderr}")
+        assertEquals(emptyList<String>(), training.jvmOutput, "the JVM must not have been started")
+        assertLeftAsItWas(bundle)
+        // A relative path, which needs no translation for a native JVM.
+        assertEquals(listOf("-XX:AOTCache=app.aot"), aotFlags(launcherArgv(bundle, stubs)))
+    }
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS, disabledReason = "aot-gen refuses under Git Bash, where kill cannot stop a JVM gracefully")
+    fun `aot-gen trains a real JVM and run then starts from the cache it wrote`(@TempDir tmp: File) {
+        assumeTrue(Runtime.version().feature() >= 25, "-XX:AOTCacheOutput needs JDK 25")
+        val (bundle, _) = bundleInUse(tmp, conf = "jvm.memory=-Xmx256m\n")
+        listeningFrameworkJar(File(tmp, "fake"), File(bundle, "framework/play-$fwVersion.jar"))
+        File(bundle, ".classpath").writeText("framework/play-$fwVersion.jar\n")
+        val noStubs = File(tmp, "no-stubs").apply { mkdirs() }
+        val javaBin = listOf(File(System.getProperty("java.home"), "bin"))
+
+        val training = aotGen(bundle, noStubs, "--http.port=${freePort()}", path = javaBin)
+
+        assertEquals(0, training.launch.exit, "${training.launch.stdout}\n${training.launch.stderr}\n${training.jvmOutput}")
+        assertTrue("REQUEST GET / HTTP/1.1" in training.jvmOutput, "no request was served:\n${training.jvmOutput}")
+        // The JVM writes the cache on its way out of a normal exit, hooks included.
+        assertTrue("SHUTDOWN HOOK" in training.jvmOutput, "the JVM was not stopped gracefully:\n${training.jvmOutput}")
+        val cache = File(bundle, "app.aot")
+        assertTrue(cache.length() > 1_000_000, "app.aot is ${cache.length()} bytes: not a cache")
+        assertEquals(emptyList<String>(), bundle.list()!!.filter { it.startsWith("app.aot.") }, "leftovers of the training run")
+        assertEquals("4242", File(bundle, "server.pid").readText(), "aot-gen touched a running instance's pid file")
+        // Where it is and how big.
+        val report = training.launch.stdout.single { "app.aot" in it }
+        assertEquals(cache.canonicalPath, File(report.substringAfter(": ").substringBefore(" (")).canonicalPath, report)
+        assertTrue(Regex("""\(\d+ MB\)$""").containsMatchIn(report), report)
+
+        // -XX:AOTMode=on makes the JVM refuse to start unless it can use the cache
+        // it is given, so a clean exit here is the JVM's own word that the cache
+        // aot-gen wrote fits the options run starts it with.
+        val run = launch(bundle, noStubs, "run", "-XX:AOTMode=on", "-Dpf180.exit=true", path = javaBin)
+        assertEquals(0, run.exit, "the JVM rejected the cache:\n${run.stdout}\n${run.stderr}")
+        assertTrue(run.stdout.any { it.trimEnd('\r') == "STARTED WITH -XX:AOTCache=app.aot" }, "${run.stdout}")
+    }
+
+    /**
+     * A framework jar whose play.server.Server listens on --http.port and answers
+     * every request with 200 until the JVM is told to stop -- what `aot-gen` needs
+     * of an application. With -Dpf180.exit=true it reports its AOT cache option
+     * and returns instead.
+     */
+    private fun listeningFrameworkJar(work: File, dest: File) = frameworkJar(
+        work, dest,
+        """
+        package play.server;
+        import java.io.BufferedReader;
+        import java.io.IOException;
+        import java.io.InputStreamReader;
+        import java.lang.management.ManagementFactory;
+        import java.net.ServerSocket;
+        import java.net.Socket;
+        public class Server {
+            public static void premain(String args, java.lang.instrument.Instrumentation inst) {}
+            public static void main(String[] args) throws Exception {
+                if (Boolean.getBoolean("pf180.exit")) {
+                    for (String arg : ManagementFactory.getRuntimeMXBean().getInputArguments()) {
+                        if (arg.startsWith("-XX:AOTCache=")) System.out.println("STARTED WITH " + arg);
+                    }
+                    return;
+                }
+                int port = 0;
+                for (String arg : args) {
+                    if (arg.startsWith("--http.port=")) port = Integer.parseInt(arg.substring("--http.port=".length()));
+                }
+                Runtime.getRuntime().addShutdownHook(new Thread(() -> System.out.println("SHUTDOWN HOOK")));
+                try (ServerSocket server = new ServerSocket(port)) {
+                    while (true) {
+                        try (Socket socket = server.accept()) {
+                            BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                            String request = in.readLine();
+                            // null: a connection opened only to see whether the port answers.
+                            if (request == null) continue;
+                            for (String header = in.readLine(); header != null && !header.isEmpty(); header = in.readLine()) {}
+                            System.out.println("REQUEST " + request);
+                            socket.getOutputStream().write(
+                                "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok".getBytes());
+                        } catch (IOException e) {
+                            // a client that hung up; keep listening
+                        }
+                    }
+                }
+            }
+        }
+        """.trimIndent()
+    )
+
     /**
      * A framework jar real enough for the launcher to start: a loadable -javaagent
      * whose play.server.Server prints what the JVM was given and exits.
      */
-    private fun reportingFrameworkJar(work: File, dest: File) {
+    private fun reportingFrameworkJar(work: File, dest: File) = frameworkJar(
+        work, dest,
+        """
+        package play.server;
+        import java.io.File;
+        public class Server {
+            public static void premain(String args, java.lang.instrument.Instrumentation inst) {}
+            public static void main(String[] args) throws Exception {
+                System.out.println("APP=" + new File(System.getProperty("application.path")).getCanonicalPath());
+                System.out.println("FRAMEWORK=" + new File(System.getProperty("framework.path")).getCanonicalPath());
+                System.out.println("SECOND_JAR_ON_CLASSPATH=" + (Server.class.getResource("/marker.txt") != null));
+                System.out.println("VECTOR=" + ModuleLayer.boot().findModule("jdk.incubator.vector").isPresent());
+                System.out.println("FROM_CONF=" + System.getProperty("pf183.from.conf"));
+                System.out.println("FROM_CLI=" + System.getProperty("pf183.from.cli"));
+                System.out.println("ENV_FILE=" + System.getenv("PF184_FILE"));
+                System.out.println("ENV_BOTH=" + System.getenv("PF184_BOTH"));
+                System.out.println("ARGS=" + String.join(" ", args));
+            }
+        }
+        """.trimIndent()
+    )
+
+    /** Compile [serverSource] as play.server.Server into a jar at [dest] that also loads as a -javaagent. */
+    private fun frameworkJar(work: File, dest: File, serverSource: String) {
         val source = File(work, "src/play/server/Server.java").apply {
             parentFile.mkdirs()
-            writeText(
-                """
-                package play.server;
-                import java.io.File;
-                public class Server {
-                    public static void premain(String args, java.lang.instrument.Instrumentation inst) {}
-                    public static void main(String[] args) throws Exception {
-                        System.out.println("APP=" + new File(System.getProperty("application.path")).getCanonicalPath());
-                        System.out.println("FRAMEWORK=" + new File(System.getProperty("framework.path")).getCanonicalPath());
-                        System.out.println("CONF_ON_CLASSPATH=" + (Server.class.getResource("/marker.txt") != null));
-                        System.out.println("VECTOR=" + ModuleLayer.boot().findModule("jdk.incubator.vector").isPresent());
-                        System.out.println("FROM_CONF=" + System.getProperty("pf183.from.conf"));
-                        System.out.println("FROM_CLI=" + System.getProperty("pf183.from.cli"));
-                        System.out.println("ENV_FILE=" + System.getenv("PF184_FILE"));
-                        System.out.println("ENV_BOTH=" + System.getenv("PF184_BOTH"));
-                        System.out.println("ARGS=" + String.join(" ", args));
-                    }
-                }
-                """.trimIndent()
-            )
+            writeText(serverSource)
         }
         val classes = File(work, "classes").apply { mkdirs() }
         val javac = ToolProvider.getSystemJavaCompiler() ?: error("tests need a JDK, not a JRE")

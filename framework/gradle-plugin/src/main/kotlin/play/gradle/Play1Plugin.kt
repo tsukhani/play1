@@ -1774,8 +1774,13 @@ abstract class PlayBundleTask : DefaultTask() {
         // Compute classpath entries (relative to bundle root, one per line in
         // .classpath). The bundled `play` script reads this at startup to
         // assemble the runtime classpath.
+        //
+        // Jars only (PF-180): the JDK will not write an AOT cache while a
+        // non-empty directory is on the classpath, and conf/ used to be the
+        // first entry here. Play reads conf/ as files, and application
+        // resources stay reachable through ApplicationClassloader, which has
+        // conf/ on its javaPath. Do not add a directory to this list.
         val classpathEntries = mutableListOf<String>()
-        classpathEntries += "conf"
         classpathEntries += "framework/play-$fwVersion.jar"
         if (frameworkLibDir.isDirectory) {
             frameworkLibDir.listFiles()?.filter { it.isFile && it.name.endsWith(".jar") }?.sortedBy { it.name }?.forEach {

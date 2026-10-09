@@ -3,7 +3,8 @@
 #
 # Mirrors the dev-time `play` shim's CLI surface for runtime commands —
 # run / start / stop / restart / status / pid / out — plus `secret` for
-# first-run setup. Dispatches to a direct java exec instead of gradle.
+# first-run setup and `aot-gen` for the JDK's AOT cache. Dispatches to a
+# direct java exec instead of gradle.
 # No gradle, no internet, no framework download required at runtime;
 # java 25+ is the only dependency.
 
@@ -94,6 +95,12 @@ FW_VERSION="__FW_VERSION__"
 FW_JAR="framework/play-${FW_VERSION}.jar"
 PID_FILE="${PLAY_PID_FILE:-server.pid}"
 PLAY_ID="${PLAY_ID:-prod}"
+# PF-180: the JDK's AOT cache for this bundle -- written by `aot-gen`, used by
+# `run` and `start` when it is there. In the bundle root and never in the zip: a
+# cache fits one JDK build, one set of JVM options and the jars of one unpacked
+# bundle, so it is made where the bundle runs. Relative, like the .classpath
+# entries, so a native Windows JVM resolves it without translation.
+AOT_CACHE="app.aot"
 
 # Git Bash / MSYS2 / Cygwin drive a *native* Windows JVM from a POSIX shell,
 # so values handed to java must be in Windows form even though the shell is
@@ -198,11 +205,14 @@ done
 
 # Build JAVA_CMD lazily inside run/start so config-mutation commands like
 # `secret` don't require the framework jar / classpath to exist yet.
+# $1, when given, is the AOT option to start with -- aot-gen's
+# -XX:AOTCacheOutput. Otherwise the cache is used if the bundle has one.
 build_java_cmd() {
     [ -f "$FW_JAR" ]   || { echo "play: $FW_JAR not found (run from bundle root)" >&2; exit 1; }
     [ -f .classpath ]  || { echo "play: .classpath not found at $SCRIPT_DIR" >&2; exit 1; }
     CP=$(tr '\n' "$CP_SEP" < .classpath | sed "s/${CP_SEP}\$//")
     conf_jvm_args
+    if [ $# -gt 0 ]; then AOT_JVM=("$1"); else aot_cache_arg; fi
     JAVA_CMD=(
         java
         --enable-native-access=ALL-UNNAMED
@@ -224,6 +234,9 @@ build_java_cmd() {
         -Dplay.version="$FW_VERSION"
         -Dprecompiled=true
         -Dfile.encoding=utf-8
+        # PF-180: ahead of the conf and command-line flags, like the JUL
+        # manager below and for the same reason.
+        "${AOT_JVM[@]}"
         # PF-175: route java.util.logging into log4j2 (log4j-jul ships in
         # framework/lib). Same value as JUL_LOG_MANAGER_ARG in Play1Plugin.kt.
         # Ahead of the conf and command-line flags so a
@@ -327,6 +340,174 @@ conf_jvm_args() {
     fi
 }
 
+# PF-180: -XX:AOTCache for `run` and `start`, when aot-gen has left a cache.
+# It goes ahead of the operator's own options, so a second -XX:AOTCache or an
+# -XX:AOTMode=off still decides: the JVM keeps the last value. That is not
+# enough for the options below. Next to -XX:AOTCache the JVM does not pick one,
+# it refuses to start -- so where application.conf or the command line carries
+# one of them, the operator's option wins by the launcher leaving its own out.
+aot_cache_arg() {
+    local opt
+    AOT_JVM=()
+    [ -f "$AOT_CACHE" ] || return 0
+    for opt in "${CONF_JVM[@]}" "${JVM_EXTRA[@]}"; do
+        case "$opt" in
+            -Xshare:*|-XX:SharedArchiveFile=*|-XX:SharedClassListFile=*|-XX:DumpLoadedClassList=*|\
+            -XX:AOTCacheOutput=*|-XX:AOTConfiguration=*|-XX:AOTMode=record|-XX:AOTMode=create) return 0 ;;
+        esac
+    done
+    AOT_JVM=("-XX:AOTCache=$AOT_CACHE")
+}
+
+# Whether something accepts connections on host $1, port $2. bash's own
+# /dev/tcp: the launcher must not need curl or nc. In a subshell, so the
+# descriptor is closed again and a refused connection ends nothing else.
+port_open() (
+    exec 3<>"/dev/tcp/$1/$2"
+) 2>/dev/null
+
+# GET / on host $1, port $2, waiting up to $3 seconds for the answer. Prints
+# the status line; the rest of the response is read and dropped, so the
+# request is served to its end before the application is stopped.
+http_get() (
+    exec 3<>"/dev/tcp/$1/$2" || exit 1
+    printf 'GET / HTTP/1.1\r\nHost: %s:%s\r\nConnection: close\r\n\r\n' "$1" "$2" >&3
+    IFS= read -r -t "$3" line <&3 || exit 1
+    printf '%s\n' "${line%$'\r'}"
+    while IFS= read -r -t 5 line <&3; do :; done
+) 2>/dev/null
+
+# The EXIT trap of aot-gen, so it also runs when the launcher is interrupted.
+# A training run that is still up is stopped and waited for, and whatever it
+# was writing goes: `run` and `start` must never find a partial cache. The JVM
+# keeps its recording in <output>.config until the cache is assembled.
+aot_gen_cleanup() {
+    if [ -n "$AOT_PID" ] && kill "$AOT_PID" 2>/dev/null; then
+        wait "$AOT_PID" 2>/dev/null || :
+    fi
+    rm -f "$AOT_NEW" "$AOT_NEW.config"
+}
+
+# Say why there is no cache, show the end of the application's output -- the
+# reason is usually there -- and leave through aot_gen_cleanup. Without the
+# JVM's own [aot] warnings: an application that gives up while starting still
+# exits normally, so the JVM assembles a cache for that run too (discarded by
+# the cleanup) and logs a few hundred of them after the error that matters.
+# Its [aot] errors stay: they are how it says that assembling the cache failed.
+aot_gen_fail() {
+    echo "play: aot-gen: $1. No cache was kept from this run." >&2
+    if [ -s "$AOT_OUT" ]; then
+        echo "play: the last lines of $SCRIPT_DIR/$AOT_OUT:" >&2
+        grep -v -e '\[warning\]\[aot' -e '^Picked up JAVA_TOOL_OPTIONS' "$AOT_OUT" | tail -n 20 >&2
+    fi
+    exit 1
+}
+
+# PF-180: `aot-gen` -- a training run that leaves the JDK's AOT cache behind.
+# It starts the application for real, with the JVM options `run` would use plus
+# -XX:AOTCacheOutput, waits until it listens, has it serve one request and
+# stops it: the JVM writes the cache on its way out, and only out of a normal
+# exit.
+#
+# The cache is written beside the one in use and moved over it once complete.
+# Nothing here reads or writes the pid file: that is `start`'s, and the
+# instance it tracks may be running.
+cmd_aot_gen() {
+    local port="" host timeout arg status size deadline
+
+    # A training run cannot be ended gracefully here: for a native java.exe,
+    # kill from these shells is TerminateProcess whatever the signal.
+    if [ "$WINDOWS_JVM" = 1 ]; then
+        echo "play: aot-gen is not available from Git Bash, MSYS2 or Cygwin. The JVM writes the" >&2
+        echo "play: AOT cache when it exits normally, and kill ends a native java.exe at once." >&2
+        echo "play: run and start still use $AOT_CACHE when the bundle has one." >&2
+        exit 1
+    fi
+
+    # The port to wait on: --http.port, else http.port in application.conf,
+    # else Play's default. It is also passed on, so the application listens
+    # where the launcher looks whatever the rest of its configuration says.
+    for arg in "${APP_ARGS[@]}"; do
+        case "$arg" in --http.port=*) port="${arg#--http.port=}"; break ;; esac
+    done
+    if [ -z "$port" ]; then
+        port=$(conf_value http.port)
+        [ -n "$port" ] || port=9000
+        case "$port" in
+            *[!0123456789]*)
+                echo "play: aot-gen cannot read a port from http.port=$port in conf/application.conf." >&2
+                echo "play: Pass it: ./play aot-gen --http.port=<port>" >&2
+                exit 1 ;;
+        esac
+        APP_ARGS+=("--http.port=$port")
+    fi
+    host=$(conf_value http.address)
+    [ -n "$host" ] || host=127.0.0.1
+    timeout="${PLAY_AOT_TIMEOUT:-120}"
+    case "$timeout" in
+        ''|*[!0123456789]*)
+            echo "play: PLAY_AOT_TIMEOUT is a number of seconds, not '$timeout'" >&2
+            exit 1 ;;
+    esac
+    # Decimal whatever its leading zeros: bash arithmetic reads 08 as bad octal.
+    timeout=$((10#$timeout))
+
+    if port_open "$host" "$port"; then
+        echo "play: aot-gen: $host:$port is already in use. The training run starts the application" >&2
+        echo "play: itself: stop the one that is running, or pass --http.port=<free port>." >&2
+        exit 1
+    fi
+
+    AOT_NEW="$AOT_CACHE.new"
+    AOT_OUT="logs/aot-gen.out"
+    AOT_PID=""
+    build_java_cmd "-XX:AOTCacheOutput=$AOT_NEW"
+    mkdir -p logs
+    trap aot_gen_cleanup EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM HUP
+
+    echo "~ Training run for the AOT cache: starting $SCRIPT_DIR on port $port"
+    echo "~ its output (stdout/stderr) -> $SCRIPT_DIR/$AOT_OUT"
+    ( launch "${JVM_ENV[@]}" -- "${JAVA_CMD[@]}" ) > "$AOT_OUT" 2>&1 &
+    AOT_PID=$!
+
+    deadline=$((SECONDS + timeout))
+    until port_open "$host" "$port"; do
+        if ! kill -0 "$AOT_PID" 2>/dev/null; then
+            AOT_PID=""
+            aot_gen_fail "the application stopped before it was listening on $host:$port"
+        fi
+        [ "$SECONDS" -lt "$deadline" ] \
+            || aot_gen_fail "nothing was listening on $host:$port after ${timeout}s (PLAY_AOT_TIMEOUT)"
+        sleep 0.2
+    done
+
+    status=$(http_get "$host" "$port" "$timeout") \
+        || aot_gen_fail "the application did not answer GET / on $host:$port"
+    echo "~ GET / -> $status"
+
+    # No time limit from here on: the shutdown has the application's own, and
+    # how long the JVM then takes to assemble the cache depends on its size.
+    echo "~ Stopping it; the JVM writes the cache as it exits"
+    kill "$AOT_PID" 2>/dev/null || :
+    wait "$AOT_PID" || :
+    AOT_PID=""
+    # The JVM assembles the cache in a child process and removes its recording
+    # once that has succeeded. A recording still there means the child died
+    # part way -- out of memory in a container, say -- and what it wrote is a
+    # truncated file, not a cache. The exit status cannot tell the two apart:
+    # it is that of the SIGTERM either way.
+    [ -s "$AOT_NEW" ] && [ ! -e "$AOT_NEW.config" ] \
+        || aot_gen_fail "the JVM exited without completing the cache"
+    mv -f "$AOT_NEW" "$AOT_CACHE"
+
+    size=$(wc -c < "$AOT_CACHE")
+    echo "~ OK, the AOT cache is at: $SCRIPT_DIR/$AOT_CACHE ($((size / 1048576)) MB)"
+    echo "~ run and start use it from now on. Generate it again after a JDK update,"
+    echo "~ a change of JVM options or a redeploy: a cache that no longer fits is ignored."
+}
+
 case "$CMD" in
     run)
         build_java_cmd
@@ -419,6 +600,9 @@ case "$CMD" in
     secret)
         cmd_secret
         ;;
+    aot-gen)
+        cmd_aot_gen
+        ;;
     help|--help|-h|"")
         cat <<EOF
 Usage: ./play <command> [args]
@@ -434,6 +618,7 @@ Runtime commands:
 
 Setup commands:
   secret                 Generate application secret -> certs/.env
+  aot-gen                Write the JDK's AOT cache (app.aot) for a faster start
 
 Argument forwarding (same shape as the dev-time \`play\` shim):
   --%<id>                Set play.id (default: prod)
@@ -456,9 +641,21 @@ and jmx.port with jmx.hostname (a %<id>. entry beats the bare key). The JMX
 agent requires a login and TLS (jmx.password.file, jmx.access.file,
 jmx.ssl.config.file) unless jmx.authenticate=false / jmx.ssl=false.
 
+AOT cache: aot-gen starts the application for real, with the arguments above
+and its real configuration, waits until it listens (--http.port, else
+http.port in application.conf, else 9000), has it serve GET / and stops it;
+the JVM writes app.aot as it exits. run and start then pass -XX:AOTCache, ahead
+of your own options so that those win. The cache fits one JDK build, one set
+of JVM options and this bundle's jars: generate it on the host or in the image
+build, and again after a JDK update, a JVM option change or a redeploy. A
+cache that no longer fits is ignored with a warning. Not available from Git
+Bash on Windows.
+
 Environment:
   PLAY_ID                Default play.id (overridden by --%<id>)
   PLAY_PID_FILE          Default pid file path
+  PLAY_AOT_TIMEOUT       Seconds aot-gen waits for the application to listen
+                         (default: 120)
 Variables the environment does not define are taken from certs/.env: one
 KEY=VALUE per line, read as literal text (no shell expansion).
 

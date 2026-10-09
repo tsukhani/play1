@@ -168,6 +168,8 @@ Everything you need to know about Play.
 ## "Operational notes":httpserver#operational
 # "Deployment options":deployment
 ## "Standalone Play application":deployment#standalone
+## "The AOT cache for a play bundle":deployment#aot-cache
+## "Upgrading: conf/ and a bundle's classpath":deployment#bundle-classpath
 ## "Behind a reverse proxy":deployment#reverseproxy
 # "Observability — health & metrics":observability
 ## "Health endpoints":observability#health

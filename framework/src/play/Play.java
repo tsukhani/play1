@@ -980,16 +980,26 @@ public class Play {
      */
     public static void initStaticStuff() {
         // Play! plugings
-        Enumeration<URL> urls = null;
+        List<URL> urls = new ArrayList<>();
         try {
-            urls = Play.class.getClassLoader().getResources("play.static");
+            Enumeration<URL> onClasspath = Play.class.getClassLoader().getResources("play.static");
+            while (onClasspath.hasMoreElements()) {
+                urls.add(onClasspath.nextElement());
+            }
+            // PF-180: a bundle's JVM classpath holds jars only, so the application's own
+            // conf/play.static is read as a file. Canonical, the form the class loader
+            // gives a classpath directory, so a Gradle launch -- conf/ still on its
+            // classpath -- does not read the file twice.
+            File inConf = new File(applicationPath, "conf/play.static").getCanonicalFile();
+            if (inConf.isFile() && !urls.contains(inConf.toURI().toURL())) {
+                urls.add(inConf.toURI().toURL());
+            }
         } catch (IOException e) {
             // Surface classloader resource-discovery errors so a missing/corrupt jar isn't
             // diagnosed by silent absence of plugin static-init.
             Logger.warn(e, "Cannot enumerate play.static resources; skipping plugin static-init");
         }
-        while (urls != null && urls.hasMoreElements()) {
-            URL url = urls.nextElement();
+        for (URL url : urls) {
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(url.openStream(), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = reader.readLine()) != null) {

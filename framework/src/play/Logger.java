@@ -1,5 +1,7 @@
 package play;
 
+import java.io.File;
+import java.io.IOException;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.net.URI;
@@ -22,6 +24,7 @@ import org.apache.logging.log4j.core.config.LoggerConfig;
 import org.apache.logging.log4j.core.layout.PatternLayout;
 
 import play.exceptions.PlayException;
+import play.exceptions.UnexpectedException;
 
 /**
  * Main logger of the application.
@@ -694,11 +697,43 @@ public class Logger {
             String format = Play.configuration.getProperty("application.log.format", "text").trim();
             String defaultPath = "json".equalsIgnoreCase(format) ? "/log4j-json.properties" : "/log4j.xml";
             String log4jPath = Play.configuration.getProperty("application.log.path", defaultPath);
-            log4jConf = Logger.class.getResource(log4jPath);
+            log4jConf = preferConfFile(Logger.class.getResource(log4jPath), log4jPath);
             if (log4jConf == null) { // try again with the .properties
                 String fallback = "json".equalsIgnoreCase(format) ? "/log4j-json.properties" : "/log4j.properties";
                 log4jPath = Play.configuration.getProperty("application.log.path", fallback);
-                log4jConf = Logger.class.getResource(log4jPath);
+                log4jConf = preferConfFile(Logger.class.getResource(log4jPath), log4jPath);
+            }
+        }
+
+        /**
+         * PF-180: a self-contained bundle starts the JVM with jars only on its classpath
+         * (a directory there rules out the JDK's AOT cache), so a file in the application's
+         * conf/ is no longer a classpath resource. This looks there for what the classpath
+         * supplied while conf/ was its first entry: a path the classpath does not have at
+         * all, and one it has only inside a jar -- the framework's bundled default, which
+         * conf/log4j.properties has always replaced. Without it a custom
+         * application.log.path resolved to null and the application logged nothing.
+         * <p>
+         * A hit outside a jar is returned as it came, so an application launched through
+         * Gradle, whose classpath still starts with conf/, resolves exactly as before. The
+         * file is named in canonical form, as the class loader names a classpath directory,
+         * so {@link #access()} answers for it as it did for the classpath URL.
+         */
+        static URL preferConfFile(URL onClasspath, String path) {
+            if (onClasspath != null && !"jar".equals(onClasspath.getProtocol())) {
+                return onClasspath;
+            }
+            // The name Class.getResource looks up: a leading '/' means the classpath root,
+            // anything else is relative to this class's package.
+            String name = path.startsWith("/") ? path.substring(1) : "play/" + path;
+            File inConf = new File(Play.applicationPath, "conf/" + name);
+            if (!inConf.isFile()) {
+                return onClasspath;
+            }
+            try {
+                return inConf.getCanonicalFile().toURI().toURL();
+            } catch (IOException e) {
+                throw new UnexpectedException(e);
             }
         }
 
