@@ -191,7 +191,7 @@ Set @application.log.format=json@ to emit ECS-shaped JSON log lines via Log4j 2'
 
 h3. Environment variable interpolation (PF-10)
 
-@${ENV_VAR}@ and @${ENV_VAR:-default}@ are now resolved in @application.conf@ at config load time. Unresolved placeholders without defaults log a @WARN@ at startup. See "configuration":configuration#envvar.
+@${ENV_VAR}@ and @${ENV_VAR:default}@ are now resolved in @application.conf@ at config load time. Unresolved placeholders without defaults log a @WARN@ at startup. See "configuration":configuration#envvar.
 
 h3. Health endpoints (PF-11)
 

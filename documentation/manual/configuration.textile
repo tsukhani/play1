@@ -17,17 +17,22 @@ mail.smtp.pass = ${SMTP_PASSWORD}
 
 p. Resolution happens at config load time. The @${...}@ placeholder is replaced with the environment variable's value before any other code reads the configuration, so callers see the resolved string transparently.
 
-To supply a fallback when the environment variable is unset, use @${ENV_VAR:-default}@:
+To supply a fallback when the environment variable is unset, use @${ENV_VAR:default}@:
 
 bc.. # Falls back to localhost when DB_HOST isn't exported
-db.url = jdbc:postgresql://${DB_HOST:-localhost}:5432/myapp
+db.url = jdbc:postgresql://${DB_HOST:localhost}:5432/myapp
 
-# Empty default — yields an empty string when LOG_LEVEL is unset
-application.log = ${LOG_LEVEL:-INFO}
+# Falls back to INFO when LOG_LEVEL is unset
+application.log = ${LOG_LEVEL:INFO}
 
-p. The default may itself be a literal string (it is not recursively interpolated). Whitespace inside @${...}@ is significant — write @${DB_HOST:-localhost}@, not @${ DB_HOST :- localhost }@.
+# Empty default — yields an empty string when SMTP_USER is unset
+mail.smtp.user = ${SMTP_USER:}
 
-Unresolved placeholders with no default log a @WARN@ at startup and resolve to the literal placeholder string. This is intentional — silent failure on a missing secret is worse than a warn-and-misbehave that surfaces during smoke tests.
+p. The placeholder is split at its *first* colon: the text before it is the variable name, and everything after it, further colons included, is the default. This is not the shell's @${VAR:-default}@ form. Written that way the dash becomes part of the default, so @${DB_HOST:-localhost}@ yields @-localhost@. The @https.port=${https.port:-1}@ line in a new application's @application.conf@ relies on exactly this to default to @-1@, the value that keeps the HTTPS listener off (the name there is a JVM system property, @-Dhttps.port=9443@, which a placeholder looks up before the environment).
+
+The default is a literal string (it is not recursively interpolated). Whitespace inside @${...}@ is significant — write @${DB_HOST:localhost}@, not @${ DB_HOST : localhost }@.
+
+Unresolved placeholders with no default log a @WARN@ at startup and resolve to the literal placeholder string. This is intentional — silent failure on a missing secret is worse than a warn-and-misbehave that surfaces during smoke tests. A key that has been "declared":#requirements is held to more: there an unresolved placeholder stops the application from starting.
 
 Configurations without any @${...}@ syntax behave identically to before — there is no migration needed when upgrading.
 
@@ -68,6 +73,59 @@ h3. Precedence
 A variable that is already present in the host environment is never overridden by @certs/.env@: the file only supplies variables the host does not define. A host variable set to the empty string still counts as set, so its empty value is kept. This holds on every launch path listed above (PF-184).
 
 In a container, for example, a variable passed with @docker run -e@ wins over the same key in a @certs/.env@ that is baked into the image or mounted into it.
+
+
+h2. <a name="requirements">Declaring required configuration</a>
+
+Configuration values are read where they are used, so a key that is missing or mistyped normally shows up at first use, or not at all when the code falls back to a default. A plugin can declare what it needs instead, and Play checks every declaration when the application starts (PF-179).
+
+Declare from the plugin's @onConfigurationRead()@ hook with @play.ConfigRequirements@. An application's own plugin, listed in @conf/play.plugins@, works as well as a module's:
+
+bc.. public class BillingPlugin extends PlayPlugin {
+
+    @Override
+    public void onConfigurationRead() {
+        ConfigRequirements.require(BillingPlugin.class, "billing.apiKey");
+        ConfigRequirements.requireIn(BillingPlugin.class, "billing.mode", "live", "sandbox");
+    }
+}
+
+p. The first argument is the owner, which the error message names: the declaring class, or any label given as a @String@.
+
+* @require(owner, key)@ — the key must be present, must not be empty, and must not contain a @${...}@ placeholder that was left unresolved.
+* @requireIn(owner, key, allowed...)@ — when the key has a value, it must be one of the allowed values, compared without regard to letter case or surrounding whitespace, so the code that reads the key should compare the same way. A key that is absent or empty passes; declare it with @require@ as well to make it mandatory.
+
+A declared key whose value still holds an unresolved placeholder is reported as missing by both, where an undeclared key only logs the @WARN@ described "above":#envvar. If the variable is optional, give the placeholder a default: @${BILLING_MODE:sandbox}@.
+
+Keys are written without a framework ID prefix. The check sees the configuration as it stands for the "framework ID":ids the application runs under: a @%prod.billing.apiKey@ line satisfies the declaration under @prod@ only, and a placeholder on a line for another ID is never evaluated.
+
+Only declared keys are checked. Every other key behaves as it always has.
+
+h3. When a declaration is violated
+
+The check runs every time the application starts, after the configuration has been read. All violations are reported together in one @play.exceptions.ConfigurationException@, each with its key, who declared it and how to fix it:
+
+bc.. Invalid configuration (2 problems):
+  1. billing.apiKey (declared by plugins.BillingPlugin) is missing: nothing defines ${BILLING_API_KEY}. Define BILLING_API_KEY in the environment, in certs/.env or as a -D system property, or give the placeholder a default: ${BILLING_API_KEY:value}.
+  2. billing.mode (declared by plugins.BillingPlugin) is "staging", which is not an allowed value. Set it to one of: live, sandbox.
+
+p. What happens next depends on the mode:
+
+* In @PROD@ mode the application starts when the JVM boots. The process logs the error and exits with status 1, before it listens for requests.
+* In @DEV@ mode the application starts on the first request. The server stays up and the browser shows the error, like any other start failure. The configuration is read and checked again on every restart, so correcting @application.conf@ and reloading the page is enough.
+
+@play precompile@, and @play bundle@ and @play dist@ which run it, are unaffected: they compile the application without starting it, so the check never runs and the machine that builds a release does not need the production variables. @play test@ and @play autotest@ do start the application, under the @test@ ID; give a required key a value there with a @%test.@ line or a placeholder default.
+
+h3. Why onConfigurationRead()
+
+Play reads the configuration more than once — when the JVM boots, and again each time the application starts, which in @DEV@ mode includes every restart — and forgets all declarations each time, just before it calls @onConfigurationRead()@ on every enabled plugin. A requirement declared there is declared afresh for each read. One declared anywhere else, in @onLoad()@ or a static initializer for example, is lost at the next read.
+
+A disabled plugin is not called and so declares nothing. A plugin switched off by a @plugins.disable@ line is disabled only after it has declared; its requirements are dropped with it as long as the plugin class, not a label, was given as the owner.
+
+h3. Keys the framework declares
+
+|_. Key |_. Allowed values |
+| "application.log.format":#application.log.format | @text@, @json@ |
 
 
 h2(#application). Application configuration
@@ -129,6 +187,19 @@ bc. application.log=DEBUG
 Default: @INFO@
 
 See also: "Logging configuration":logs.
+
+
+h3(#application.log.format). application.log.format
+
+Output format of the framework's default Log4j configuration: @text@ for the classic pattern layout, @json@ for one ECS-shaped JSON object per line. For example:
+
+bc. application.log.format=json
+
+The value is not case sensitive. Any other value stops the application from starting, where it used to select @text@ silently; see "Declaring required configuration":#requirements. That includes a placeholder that is left unresolved, so write @${LOG_FORMAT:text}@ rather than @${LOG_FORMAT}@ if the variable is not always defined.
+
+Default: @text@
+
+See also: "Structured JSON logging":logs#json.
 
 
 h3(#application.log.path). application.log.path

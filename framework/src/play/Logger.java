@@ -690,7 +690,8 @@ public class Logger {
             // wires JsonTemplateLayout with the ECS template. application.log.path
             // (user-supplied config file) still wins — only the framework default
             // changes name.
-            String format = Play.configuration.getProperty("application.log.format", "text");
+            // Trimmed, as ConfigRequirements trims it before checking it (PF-179)
+            String format = Play.configuration.getProperty("application.log.format", "text").trim();
             String defaultPath = "json".equalsIgnoreCase(format) ? "/log4j-json.properties" : "/log4j.xml";
             String log4jPath = Play.configuration.getProperty("application.log.path", defaultPath);
             log4jConf = Logger.class.getResource(log4jPath);

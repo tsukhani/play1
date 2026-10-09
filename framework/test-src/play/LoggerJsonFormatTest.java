@@ -121,6 +121,24 @@ public class LoggerJsonFormatTest {
         }
     }
 
+    @Test
+    public void jsonFormatIsHonouredWithWhitespaceAroundIt() {
+        // PF-179: ConfigRequirements trims the value before it checks it against text/json,
+        // so a variable holding "json" and a trailing newline passes the check. The reader
+        // has to agree, or the application starts with the text layout and says nothing.
+        Properties saved = Play.configuration;
+        try {
+            Play.configuration = new Properties();
+            Play.configuration.setProperty("application.log.format", " json\n");
+            Logger.LoggerInit init = new Logger.LoggerInit();
+            assertNotNull(init.getLog4jConf(), "log4j-json.properties should be on the classpath");
+            assertTrue(init.getLog4jConf().toString().endsWith("log4j-json.properties"),
+                    "json with whitespace around it must select log4j-json.properties: " + init.getLog4jConf());
+        } finally {
+            Play.configuration = saved;
+        }
+    }
+
     /** Render a LogEvent through the ECS layout and return the UTF-8 string. */
     private String format(LogEvent event) {
         byte[] bytes = ecsLayout.toByteArray(event);

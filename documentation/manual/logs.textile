@@ -74,7 +74,7 @@ Switch on JSON mode in @application.conf@:
 
 bc. application.log.format=json
 
-Default is @text@ (the classic @PatternLayout@ — no behavior change). When @json@ is set, the framework's default Log4j configuration switches to a layout that emits one JSON object per log line, formatted against @classpath:EcsLayout.json@. Every event becomes a self-describing record:
+Default is @text@ (the classic @PatternLayout@ — no behavior change). The value is not case sensitive, and any other value stops the application from starting; see "application.log.format":configuration#application.log.format. When @json@ is set, the framework's default Log4j configuration switches to a layout that emits one JSON object per log line, formatted against @classpath:EcsLayout.json@. Every event becomes a self-describing record:
 
 bc. {"@timestamp":"2026-05-03T14:22:01.234Z","log.level":"INFO","message":"Application has started","ecs.version":"1.2.0","log.logger":"play"}
 

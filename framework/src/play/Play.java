@@ -397,6 +397,8 @@ public class Play {
         retiredConfigKeys.clear();
         configuration = readOneConfigurationFile("application.conf");
         extractHttpPort();
+        // Emptied before the plugins declare again in onConfigurationRead() (PF-179)
+        ConfigRequirements.reset();
         // Plugins
         pluginCollection.onConfigurationRead();
     }
@@ -753,6 +755,10 @@ public class Play {
                     "JVM flag. Refusing to start without a secret because session and HMAC " +
                     "signing would otherwise be insecure.");
             }
+
+            // Declared configuration requirements (PF-179). Checked here and not at the
+            // read, so that play precompile, which never starts the app, is unaffected.
+            ConfigRequirements.check();
 
             // Default web encoding
             String _defaultWebEncoding = configuration.getProperty("application.web_encoding");
