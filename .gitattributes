@@ -1,0 +1,5 @@
+# Shell scripts run, or are baked into a bundle, exactly as checked out. Git for
+# Windows checks text out with CRLF by default, and bash rejects a CRLF script
+# ("$'\r': command not found") -- for bundle-play.sh that would be the launcher
+# of every bundle built from such a checkout.
+*.sh text eol=lf
