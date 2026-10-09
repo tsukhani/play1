@@ -24,7 +24,7 @@ require:    &allDependencies
     - org.apache.commons -> commons-email2-jakarta 2.0.0-M1
     - commons-fileupload 1.6.0
     - commons-io 2.22.0
-    - org.apache.commons -> commons-lang3 3.20.0
+    - org.apache.commons -> commons-lang3 3.21.0
     - org.apache.commons -> commons-text 1.15.0
     - commons-logging 1.4.0
     - com.h2database -> h2 2.5.252
@@ -185,7 +185,7 @@ require:    &allDependencies
     - com.aayushatharva.brotli4j -> native-linux-x86_64 1.23.0
     - com.aayushatharva.brotli4j -> native-linux-riscv64 1.23.0
     - com.aayushatharva.brotli4j -> native-windows-x86_64 1.23.0
-    - org.postgresql -> postgresql 42.7.13
+    - org.postgresql -> postgresql 42.7.14
     - org.slf4j -> slf4j-api 2.0.20
     - org.apache.logging.log4j -> log4j-slf4j2-impl 2.26.1
     - org.yaml -> snakeyaml 2.7
@@ -200,7 +200,7 @@ require:    &allDependencies
     - com.fasterxml.jackson.dataformat -> jackson-dataformat-xml 2.22.3
     - com.fasterxml.jackson.dataformat -> jackson-dataformat-yaml 2.22.3
     - com.fasterxml.jackson.datatype -> jackson-datatype-jsr310 2.22.3
-    - com.fasterxml.woodstox -> woodstox-core 7.2.2
+    - com.fasterxml.woodstox -> woodstox-core 7.3.0
     - org.codehaus.woodstox -> stax2-api 4.3.1
     # PF-12: OpenAPI 3 spec generation. swagger-models supplies the OpenAPI
     # object graph; swagger-core supplies Json/Yaml pretty-printers that wrap
@@ -264,7 +264,7 @@ require:    &allDependencies
     - com.squareup.okhttp3 -> okhttp-sse 5.5.0
     - com.squareup.okio -> okio 3.18.2
     - com.squareup.okio -> okio-jvm 3.18.2
-    - org.jetbrains.kotlin -> kotlin-stdlib 2.4.20
+    - org.jetbrains.kotlin -> kotlin-stdlib 2.4.21
 
 # Default repositories, used for all projects
 repositories:
