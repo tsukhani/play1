@@ -108,7 +108,7 @@ The framework caches both the TCP @SslContext@ and the UDP @QuicSslContext@ for 
 
 h2. <a name="virtual-threads">Virtual threads</a>
 
-Play 1.12 runs on virtual threads exclusively. Request invocation, background jobs, and mail dispatch all dispatch through @play.utils.VirtualThreadScheduledExecutor@. The executor uses two platform threads only for timer dispatch; everything else — the actual request, job, and mail work — runs on virtual threads with no thread-pool cap.
+Play 1.12 runs on virtual threads exclusively. Request invocation and background jobs each dispatch through a @play.utils.VirtualThreadScheduledExecutor@ of their own. That executor uses two platform threads only for timer dispatch; the actual request and job work runs on virtual threads with no thread-pool cap. Mail is sent on virtual threads as well, one per message from an executor of its own, with at most @play.mail.maxConcurrent@ sends (32 by default) in flight at a time.
 
 This requires Java 25 or newer. "JEP 491":https://openjdk.org/jeps/491 eliminated @synchronized@ pinning, which made virtual threads strictly cheaper than platform threads under blocking I/O. The legacy @play.threads.virtual*@ toggles are gone — there is no longer any platform-thread fallback. @Play.java@ emits a @WARN@ at boot if any of the retired keys are still present in @application.conf@ (including profile-prefixed forms like @%test.play.pool=3@) so operators upgrading from upstream Play 1.x see exactly which lines to delete.
 
