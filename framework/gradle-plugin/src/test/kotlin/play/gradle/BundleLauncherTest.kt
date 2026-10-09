@@ -2,13 +2,22 @@ package play.gradle
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assumptions.assumeTrue
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.condition.DisabledOnOs
+import org.junit.jupiter.api.condition.EnabledOnOs
 import org.junit.jupiter.api.condition.OS
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
+import java.util.jar.Attributes
+import java.util.jar.JarEntry
+import java.util.jar.JarOutputStream
+import java.util.jar.Manifest
+import javax.tools.ToolProvider
 
 /**
  * PF-171: the bundled `play` launcher (src/main/resources/bundle-play.sh, baked
@@ -19,18 +28,84 @@ import java.io.File
  * the first framework dependency (the -javaagent keeps the framework jar itself
  * loadable, which is why the symptom looks like a packaging bug).
  *
- * We can't run Windows here, so we run the real script against stubbed `uname`
- * and `cygpath` on PATH and assert the argv it hands `java` — a stub that just
- * echoes its arguments. That covers the branch itself; the reachable half of a
- * Windows verification.
+ * Most tests run the real script and assert the argv it hands `java` — a stub
+ * that just echoes its arguments. On macOS and Linux the MSYS branch is reached
+ * by stubbing `uname` and `cygpath` on PATH. On Windows the whole class runs the
+ * script through Git Bash, the shell an installed bundle is started with there,
+ * so `uname`, `cygpath` and bash itself are the real ones (PF-183): before that
+ * it was skipped on Windows, and a launcher that broke only there went unseen.
  */
-// The launcher is a #!/bin/bash script driven through ProcessBuilder, so these
-// can only run where a POSIX shell executes a shebang. On the Windows CI leg the
-// MSYS branch is simulated from macOS/Linux instead -- see the stubs below.
-@DisabledOnOs(OS.WINDOWS, disabledReason = "bundle-play.sh needs a POSIX shell to execute")
 class BundleLauncherTest {
 
     private val fwVersion = "1.13.57"
+    private val onWindows = OS.WINDOWS.isCurrentOs
+
+    /** What the launcher joins -classpath with on the machine the tests run on. */
+    private val cpSep = if (onWindows) ";" else ":"
+
+    /**
+     * Git Bash's bash.exe. Nothing on Windows executes a #! script directly, and
+     * this is the bash install.ps1-style installers start a bundle with. The
+     * bin\ wrapper rather than usr\bin\bash.exe: it is what puts the MSYS tools
+     * on PATH. Not `bash` from PATH either, which on a stock Windows is the WSL
+     * launcher in System32 -- a different machine as far as the bundle goes.
+     */
+    private val gitBash: String? by lazy {
+        (listOf("ProgramFiles", "ProgramFiles(x86)").mapNotNull { System.getenv(it) }.map { "$it\\Git" } +
+            listOfNotNull(System.getenv("LOCALAPPDATA")?.let { "$it\\Programs\\Git" }))
+            .map { "$it\\bin\\bash.exe" }
+            .firstOrNull { File(it).isFile }
+    }
+
+    @BeforeEach
+    fun needsGitBashOnWindows() {
+        if (!onWindows) return
+        // On CI a missing Git Bash has to fail: a skip is how these went unrun on Windows.
+        if (System.getenv("CI") != null) assertNotNull(gitBash, "Git Bash (Git\\bin\\bash.exe) was not found")
+        assumeTrue(gitBash != null, "the bundle launcher needs Git Bash on Windows")
+    }
+
+    /**
+     * Put [dirs] ahead of the inherited PATH, under the name the variable already
+     * has. On Windows that is `Path` and ProcessBuilder's map is case-sensitive,
+     * so setting "PATH" hands the child both -- and Git Bash keeps the original,
+     * which sent every stub-java test to the real java.exe.
+     */
+    private fun ProcessBuilder.pathFirst(vararg dirs: File): ProcessBuilder = apply {
+        val name = environment().keys.firstOrNull { it.equals("PATH", ignoreCase = true) } ?: "PATH"
+        environment()[name] =
+            (dirs.map { it.absolutePath } + listOfNotNull(environment()[name])).joinToString(File.pathSeparator)
+    }
+
+    /** The command line that runs the bundle's `play` with [args]. */
+    private fun play(vararg args: String): List<String> =
+        if (onWindows) listOf(gitBash!!, "./play", *args) else listOf("./play", *args)
+
+    /** The command line that runs [script] through a POSIX shell. */
+    private fun shell(script: String, vararg args: String): List<String> =
+        if (onWindows) listOf(gitBash!!, "-c", script, *args) else listOf("/bin/sh", "-c", script, *args)
+
+    /**
+     * A path the launcher printed, in the form java.io.File understands: under
+     * Git Bash it prints POSIX paths (/c/Users/..., or /tmp/... for the temp dir).
+     */
+    private fun hostPath(path: String): String =
+        if (!onWindows) path
+        else ProcessBuilder(shell("cygpath -w \"\$1\"", "bash", path))
+            .start().inputStream.bufferedReader().readText().trim()
+
+    /**
+     * Windows only: wait for what `start` left running. The stub java exits at
+     * once, but until it has its working directory and logs/system.out are in
+     * use, and Windows will not let JUnit delete a @TempDir that is.
+     */
+    private fun settle(bundle: File) {
+        if (!onWindows) return
+        val wait = "for f in *.pid; do [ -f \"\$f\" ] || continue; n=0; " +
+            "while kill -0 \"\$(cat \"\$f\")\" 2>/dev/null && [ \$n -lt 100 ]; do sleep 0.1; n=\$((n+1)); done; done"
+        ProcessBuilder(shell(wait)).directory(bundle).redirectErrorStream(true).start()
+            .apply { inputStream.readAllBytes() }.waitFor()
+    }
 
     /** Materialize a minimal bundle (launcher + framework jar + .classpath) in [dir]. */
     private fun writeBundle(dir: File) {
@@ -75,10 +150,10 @@ class BundleLauncherTest {
 
     /** Run `./play run [args]` in [bundle] with [stubs] prepended to PATH; return java's argv. */
     private fun launcherArgv(bundle: File, stubs: File, vararg args: String): List<String> {
-        val proc = ProcessBuilder("./play", "run", *args)
+        val proc = ProcessBuilder(play("run", *args))
             .directory(bundle)
             .redirectErrorStream(true)
-            .apply { environment()["PATH"] = "${stubs.absolutePath}${File.pathSeparator}${System.getenv("PATH")}" }
+            .pathFirst(stubs)
             .start()
         val out = proc.inputStream.bufferedReader().readText()
         assertEquals(0, proc.waitFor(), "launcher should exit cleanly\n$out")
@@ -93,19 +168,20 @@ class BundleLauncherTest {
     private fun startLogConfigLine(bundle: File, stubs: File, vararg args: String): String {
         // The stub java from a previous start may not have exited yet.
         File(bundle, "server.pid").delete()
-        val proc = ProcessBuilder("./play", "start", *args)
+        val proc = ProcessBuilder(play("start", *args))
             .directory(bundle)
             .redirectErrorStream(true)
-            .apply { environment()["PATH"] = "${stubs.absolutePath}${File.pathSeparator}${System.getenv("PATH")}" }
+            .pathFirst(stubs)
             .start()
         val out = proc.inputStream.bufferedReader().readText()
         assertEquals(0, proc.waitFor(), "launcher should exit cleanly\n$out")
+        settle(bundle)
         val lines = out.lines()
         val console = lines.indexOfFirst { it.startsWith("~ console output (stdout/stderr) -> ") }
         assertTrue(console >= 0, "start printed no console-output line:\n$out")
         assertEquals(
             File(bundle, "logs/system.out").canonicalPath,
-            File(lines[console].substringAfter(" -> ")).canonicalPath
+            File(hostPath(lines[console].substringAfter(" -> "))).canonicalPath
         )
         return lines[console + 1]
     }
@@ -122,21 +198,23 @@ class BundleLauncherTest {
      * and the stub `java` reporting the [probe] variables. Unlike [launcherArgv]
      * this keeps stderr apart from stdout (PF-183: warnings belong on stderr) and
      * leaves the exit code to the caller. Lines are split on '\n' alone so a
-     * carriage return that survived a CRLF certs/.env stays visible.
+     * carriage return that survived a CRLF certs/.env stays visible. [path] goes
+     * on PATH after [stubs], for the test that wants a real `java` found there.
      */
     private fun launch(
         bundle: File,
         stubs: File,
         vararg args: String,
         env: Map<String, String> = emptyMap(),
-        probe: List<String> = emptyList()
+        probe: List<String> = emptyList(),
+        path: List<File> = emptyList()
     ): Launch {
         val stderr = File(stubs, "stderr.txt")
-        val proc = ProcessBuilder("./play", *args)
+        val proc = ProcessBuilder(play(*args))
             .directory(bundle)
             .redirectError(stderr)
             .apply {
-                environment()["PATH"] = "${stubs.absolutePath}${File.pathSeparator}${System.getenv("PATH")}"
+                pathFirst(stubs, *path.toTypedArray())
                 // Only [env] is "the host" here: neither a probed name nor the two
                 // variables the launcher reads itself may leak in from the
                 // developer's shell. Nor UID/EUID: a shell that exports them (the
@@ -148,6 +226,7 @@ class BundleLauncherTest {
             .start()
         val stdout = proc.inputStream.bufferedReader().readText()
         val exit = proc.waitFor()
+        if (args.firstOrNull() in setOf("start", "restart")) settle(bundle)
         fun lines(text: String) = text.split('\n').filter { it.isNotEmpty() }
         return Launch(exit, lines(stdout), lines(stderr.readText()))
     }
@@ -186,6 +265,7 @@ class BundleLauncherTest {
         argv.single { it.startsWith("-D$prop=") }.substringAfter('=')
 
     @Test
+    @DisabledOnOs(OS.WINDOWS, disabledReason = "asserts the branch the launcher takes off Windows")
     fun `launcher uses POSIX separator and untranslated paths off Windows`(@TempDir tmp: File) {
         val bundle = File(tmp, "app").apply { mkdirs() }
         writeBundle(bundle)
@@ -230,6 +310,24 @@ class BundleLauncherTest {
             valueOf(argv, "framework.path").endsWith("""\framework"""),
             "framework.path must stay the bundle's framework/ subdir: ${valueOf(argv, "framework.path")}"
         )
+    }
+
+    @Test
+    @EnabledOnOs(OS.WINDOWS)
+    fun `under Git Bash on Windows the launcher hands java the bundle's own native paths`(@TempDir tmp: File) {
+        // The test above fakes MSYS with a stubbed uname and cygpath, which is all
+        // macOS and Linux can do. Here both are Git Bash's own, so the translation
+        // is the real one and the result has to be the directory the bundle is in.
+        val bundle = File(tmp, "app").apply { mkdirs() }
+        writeBundle(bundle)
+        val stubs = File(tmp, "bin")
+        writeStubs(stubs, windows = false)
+
+        val argv = launcherArgv(bundle, stubs)
+
+        assertEquals("conf;framework/play-$fwVersion.jar;framework/lib/netty.jar", classpathOf(argv))
+        assertEquals(bundle.canonicalPath, File(valueOf(argv, "application.path")).canonicalPath)
+        assertEquals(File(bundle, "framework").canonicalPath, File(valueOf(argv, "framework.path")).canonicalPath)
     }
 
     @Test
@@ -509,9 +607,9 @@ class BundleLauncherTest {
         val stubs = File(tmp, "bin")
         writeStubs(stubs, windows = false)
 
-        val proc = ProcessBuilder("/bin/sh", "-c", "./play run --stacktrace 2>&-")
+        val proc = ProcessBuilder(shell("./play run --stacktrace 2>&-"))
             .directory(bundle)
-            .apply { environment()["PATH"] = "${stubs.absolutePath}${File.pathSeparator}${System.getenv("PATH")}" }
+            .pathFirst(stubs)
             .start()
         val argv = proc.inputStream.bufferedReader().readText().lines()
 
@@ -695,7 +793,10 @@ class BundleLauncherTest {
         val run = launch(bundle, stubs, "run", probe = names)
 
         assertEquals(0, run.exit, "launcher should exit cleanly\n${run.stderr}")
-        assertEquals("conf:framework/play-$fwVersion.jar:framework/lib/netty.jar", classpathOf(run.stdout))
+        assertEquals(
+            listOf("conf", "framework/play-$fwVersion.jar", "framework/lib/netty.jar").joinToString(cpSep),
+            classpathOf(run.stdout)
+        )
         assertEquals(bundle.canonicalPath, File(valueOf(run.stdout, "application.path")).canonicalPath)
         // They are the application's environment all the same...
         assertEquals(listOf("not-java", "not-a-classpath", "/elsewhere", "still loaded"), names.map { run.env(it) })
@@ -724,5 +825,91 @@ class BundleLauncherTest {
         assertTrue(File(bundle, "from-flag.pid").isFile, "--pid-file should beat PLAY_PID_FILE from certs/.env")
         launch(bundle, stubs, "start", env = mapOf("PLAY_PID_FILE" to "from-host.pid"))
         assertTrue(File(bundle, "from-host.pid").isFile, "the host's PLAY_PID_FILE should beat certs/.env")
+    }
+
+    @Test
+    fun `launcher starts a real JVM that finds the bundle, the conf flags and the dotenv entries`(@TempDir tmp: File) {
+        // Every other test hands java's argv to a stub. This one lets the launcher
+        // start the JVM the tests run on -- on Windows a native java.exe behind
+        // Git Bash, the boundary PF-171 is about -- and asks that JVM what arrived.
+        // A wrong separator or an untranslated path stops an installed bundle
+        // booting, and no assertion on argv can show it.
+        val bundle = File(tmp, "app").apply { mkdirs() }
+        writeBundle(bundle)
+        reportingFrameworkJar(File(tmp, "fake"), File(bundle, "framework/play-$fwVersion.jar"))
+        File(bundle, ".classpath").writeText("conf\nframework/play-$fwVersion.jar\n")
+        File(bundle, "conf").mkdirs()
+        File(bundle, "conf/application.conf")
+            .writeText("jvm.memory=--add-modules=jdk.incubator.vector -Dpf183.from.conf=yes\n")
+        File(bundle, "conf/marker.txt").writeText("only reachable through -classpath")
+        File(bundle, "certs").mkdirs()
+        File(bundle, "certs/.env").writeText("PF184_FILE=pa\$\$word#1 from file\nPF184_BOTH=from-file\n")
+        val noStubs = File(tmp, "bin").apply { mkdirs() }
+
+        val run = launch(
+            bundle, noStubs, "run", "-Dpf183.from.cli=yes", "--http.port=19183",
+            env = mapOf("PF184_BOTH" to "from-host"),
+            path = listOf(File(System.getProperty("java.home"), "bin"))
+        )
+
+        assertEquals(0, run.exit, "the JVM should start and exit cleanly\n${run.stdout}\n${run.stderr}")
+        // A native JVM ends its lines with CRLF on Windows, and launch() splits on LF alone.
+        fun reported(name: String) =
+            run.stdout.firstOrNull { it.startsWith("$name=") }?.substringAfter('=')?.trimEnd('\r')
+        assertEquals(bundle.canonicalPath, reported("APP"), "application.path is not the bundle")
+        assertEquals(File(bundle, "framework").canonicalPath, reported("FRAMEWORK"), "framework.path")
+        // The -javaagent keeps the framework jar loadable even when -classpath is
+        // misread, so a file only conf/ holds is what shows the classpath took.
+        assertEquals("true", reported("CONF_ON_CLASSPATH"), "conf is not on the classpath\n${run.stdout}")
+        assertEquals("true", reported("VECTOR"), "jvm.memory's --add-modules did not reach the JVM")
+        assertEquals("yes", reported("FROM_CONF"))
+        assertEquals("yes", reported("FROM_CLI"))
+        assertEquals("pa\$\$word#1 from file", reported("ENV_FILE"))
+        assertEquals("from-host", reported("ENV_BOTH"))
+        assertEquals("--http.port=19183", reported("ARGS"))
+    }
+
+    /**
+     * A framework jar real enough for the launcher to start: a loadable -javaagent
+     * whose play.server.Server prints what the JVM was given and exits.
+     */
+    private fun reportingFrameworkJar(work: File, dest: File) {
+        val source = File(work, "src/play/server/Server.java").apply {
+            parentFile.mkdirs()
+            writeText(
+                """
+                package play.server;
+                import java.io.File;
+                public class Server {
+                    public static void premain(String args, java.lang.instrument.Instrumentation inst) {}
+                    public static void main(String[] args) throws Exception {
+                        System.out.println("APP=" + new File(System.getProperty("application.path")).getCanonicalPath());
+                        System.out.println("FRAMEWORK=" + new File(System.getProperty("framework.path")).getCanonicalPath());
+                        System.out.println("CONF_ON_CLASSPATH=" + (Server.class.getResource("/marker.txt") != null));
+                        System.out.println("VECTOR=" + ModuleLayer.boot().findModule("jdk.incubator.vector").isPresent());
+                        System.out.println("FROM_CONF=" + System.getProperty("pf183.from.conf"));
+                        System.out.println("FROM_CLI=" + System.getProperty("pf183.from.cli"));
+                        System.out.println("ENV_FILE=" + System.getenv("PF184_FILE"));
+                        System.out.println("ENV_BOTH=" + System.getenv("PF184_BOTH"));
+                        System.out.println("ARGS=" + String.join(" ", args));
+                    }
+                }
+                """.trimIndent()
+            )
+        }
+        val classes = File(work, "classes").apply { mkdirs() }
+        val javac = ToolProvider.getSystemJavaCompiler() ?: error("tests need a JDK, not a JRE")
+        assertEquals(0, javac.run(null, null, null, "-d", classes.absolutePath, source.absolutePath), "compiling the fake framework failed")
+        val manifest = Manifest().apply {
+            mainAttributes[Attributes.Name.MANIFEST_VERSION] = "1.0"
+            mainAttributes[Attributes.Name("Premain-Class")] = "play.server.Server"
+        }
+        JarOutputStream(dest.outputStream(), manifest).use { jar ->
+            classes.walkTopDown().filter { it.isFile }.forEach { f ->
+                jar.putNextEntry(JarEntry(f.relativeTo(classes).invariantSeparatorsPath))
+                f.inputStream().use { it.copyTo(jar) }
+                jar.closeEntry()
+            }
+        }
     }
 }
