@@ -154,6 +154,38 @@ The launcher puts @-XX:AOTCache=app.aot@ ahead of the options from @application.
 * **Bundles only.** An application launched through Gradle — @play run@, @play start@, @play test@, and a @play dist@ artifact, which is deployed into that context — has @conf/@ and Gradle's output directories on its classpath, and the JVM does not write a cache while a non-empty directory is on the classpath.
 * **Not from Git Bash on Windows.** @aot-gen@ refuses to run from Git Bash, MSYS2 or Cygwin: the JVM writes the cache when it exits normally, and from those shells @kill@ ends a native @java.exe@ at once. @./play run@ and @./play start@ are unaffected, and use an @app.aot@ that is there.
 
+h3. <a name="startup-profile">Where a bundle's startup time goes</a>
+
+Every start logs a "Started in" line that splits its time by phase; "Startup time":production#startup explains each name. The table is that line for one small application, as a guide to what to expect and to what the cache changes. Read your own application's line before tuning anything: the proportions depend on what its plugins do when it starts.
+
+The application is a freshly generated one with one JPA entity on an in-memory H2 database, bundled with @play bundle@ and started with @./play run@. Each figure is the median of five starts, in milliseconds, on JDK 25.0.2 on one macOS arm64 machine. The ZGC columns add @-XX:+UseZGC@ and the incubator vector module, and use a cache trained with the same options.
+
+|_. Phase |_. No cache |_. AOT cache |_. ZGC, no cache |_. ZGC, AOT cache |
+| @jvm@ | 64 | 142 | 66 | 48 |
+| @conf@ | 38 | 28 | 39 | 39 |
+| @logging@ | 154 | 54 | 153 | 92 |
+| @plugins@ | 14 | 2 | 16 | 5 |
+| @classes@ | 2 | 1 | 3 | 1 |
+| @routes@ | 254 | 119 | 261 | 179 |
+| @onApplicationStart@ | 636 | 92 | 632 | 213 |
+| — of which @JPAPlugin@ | 532 | 74 | 528 | 170 |
+| — of which @DBPlugin@ | 66 | 9 | 68 | 21 |
+| — of which @MetricsPlugin@ | 34 | 8 | 34 | 20 |
+| @bind@ | 73 | 29 | 76 | 41 |
+| @other@ | 62 | 16 | 65 | 79 |
+| **Started in** | **1,301** | **495** | **1,312** | **701** |
+| Launch to the first answered request | 1,759 | 809 | 1,767 | 1,037 |
+
+The last row is measured from outside: from running @./play run@ to the first @200@ on @GET /@. It is longer than the line's total because it also counts the launcher script before the JVM starts and the first request itself.
+
+What the figures say:
+
+* **Most of a start is spent loading libraries, not running the application.** Without a cache, @JPAPlugin@ building the Hibernate entity manager factory is two fifths of the start, and @logging@ (Log4j) and @routes@ (the first use of the Groovy template engine) are another third. That is loading and linking thousands of library classes, which is the work the cache keeps, and why those three phases shrink the most.
+* **The cache more than halves the start** with the default collector: 1,301 ms to 495 ms in the log line, 1,759 ms to 809 ms from launch to first answer.
+* **Under ZGC the gain is smaller**, 1,312 ms to 701 ms. The JVM can take loaded classes from a cache under ZGC but not the pre-linked form it uses under the default collector. A cache still has to be trained with the collector it will run under.
+* **The application's own classes are a small share, and the cache hardly changes it.** The same application with 1,500 generated controllers spends 127 ms in @classes@ without a cache and 107 ms with one, against a start of 1,502 ms and 646 ms. Reading and defining the precompiled classes is Play's own loop.
+* **What remains after the cache is the application's own start-up work**: opening the database pool, validating or updating the schema ("jpa.ddl":configuration#jpa.ddl), and whatever its @OnApplicationStart@ jobs do. The @onApplicationStart.<plugin>@ pairs and @afterApplicationStart@ show where to look.
+
 h3. <a name="bundle-classpath">Upgrading: conf/ is no longer on a bundle's classpath</a>
 
 Until PF-180 the JVM classpath of a @play bundle@ began with the @conf/@ directory. It now holds jars only, because of the rule above: no AOT cache while a directory is on the classpath. @conf/@ still ships in the bundle, and everything Play does with it is unchanged:
