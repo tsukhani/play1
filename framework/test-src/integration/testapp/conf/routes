@@ -14,4 +14,8 @@ GET     /ping                      TestController.ping
 GET     /pingRo                    TestController.pingReadonly
 GET     /count                     TestController.count
 GET     /countRo                   TestController.countReadonly
+GET     /context/wrapped           ContextController.wrapped
+GET     /context/job               ContextController.job
+GET     /context/jobResult         ContextController.jobResult
+GET     /context/entityManager     ContextController.entityManager
 GET     /public/                   staticDir:public

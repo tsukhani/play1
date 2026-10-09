@@ -1,6 +1,7 @@
 package play.jobs;
 
 import java.util.Date;
+import java.util.UUID;
 import java.util.concurrent.Callable;
 
 import java.util.concurrent.TimeUnit;
@@ -8,6 +9,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import com.jamonapi.Monitor;
 import com.jamonapi.MonitorFactory;
+import org.apache.logging.log4j.ThreadContext;
 
 import play.Invoker;
 import play.Invoker.InvocationContext;
@@ -21,6 +23,7 @@ import play.libs.F;
 import play.libs.F.Promise;
 import play.libs.Time;
 import play.mvc.Http;
+import play.utils.ContextPropagator;
 
 /**
  * A job is an asynchronously executed unit of work
@@ -31,6 +34,19 @@ import play.mvc.Http;
 public class Job<V> extends Invoker.Invocation implements Callable<V> {
 
     public static final String invocationType = "Job";
+
+    // PF-177: the ThreadContext key every run of every job logs under. One random UUID per
+    // call(), the same shape as a request's request_id: it tells concurrent runs apart, also
+    // two runs of one job instance and runs on different nodes, and it does not change during
+    // a run.
+    private static final String JOB_ID = "jobId";
+
+    // PF-177: carries the context of the thread that started a job from the callable that
+    // now(), in() and afterRequest() submit into call(), which runs it. A thread-local and not
+    // a field, because the context belongs to one run: a job instance can be started more than
+    // once, and a scheduled instance can be started by hand between its scheduled runs. It is
+    // not an argument either, because applications override call().
+    private static final ThreadLocal<ContextPropagator.Snapshot> submittedContext = new ThreadLocal<>();
 
     protected Object executor;
     protected long lastRun = 0;
@@ -128,7 +144,12 @@ public class Job<V> extends Invoker.Invocation implements Callable<V> {
     }
 
     private Callable<V> getJobCallingCallable(final Promise<V> smartFuture) {
+        // PF-177: captured here, on the thread that starts the job, not in the callable. That
+        // matters most for afterRequest(): JobsPlugin.afterInvocation() submits the callable
+        // only after ActionInvoker has cleared the request's logging context.
+        final ContextPropagator.Snapshot context = ContextPropagator.capture();
         return () -> {
+            submittedContext.set(context);
             try {
                 V result = Job.this.call();
                 if (smartFuture != null) {
@@ -140,6 +161,9 @@ public class Job<V> extends Invoker.Invocation implements Callable<V> {
                     smartFuture.invokeWithException(e);
                 }
                 return null;
+            } finally {
+                // call() takes it, but an override of call() may never get that far.
+                submittedContext.remove();
             }
         };
     }
@@ -204,10 +228,29 @@ public class Job<V> extends Invoker.Invocation implements Callable<V> {
     @Override
     public V call() {
         Monitor monitor = null;
+        // PF-177: taken, not just read, so that a job this one runs inline does not find it too.
+        ContextPropagator.Snapshot submitted = submittedContext.get();
+        submittedContext.remove();
+        // What this thread holds now goes back in the finally block. A job is not always on a
+        // thread of its own: synchronous application-start and -stop jobs, and any job run with
+        // run() or call(), are on their caller's thread and must not leave a jobId behind on it.
+        ContextPropagator.Snapshot previous = null;
+        String jobId = UUID.randomUUID().toString();
         try {
+            // Inside the try like the rest of the run: an application's accessor may throw
+            // here, and _finally(), which reschedules a cron job, has to run all the same.
+            previous = ContextPropagator.capture();
+            ThreadContext.put(JOB_ID, jobId);
             preInit();
             if (init()) {
                 before();
+                if (submitted != null) {
+                    // Only now: preInit() has just cleared the language, so a context applied
+                    // any earlier would have lost it. Applying replaces the logging context,
+                    // so the jobId goes in again.
+                    submitted.apply();
+                    ThreadContext.put(JOB_ID, jobId);
+                }
                 V result = null;
 
                 try {
@@ -250,7 +293,14 @@ public class Job<V> extends Invoker.Invocation implements Callable<V> {
             if (monitor != null) {
                 monitor.stop();
             }
-            _finally();
+            try {
+                _finally();
+            } finally {
+                // After onException() and _finally(), so that what they log carries the jobId.
+                if (previous != null) {
+                    previous.apply();
+                }
+            }
         }
         return null;
     }

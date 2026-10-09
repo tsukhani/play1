@@ -93,7 +93,7 @@ When JSON mode is active, @ActionInvoker.invoke()@ pushes a handful of per-reque
 
 These are emitted as flat top-level keys in the ECS-format JSON, so log aggregators index and filter on them natively. Search "all errors from one user's session" by filtering on @request_id@; chart "404s by route" by aggregating on @action_name@.
 
-The fields are pushed before the action runs and cleared in the existing @finally@ block, so they never leak into background-thread logging from jobs or async work.
+The fields are pushed before the action runs and cleared in the existing @finally@ block, so nothing that later runs on the same thread inherits them by accident. They are handed on deliberately in two cases: a job the action starts with @now()@, @in()@ or @afterRequest()@ logs under the request's fields, and so does a task wrapped with @play.utils.ContextPropagator.wrap()@. Every run of a job, scheduled or not, also logs a @jobId@ of its own. See "Context propagation":jobs#context.
 
 In @text@ mode the @ThreadContext@ values are still set but the default pattern doesn't render them. Operators who want them can extend the pattern with @%X{request_id}@ etc. — that's a per-deployment customization, not a framework concern.
 

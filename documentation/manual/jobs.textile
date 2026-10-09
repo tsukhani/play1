@@ -150,6 +150,67 @@ public class Bootstrap extends Job {
     }
 }
 
+h2. <a name="context">Context propagation</a>
+
+A request, a job and a task you hand to an executor each run on a thread of their own, and what Play keeps per thread does not follow the work from one thread to the next. Two things are carried along for you:
+
+|_. Carried |_. What it is |
+| The logging context | The Log4j @ThreadContext@ map. For a request that is its "per-request fields":logs#json-mdc, @request_id@ among them, plus any key your own code has put there |
+| The language | What @Lang@ holds for the thread that starts the work |
+
+A job that an action starts with @now()@, @in()@ or @afterRequest()@ runs with both, as they were when that method was called. Its log lines carry the @request_id@ of the request that started it, so one search finds the request and everything it set off (the lines are abridged):
+
+bc. {"@timestamp":"2026-10-09T05:03:45.051Z","log.level":"INFO","message":"Encoding requested","process.thread.name":"play-vthread-3","action_name":"Videos.encode","http_path":"/videos/42/encode","request_id":"d65c92c2-e71c-43f5-9372-a16731b77990"}
+{"@timestamp":"2026-10-09T05:03:45.052Z","log.level":"INFO","message":"Encoding video 42","process.thread.name":"jobs-vthread-3","action_name":"Videos.encode","http_path":"/videos/42/encode","jobId":"8d546897-b911-490a-8dfa-617ac7cabdd9","request_id":"d65c92c2-e71c-43f5-9372-a16731b77990"}
+
+This is also true of a job started with @afterRequest()@ or @in()@, which runs when the request is over and its own logging context is gone.
+
+A request resolves its language the first time something asks for it: a template, @Messages.get()@ or @Lang.get()@. An action that starts a job before any of those has run, and wants the job to work in the request's language, calls @Lang.get()@ first.
+
+Bootstrap jobs and scheduled jobs (<code>@Every</code>, <code>@On</code>, @every()@) have no request behind them, so they carry no request keys.
+
+h3. The job id
+
+Every run of every job, however it was started, logs under a @jobId@. It is a random UUID, like @request_id@, made when the run starts. It stays the same for the whole run and differs from one run to the next, also between two runs of the same job that overlap, so the lines of one run can be told apart from all others. A job started from another job gets a @jobId@ of its own and inherits the rest.
+
+In @text@ mode, add @%X{jobId}@ to the log pattern to see it.
+
+h3. What is not carried
+
+The request, the response, the session, the flash scope, the params, the render and route arguments, the validation errors, the JPA entity manager and the database connection all stay with the request. They change while the request runs and are not safe to use from two threads, so they are never handed to another thread: in a job started with @now()@, @in()@ or @afterRequest()@, @Request.current()@ is @null@, and the job has a transaction and an entity manager of its own, as it always had. An entity loaded by the request does not belong to the job's entity manager either.
+
+Hand a job what it needs through its constructor, as values and identifiers:
+
+bc. public static void encode(Long videoId) {
+    new VideoEncoder(videoId, session.get("user")).now();
+    renderText("Encoding started");
+}
+
+h3. Threads of your own
+
+A task you run on an executor of your own is not a job, and gets no context unless you wrap it with @play.utils.ContextPropagator@:
+
+bc. Future<Quote> quote = executor.submit(ContextPropagator.wrap(() -> quotes.fetch(symbol)));
+
+@wrap()@ takes a @Runnable@ or a @Callable@ and records the context of the thread that calls it. The task then runs with exactly that context, in place of whatever the executor's thread held, and when it ends, also by throwing, that thread gets back what it held before. So a wrapped task can itself wrap and start further tasks, and tasks forked side by side do not see each other's changes.
+
+The framework wraps nothing else for you: mail sent in the background and the threads that complete asynchronous @WS@ calls log without the context.
+
+h3. Carrying a value of your own
+
+To have a value of your own carried in the same way, register a @play.utils.ThreadLocalAccessor@ for it, typically from a plugin's @onApplicationStart()@:
+
+bc. ContextPropagator.register(new ThreadLocalAccessor<String>() {
+    public String key() { return "tenant"; }
+    public String capture() { return Tenant.current.get(); }
+    public void restore(String tenant) { Tenant.current.set(tenant); }
+    public void reset() { Tenant.current.remove(); }
+});
+
+@capture()@ runs on the thread that starts the work, and again on the thread that does the work, to record what that thread gets back afterwards. It must not change anything on either, and returns @null@ on a thread that has no value. @restore()@ and @reset()@ run on the thread that does the work, to set the value and to clear it. Registering a second accessor under the same key replaces the first.
+
+Only do this for a value that is safe on two threads at once: an immutable one, or a copy made in @capture()@.
+
 p(note). **Continuing the discussion**
 
 Let's see how to combine Jobs with more powerful %(next)"Asynchronous programming with HTTP":asynchronous%.

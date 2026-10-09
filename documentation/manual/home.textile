@@ -95,6 +95,7 @@ Everything you need to know about Play.
 ## "Bootstrap jobs":jobs#concepts
 ## "Scheduled jobs":jobs#scheduling
 ## "Triggering task jobs":jobs#tasks
+## "Context propagation":jobs#context
 # "Asynchronous programming with HTTP":asynchronous
 ## "Suspending HTTP requests":asynchronous#SuspendingHTTPrequests
 ## "HTTP response streaming":asynchronous#HTTPresponsestreaming

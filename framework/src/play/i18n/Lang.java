@@ -47,6 +47,18 @@ public class Lang {
         return locale;
     }
 
+    /**
+     * The language this thread holds, or null if none has been set or resolved yet. Unlike
+     * {@link #get()} it resolves nothing: {@code get()} picks a language for a thread that has
+     * none and stores it, which a caller that only wants to copy the value to another thread
+     * (PF-177, {@link play.utils.ContextPropagator}) must not do to this one.
+     *
+     * @return The current language (fr, ja, it ...) or null
+     */
+    public static String peek() {
+        return current.get();
+    }
+
 
     /**
      * Force the current language
