@@ -175,7 +175,7 @@ Configure the session cookie's @SameSite@ globally:
 
 bc. application.session.sameSite=Lax
 
-Values: @Strict@, @Lax@ (default), or @None@. Override per-cookie when setting cookies directly:
+Values: @Strict@, @Lax@ (default), or @None@, in any letter case. Any other value leaves the attribute off the cookie. Override per-cookie when setting cookies directly:
 
 bc. response.setCookie("preferences", value, "MyApp", "/", null, false, false, "Strict");
 

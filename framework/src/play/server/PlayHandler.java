@@ -507,13 +507,15 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
             c.setHttpOnly(cookie.httpOnly);
             // Audit B9: emit SameSite=Lax by default so cross-site navigations don't
             // ship session cookies, blocking the largest class of CSRF attacks.
-            // null/empty disables; anything else is parsed by Netty's enum.
-            if (cookie.sameSite != null && !cookie.sameSite.isEmpty()) {
-                try {
-                    c.setSameSite(io.netty.handler.codec.http.cookie.CookieHeaderNames.SameSite
-                            .valueOf(cookie.sameSite));
-                } catch (IllegalArgumentException ignored) {
-                    // unknown value — skip rather than fail the response
+            // null/empty disables; an unknown value is skipped rather than failing the
+            // response. Matched without regard to case, as Scope.applySameSite reads the
+            // same value: "none" forced Secure there and was then dropped here.
+            if (cookie.sameSite != null) {
+                for (io.netty.handler.codec.http.cookie.CookieHeaderNames.SameSite sameSite
+                        : io.netty.handler.codec.http.cookie.CookieHeaderNames.SameSite.values()) {
+                    if (sameSite.name().equalsIgnoreCase(cookie.sameSite)) {
+                        c.setSameSite(sameSite);
+                    }
                 }
             }
             nettyResponse.headers().add(SET_COOKIE, ServerCookieEncoder.STRICT.encode(c));
