@@ -18,4 +18,7 @@ GET     /context/wrapped           ContextController.wrapped
 GET     /context/job               ContextController.job
 GET     /context/jobResult         ContextController.jobResult
 GET     /context/entityManager     ContextController.entityManager
+GET     /inline/run                InlineJobController.run
+GET     /inline/failing            InlineJobController.failing
+GET     /inline/after              InlineJobController.after
 GET     /public/                   staticDir:public

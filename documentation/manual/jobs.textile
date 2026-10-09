@@ -136,6 +136,8 @@ If @afterRequest()@ is called not from http invocation context, it behaves like 
 
 All @now()@, @in()@, @afterRequest()@ return a @Promise@ so you have access to this Job execution result.
 
+A job can also be run in place, with @call()@ or @run()@, from an action or from another job. It then runs on the caller's thread as part of what the caller is doing: in the same transaction and with the same request, and @call()@ returns its result. A failure is thrown to the caller. Use @now()@ when the job needs a transaction of its own.
+
 h2. <a name="concepts">Stopping the application</a>
 
 Because you sometimes need to perform some action before the application shutdown, Play also provides a <code>@OnApplicationStop</code> annotation.

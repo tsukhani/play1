@@ -225,8 +225,21 @@ public class Job<V> extends Invoker.Invocation implements Callable<V> {
         }
     }
 
+    /**
+     * Runs the job on the current thread. Started through {@link #now()} and its siblings, or
+     * by the scheduler, that is a thread of the job's own, and the job gets an invocation of
+     * its own: plugin hooks, a transaction, a job id.
+     *
+     * <p>Called directly from inside an action or from inside another job, with
+     * {@code call()} or {@link #run()}, the thread already has an invocation open, and the job
+     * runs as part of that one: in the caller's transaction, with the caller's request, and
+     * with no plugin hook run a second time. A failure is thrown to the caller.</p>
+     */
     @Override
     public V call() {
+        if (InvocationContext.current() != null) {
+            return callInsideCurrentInvocation();
+        }
         Monitor monitor = null;
         // PF-177: taken, not just read, so that a job this one runs inline does not find it too.
         ContextPropagator.Snapshot submitted = submittedContext.get();
@@ -303,6 +316,40 @@ public class Job<V> extends Invoker.Invocation implements Callable<V> {
             }
         }
         return null;
+    }
+
+    // An invocation of its own on a thread that already has one tore the caller's down when
+    // the job ended: every plugin's invocationFinally() ran against the caller's state. The
+    // database connection and the validation errors went, and JobsPlugin dropped the
+    // after-request queue, which ended the request with a NullPointerException. So only the
+    // job's own body runs here, under a job id like any other run.
+    private V callInsideCurrentInvocation() {
+        Monitor monitor = null;
+        ContextPropagator.Snapshot previous = null;
+        try {
+            previous = ContextPropagator.capture();
+            ThreadContext.put(JOB_ID, UUID.randomUUID().toString());
+            lastException = null;
+            lastRun = System.currentTimeMillis();
+            monitor = MonitorFactory.start(this + ".doJob()");
+            V result = doJobWithResult();
+            wasError = false;
+            return result;
+        } catch (Throwable e) {
+            // Not onException(): that reports the failure to the plugins, and it is the
+            // caller's invocation that fails if the caller lets this through.
+            wasError = true;
+            lastException = e;
+            Logger.error(e, "Error during job execution (%s)", this);
+            throw new UnexpectedException(unwrap(e));
+        } finally {
+            if (monitor != null) {
+                monitor.stop();
+            }
+            if (previous != null) {
+                previous.apply();
+            }
+        }
     }
 
     @Override
