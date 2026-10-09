@@ -218,6 +218,41 @@ bc. openssl req -x509 -newkey rsa:2048 -nodes \
     -keyout host.key -out host.cert \
     -days 3650 -subj '/CN=your-host'
 
+h2. <a name="startup">Startup time</a>
+
+Every application start logs one line that says how long the start took and where the time went. This one is a freshly generated application, bundled with @play bundle@ and started in prod mode:
+
+bc. Started in 843 ms: jvm=115 conf=41 logging=166 modules=1 plugins=19 classes=3 templates=- routes=291 onApplicationStart=42 onApplicationStart.play.plugins.MetricsPlugin=39 onApplicationStart.play.db.jpa.JPAPlugin=1 onApplicationStart.play.i18n.MessagesPlugin=1 afterApplicationStart=1 bind=82 other=82
+
+There is nothing to switch on. The line is logged at @INFO@ by the @play@ logger, so a logging configuration that raises that logger above @INFO@ hides it, and the rolling-file example above does. With "JSON logging":logs#json it is the @message@ of one record.
+
+h3. Reading the line
+
+After the total come @name=milliseconds@ pairs separated by single spaces. The phases are always all there and always in this order, which is the order they run in, so a script can split the line on spaces and on @=@. A phase that did not run in this start has @-@ where its time would be; @0@ means it ran and took under half a millisecond. Every figure is rounded to the millisecond on its own, so the pairs can miss the total by a few milliseconds.
+
+|_. Name |_. What it times |
+| @jvm@ | From the start of the JVM to the framework's first line of code: the JVM coming up and loading the classes the framework needs to begin. |
+| @conf@ | Reading @application.conf@ and the files it includes, and the plugins' @onConfigurationRead@. Prod mode reads the configuration twice, once before the plugins are loaded and once when the application starts, and this is the sum. |
+| @logging@ | Setting up logging, which is where log4j initializes. |
+| @modules@ | Finding the application's modules and adding them to its paths. |
+| @plugins@ | Loading every plugin named in a @play.plugins@ file and calling its @onLoad@. |
+| @classes@ | Defining the application's classes. For a precompiled application that is scanning @precompiled/java@ and defining each class in it; otherwise it is compiling and enhancing the Java sources. |
+| @templates@ | Compiling every template. Only a prod start that is not precompiled does this. |
+| @routes@ | Parsing the @routes@ files. A precompiled application reads them as precompiled templates, so this is also where the template engine is first used. |
+| @onApplicationStart@ | The @onApplicationStart@ of all plugins: opening the database pool, building the JPA entity manager factory, and so on. |
+| @onApplicationStart.play.db.jpa.JPAPlugin@ | One plugin's share of @onApplicationStart@, under its class name. There is one such pair for each plugin whose time does not round to zero, in the order the plugins were called. |
+| @afterApplicationStart@ | The @afterApplicationStart@ of all plugins. This is where the application's @OnApplicationStart@ jobs run, unless they are marked @async@. |
+| @bind@ | Starting the HTTP server: binding the HTTP port and, if configured, the HTTPS and HTTP/3 ports. |
+| @other@ | The rest of the total: everything no phase above accounts for. |
+
+h3. What the total covers
+
+**In prod mode** the application starts once, as part of the boot, and the line is logged once, after the last @Listening for ...@ line. The total runs from the start of the JVM to the moment the server is listening on all its ports, so it is the time from launching the Java process to being able to answer a request. Whatever ran before the JVM, such as the @play@ script, is not in it. A Java runtime image built without the @java.management@ module cannot report how long the JVM has been up: there the total runs from the framework's first line of code, and @jvm@ is @-@.
+
+**In dev mode** the application starts on the first request, and starts again whenever a change calls for a restart. Each of those starts logs a line of its own. Its total is the time that one start took and no more: it does not go back to the start of the JVM, which may have been waiting for a request for any length of time. The phases that belong to the boot and not to a start, @jvm@, @logging@, @modules@, @plugins@ and @bind@, are therefore always @-@, as is @templates@, because dev mode compiles a template when it is first rendered. Work done before the start begins is not in the line either: on a restart that is stopping the previous instance and recompiling the classes that changed, and on the first request it is parsing the routes, which is why @routes@ then reads @0@.
+
+@play precompile@ compiles the application without starting it, so it logs no such line.
+
 p(note). **Continuing the discussion**
  
 Next: %(next)"Deployment options":deployment%.

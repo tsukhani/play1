@@ -34,6 +34,8 @@ import play.mvc.Http;
 import play.mvc.Router;
 import play.plugins.PluginCollection;
 import play.templates.TemplateLoader;
+import play.utils.BootTimings;
+import play.utils.BootTimings.Phase;
 import play.utils.OrderSafeProperties;
 import play.vfs.VirtualFile;
 
@@ -225,6 +227,7 @@ public class Play {
      *            The framework id to use
      */
     public static void init(File root, String id) {
+        BootTimings.begin();
         // Simple things
         Play.id = id;
         Play.started = false;
@@ -236,12 +239,12 @@ public class Play {
         guessFrameworkPath();
 
         // Read the configuration file
-        readConfiguration();
+        BootTimings.time(Phase.CONF, Play::readConfiguration);
 
         Play.classes = new ApplicationClasses();
 
         // Configure logs
-        Logger.init();
+        BootTimings.time(Phase.LOGGING, Logger::init);
         String logLevel = configuration.getProperty("application.log", "INFO");
 
         // only override log-level if Logger was not configured manually
@@ -319,7 +322,7 @@ public class Play {
         modulesRoutes.clear();
 
         // Load modules
-        loadModules(appRoot);
+        BootTimings.time(Phase.MODULES, () -> loadModules(appRoot));
 
         // Load the templates from the framework after the one from the modules
         templatesPath.add(VirtualFile.open(new File(frameworkPath, "framework/templates")));
@@ -339,7 +342,7 @@ public class Play {
         }
 
         // Plugins
-        pluginCollection.loadPlugins();
+        BootTimings.time(Phase.PLUGINS, pluginCollection::loadPlugins);
 
         // Done !
         if (mode == Mode.PROD) {
@@ -683,6 +686,8 @@ public class Play {
             }
 
             if (mode == Mode.DEV) {
+                // PF-178: a DEV start is timed on its own; in PROD it is part of the boot Play.init began
+                BootTimings.begin();
                 // Need a new classloader
                 classloader = new ApplicationClassloader();
                 // Put it in the current context for any code that relies on having it there
@@ -693,7 +698,7 @@ public class Play {
             }
 
             // Reload configuration
-            readConfiguration();
+            BootTimings.time(Phase.CONF, Play::readConfiguration);
 
             // Configure logs
             String logLevel = configuration.getProperty("application.log", "INFO");
@@ -763,10 +768,10 @@ public class Play {
             }
 
             // Try to load all classes
-            Play.classloader.getAllClasses();
+            BootTimings.time(Phase.CLASSES, Play.classloader::getAllClasses);
 
             // Routes
-            Router.detectChanges(ctxPath);
+            BootTimings.time(Phase.ROUTES, () -> Router.detectChanges(ctxPath));
 
             // Cache (PF-88: typed Caches contract; provider resolved via ServiceLoader)
             Caches.init();
@@ -776,7 +781,7 @@ public class Play {
 
             // Plugins
             try {
-                pluginCollection.onApplicationStart();
+                BootTimings.time(Phase.ON_APPLICATION_START, pluginCollection::onApplicationStart);
             } catch (Exception e) {
                 if (Play.mode.isProd()) {
                     Logger.error(e, "Can't start in PROD mode with errors");
@@ -797,7 +802,12 @@ public class Play {
             startedAt = System.currentTimeMillis();
 
             // Plugins
-            pluginCollection.afterApplicationStart();
+            BootTimings.time(Phase.AFTER_APPLICATION_START, pluginCollection::afterApplicationStart);
+
+            // PF-178: PROD logs its line from Server.main, once the server is listening
+            if (mode == Mode.DEV) {
+                BootTimings.logStart();
+            }
 
         } catch (PlayException e) {
             started = false;
@@ -876,7 +886,7 @@ public class Play {
     static boolean preCompile() {
         if (usePrecompiled) {
             if (Play.getFile("precompiled").exists()) {
-                classloader.getAllClasses();
+                BootTimings.time(Phase.CLASSES, classloader::getAllClasses);
                 Logger.info("Application is precompiled");
                 return true;
             }
@@ -888,7 +898,7 @@ public class Play {
             Logger.info("Precompiling ...");
             Thread.currentThread().setContextClassLoader(Play.classloader);
             long start = System.currentTimeMillis();
-            classloader.getAllClasses();
+            BootTimings.time(Phase.CLASSES, classloader::getAllClasses);
 
             if (Logger.isTraceEnabled()) {
                 Logger.trace("%sms to precompile the Java stuff", System.currentTimeMillis() - start);
@@ -896,7 +906,7 @@ public class Play {
 
             if (!lazyLoadTemplates) {
                 start = System.currentTimeMillis();
-                TemplateLoader.getAllTemplate();
+                BootTimings.time(Phase.TEMPLATES, TemplateLoader::getAllTemplate);
 
                 if (Logger.isTraceEnabled()) {
                     Logger.trace("%sms to precompile the templates", System.currentTimeMillis() - start);

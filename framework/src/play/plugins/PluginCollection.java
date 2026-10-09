@@ -31,6 +31,7 @@ import play.templates.BaseTemplate;
 import play.templates.Template;
 import play.test.BaseTest;
 import play.test.TestEngine;
+import play.utils.BootTimings;
 import play.vfs.VirtualFile;
 
 import static java.util.Collections.emptyList;
@@ -569,7 +570,8 @@ public class PluginCollection {
     }
 
     public void onApplicationStart() {
-        broadcast(PlayPlugin::onApplicationStart);
+        // PF-178: per plugin, for the "Started in" line
+        broadcast(plugin -> BootTimings.timeOnApplicationStart(plugin.getClass().getName(), plugin::onApplicationStart));
     }
 
     public void afterApplicationStart() {

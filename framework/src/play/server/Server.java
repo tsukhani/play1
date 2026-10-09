@@ -30,6 +30,7 @@ import play.libs.IO;
 import play.server.quic.Http3ServerInitializer;
 import play.server.quic.Http3SslContextFactory;
 import play.server.ssl.SslHttpServerPipelineFactory;
+import play.utils.BootTimings;
 
 public class Server {
 
@@ -395,7 +396,11 @@ public class Server {
             Play.init(root, System.getProperty("play.id", ""));
 
             if (System.getProperty("precompile") == null) {
-                new Server(args);
+                BootTimings.time(BootTimings.Phase.BIND, () -> new Server(args));
+                // PF-178: DEV has not started the application yet; Play.start() logs it, on the first request
+                if (Play.mode == Mode.PROD) {
+                    BootTimings.logBoot();
+                }
             } else {
                 Logger.info("Done.");
             }

@@ -158,6 +158,7 @@ Everything you need to know about Play.
 ## "Configure your application.conf":production#application
 ## "Configure logging":production#logging
 ## "Set-up a front-end HTTP server":production#server
+## "Startup time":production#startup
 # "HTTP server, virtual threads, HTTP/2, HTTP/3":httpserver
 ## "HTTP/1.1, HTTP/2, and HTTP/3":httpserver#protocols
 ## "TLS configuration":httpserver#tls
