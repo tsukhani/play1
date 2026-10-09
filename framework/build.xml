@@ -445,9 +445,24 @@
             <!-- play + gradlew need the executable bit on Unix; the default zipfileset
                  mode is 0644, which produces "Permission denied" on first run of
                  ./play or ./gradlew after unzip. -->
-            <zipfileset prefix="play-${version}" dir="dist/play-${version}" includes="**/*" excludes="play,gradlew" />
+            <!-- defaultexcludes="no": the directory was put together by `artifact`, and
+                 the default excludes would take the skeleton's .gitignore and
+                 .gitattributes out again here. -->
+            <zipfileset prefix="play-${version}" dir="dist/play-${version}" includes="**/*" excludes="play,gradlew" defaultexcludes="no" />
             <zipfileset prefix="play-${version}" dir="dist/play-${version}" includes="play,gradlew" filemode="755" />
         </zip>
+        <!-- Checked in the zip, which is what is released: both the copy in `artifact`
+             and the zip above drop these two files unless told not to, and `play new`
+             from a distribution without them scaffolds an application that does not
+             ignore certs/.env, where its secret is. -->
+        <fail message="dist/play-${version}.zip has no .gitignore or no .gitattributes in resources/application-skel: an application created with `play new` from it would not ignore certs/.env.">
+            <condition>
+                <resourcecount when="ne" count="2">
+                    <zipfileset src="dist/play-${version}.zip" defaultexcludes="no"
+                                includes="play-${version}/resources/application-skel/.gitignore,play-${version}/resources/application-skel/.gitattributes" />
+                </resourcecount>
+            </condition>
+        </fail>
     </target>
 
     <target name="artifact" depends="clean,version,jar,javadoc">
@@ -460,6 +475,11 @@
         <copy todir="dist/play-${version}">
             <fileset dir=".." excludes=".github/**,**/cobertura.ser,**/*.pyc,**/*.log,hs_err*,.*,.*/*,build/**,framework/gradle-plugin/build/**,framework/gradle-plugin/bin/**,framework/gradle-plugin-repo/**,**/.gradle/**,**/.kotlin/**,framework/dist/**,framework/tailwindcss,framework/test-src/**,id,**/.bzr/**,**/.git/**,*.bzrignore,framework/classes/**,framework/tests-results/**,test-result/**,framework/test-result/**,docs/**,renovate.json5,modules/**,openspec/**,.claude/**,CLAUDE.md,CONTRIBUTING.md,CODE_OF_CONDUCT.md,_bmad/**,_bmad-output/**,.agents/**,AGENTS.md" />
             <fileset dir=".." includes="modules/docviewer/**,modules/testrunner/**" excludes="**/*.pyc" />
+            <!-- Ant leaves every .gitignore and .gitattributes out of a fileset unless told
+                 otherwise, and the application skeleton's are part of what `play new`
+                 scaffolds. Without them an application created from a downloaded
+                 distribution does not ignore certs/.env, which holds its secret. -->
+            <fileset dir=".." defaultexcludes="no" includes="resources/application-skel/**" excludes="**/.DS_Store,**/*~" />
         </copy>
     </target>
 
