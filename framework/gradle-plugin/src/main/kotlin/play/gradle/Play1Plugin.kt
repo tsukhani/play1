@@ -1787,8 +1787,9 @@ abstract class PlayBundleTask : DefaultTask() {
                 classpathEntries += "framework/lib/${it.name}"
             }
         }
+        // By name, not by path below lib/: step 5 below ships these flattened.
         appLibJars.sortedBy { it.name }.forEach { jar ->
-            classpathEntries += jar.relativeTo(projDir).path.replace(File.separatorChar, '/')
+            classpathEntries += "lib/${jar.name}"
         }
         gradleResolvedDeps.sortedBy { it.name }.forEach {
             classpathEntries += "lib/${it.name}"

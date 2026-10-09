@@ -48,6 +48,10 @@ class BundleClasspathTest {
             """.trimIndent()
         )
         jar(File(app, "lib/app-library.jar"))
+        // A jar in a subdirectory of lib/ ships flattened, as lib/<name>, so that is how the
+        // classpath has to name it: it used to be listed under its nested path, which the
+        // bundle does not contain.
+        jar(File(app, "lib/vendor/nested-library.jar"))
         File(app, "conf").mkdirs()
         File(app, "conf/routes").writeText("")
         File(app, "conf/application.conf").writeText("application.name=testapp\n")
@@ -66,6 +70,7 @@ class BundleClasspathTest {
                     "framework/play-$fwVersion.jar",
                     "framework/lib/dependency.jar",
                     "lib/app-library.jar",
+                    "lib/nested-library.jar",
                     "modules/somemodule/lib/play-somemodule.jar"
                 ),
                 entries,
