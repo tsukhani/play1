@@ -2,7 +2,7 @@
 
 <project name="play! framework" default="jar" basedir="." xmlns:if="ant:if" xmlns:unless="ant:unless">
 
-    <property name="baseversion" value="1.13.76" />
+    <property name="baseversion" value="1.13.77" />
     <property name="build-release" value="25" />
     <!-- Loaded as a startup -javaagent in test forks so Mockito's inline mock-maker
          doesn't have to self-attach byte-buddy-agent at runtime (which JDK 21+ warns
@@ -453,8 +453,12 @@
     <target name="artifact" depends="clean,version,jar,javadoc">
         <mkdir dir="dist" />
         <mkdir dir="dist/play-${version}" />
+        <!-- framework/gradle-plugin-repo is excluded here: `package` publishes a fresh
+             one and copies it in. Whatever sits in the working tree is a leftover from
+             an earlier build, and copying it shipped the previous version's plugin jar
+             beside the new one. -->
         <copy todir="dist/play-${version}">
-            <fileset dir=".." excludes=".github/**,**/cobertura.ser,**/*.pyc,**/*.log,hs_err*,.*,.*/*,build/**,framework/gradle-plugin/build/**,framework/gradle-plugin/bin/**,**/.gradle/**,**/.kotlin/**,framework/dist/**,framework/tailwindcss,framework/test-src/**,id,**/.bzr/**,**/.git/**,*.bzrignore,framework/classes/**,framework/tests-results/**,test-result/**,framework/test-result/**,docs/**,renovate.json5,modules/**,openspec/**,.claude/**,CLAUDE.md,CONTRIBUTING.md,CODE_OF_CONDUCT.md,_bmad/**,_bmad-output/**,.agents/**,AGENTS.md" />
+            <fileset dir=".." excludes=".github/**,**/cobertura.ser,**/*.pyc,**/*.log,hs_err*,.*,.*/*,build/**,framework/gradle-plugin/build/**,framework/gradle-plugin/bin/**,framework/gradle-plugin-repo/**,**/.gradle/**,**/.kotlin/**,framework/dist/**,framework/tailwindcss,framework/test-src/**,id,**/.bzr/**,**/.git/**,*.bzrignore,framework/classes/**,framework/tests-results/**,test-result/**,framework/test-result/**,docs/**,renovate.json5,modules/**,openspec/**,.claude/**,CLAUDE.md,CONTRIBUTING.md,CODE_OF_CONDUCT.md,_bmad/**,_bmad-output/**,.agents/**,AGENTS.md" />
             <fileset dir=".." includes="modules/docviewer/**,modules/testrunner/**" excludes="**/*.pyc" />
         </copy>
     </target>
