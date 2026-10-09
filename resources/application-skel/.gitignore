@@ -10,6 +10,7 @@
 /logs/
 /test-result/
 /precompiled/
+/app.aot*
 /db/
 /lib/
 /modules/

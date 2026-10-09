@@ -144,7 +144,8 @@ class Play1Plugin : Plugin<Project> {
             description = "Run the Play application in development mode",
             playIdOverride = null,
             extraSysprops = emptyList(),
-            includeHttpPort = true)
+            includeHttpPort = true,
+            startsApplication = true)
 
         registerPlayJvmTask(project, ext, "playTest",
             description = "Run the Play application in test mode (auto-mounts the testrunner module)",
@@ -356,6 +357,25 @@ class Play1Plugin : Plugin<Project> {
             outputs.upToDateWhen { false }
         }
 
+        // PF-185. No dependency on playPrecompile or compileJava: the training run
+        // starts from the precompiled classes that are there, and precompiling
+        // deletes precompiled/ under an instance that may be running from it.
+        project.tasks.register<PlayAotGenTask>("playAotGen") {
+            group = "play1"
+            description = "Training run that writes the JDK's AOT cache (app.aot), which a start with -Dprecompiled=true then uses. Optional: -PhttpPort=<port>"
+            dependsOn("extractPlayModules")
+            applicationPath.set(project.layout.projectDirectory)
+            frameworkPath.set(ext.frameworkPath)
+            frameworkVersion.set(ext.frameworkVersion)
+            playId.set(project.providers.gradleProperty("playId").orElse(""))
+            httpPort.set(project.providers.gradleProperty("httpPort").map { it.toInt() })
+            httpsPort.set(project.providers.gradleProperty("httpsPort").map { it.toInt() })
+            extraJvmArgs.set(project.providers.gradleProperty("jvmArgs").orElse(""))
+            timeoutSeconds.set(project.providers.environmentVariable("PLAY_AOT_TIMEOUT").orElse("120"))
+            playClasspath.from(playClasspathFor(project, ext, includeTestrunner = false))
+            outputs.upToDateWhen { false }
+        }
+
         project.tasks.register<PlayPidTask>("playPid") {
             group = "play1"
             description = "Show the PID of the running application. Optional: -Ppid-file=<name>"
@@ -487,6 +507,11 @@ class Play1Plugin : Plugin<Project> {
         // through regardless: a large codebase can need extra heap to
         // compile templates even though no application code runs.
         inheritInstrumentation: Boolean = true,
+        // PF-185: whether this task is a start of the application, which given
+        // -Dprecompiled=true runs on a jars-only classpath and from the AOT cache
+        // (see isPrecompiledStart). playRun only: the other tasks registered here
+        // are test mode, the precompile itself and the evolutions tool.
+        startsApplication: Boolean = false,
     ) {
         val isTestMode = playIdOverride?.startsWith("test") == true
 
@@ -593,6 +618,21 @@ class Play1Plugin : Plugin<Project> {
             }
 
             standardInput = System.`in`
+
+            if (startsApplication) {
+                val appDir = project.projectDir
+                // At execution time: only then does the list hold what the build
+                // script's own jvmArgs(...) and systemProperty(...) added.
+                doFirst {
+                    val exec = this as JavaExec
+                    val launchArgs = exec.allJvmArgs
+                    if (isPrecompiledStart(launchArgs)) {
+                        exec.classpath = exec.classpath.filter { it.isFile }
+                        // In front, where spawnPlay puts it: conf and command line follow.
+                        aotCacheArg(appDir, launchArgs)?.let { exec.jvmArgs = listOf(it) + exec.jvmArgs.orEmpty() }
+                    }
+                }
+            }
         }
     }
 }
@@ -773,6 +813,9 @@ abstract class PlayDistTask : DefaultTask() {
             for (relpath in allFiles) {
                 if (outRelPrefix != null && relpath.startsWith(outRelPrefix)) continue
                 if (ignorePrefixes.any { relpath.startsWith(it) }) continue
+                // PF-185: a working copy's AOT cache fits this machine only, and git
+                // lists it wherever .gitignore does not name it.
+                if (isAotCacheFile(relpath)) continue
                 val srcFile = projDir.resolve(relpath)
                 if (!srcFile.isFile) continue
                 if (relpath.startsWith(PRECOMPILED_TREE)) {
@@ -1105,6 +1148,53 @@ private fun outputBanner(appDir: File, playId: String): List<String> {
 private const val JUL_MANAGER_PROPERTY = "java.util.logging.manager"
 private const val LOG4J_JUL_MANAGER = "org.apache.logging.log4j.jul.LogManager"
 private const val JUL_LOG_MANAGER_ARG = "-D$JUL_MANAGER_PROPERTY=$LOG4J_JUL_MANAGER"
+
+// PF-185: the JDK's AOT cache for an application started through Gradle, in the
+// application directory under the name it has in a bundle (AOT_CACHE in
+// bundle-play.sh). playAotGen writes it; playRun, playStart and playRestart use
+// it. Never packaged: a cache fits one JDK build, one set of JVM options and the
+// jars at their paths on one machine.
+internal const val AOT_CACHE = "app.aot"
+
+private fun isAotCacheFile(relpath: String) = relpath == AOT_CACHE || relpath.startsWith("$AOT_CACHE.")
+
+// Whether these JVM arguments start Play from precompiled/ and not from sources:
+// Server.main takes the property's value "true" and nothing else, and the JVM
+// keeps the last -D it is given for a key.
+//
+// Such a start gets a classpath of files only. The directories on it otherwise
+// are conf/ and, through sourceSets.main.runtimeClasspath, Gradle's own compile
+// output and its copy of conf/. A start that compiles needs the compile output
+// for javassist (PF-94); a precompiled one reads none of the three from the JVM
+// classpath (conf/ is found through application.path, as in a bundle since
+// PF-180), and the JVM refuses to write an AOT cache while a non-empty
+// directory is on it.
+internal fun isPrecompiledStart(jvmArgs: List<String>): Boolean =
+    jvmArgs.lastOrNull { it == "-Dprecompiled" || it.startsWith("-Dprecompiled=") } == "-Dprecompiled=true"
+
+// -XX:AOTCache for a precompiled start, when playAotGen has left a cache. The
+// callers put it ahead of the options from application.conf and the command
+// line ([userJvmArgs]), so a second -XX:AOTCache or an -XX:AOTMode=off there
+// still decides. Next to the options below the JVM does not pick one, it
+// refuses to start, so with one of them present this returns nothing.
+//
+// aot_cache_arg in bundle-play.sh is the same rule for the bundle launcher;
+// BundleLauncherTest holds the two to the same answers.
+internal fun aotCacheArg(appDir: File, userJvmArgs: List<String>): String? {
+    val cache = File(appDir, AOT_CACHE)
+    if (!cache.isFile) return null
+    val refused = userJvmArgs.any { opt ->
+        opt.startsWith("-Xshare:") ||
+            opt.startsWith("-XX:SharedArchiveFile=") ||
+            opt.startsWith("-XX:SharedClassListFile=") ||
+            opt.startsWith("-XX:DumpLoadedClassList=") ||
+            opt.startsWith("-XX:AOTCacheOutput=") ||
+            opt.startsWith("-XX:AOTConfiguration=") ||
+            opt == "-XX:AOTMode=record" ||
+            opt == "-XX:AOTMode=create"
+    }
+    return if (refused) null else "-XX:AOTCache=${cache.absolutePath}"
+}
 
 // PF-92: lift conf entries that are JVM-level flags (not in-process config)
 // onto the spawned JVM's command line, mirroring the 1.12 Python launcher's
@@ -1457,7 +1547,7 @@ abstract class PlayStartTask : DefaultTask() {
             ?.split(Regex("\\s+"))?.filter { it.isNotEmpty() }
             ?: emptyList()
         val process = spawnPlay(appDir, frameworkPath.get().asFile, frameworkVersion.get(),
-            playId.get(), httpPort.orNull, httpsPort.orNull, playClasspath.asPath, jvmArgsList)
+            playId.get(), httpPort.orNull, httpsPort.orNull, playClasspath.files, jvmArgsList)
         pidFile.writeText(process.pid().toString())
         logger.lifecycle("~ OK, ${appDir.absolutePath} is started")
         outputBanner(appDir, playId.get()).forEach { logger.lifecycle(it) }
@@ -1538,11 +1628,201 @@ abstract class PlayRestartTask : DefaultTask() {
             ?.split(Regex("\\s+"))?.filter { it.isNotEmpty() }
             ?: emptyList()
         val process = spawnPlay(appDir, frameworkPath.get().asFile, frameworkVersion.get(),
-            playId.get(), httpPort.orNull, httpsPort.orNull, playClasspath.asPath, jvmArgsList)
+            playId.get(), httpPort.orNull, httpsPort.orNull, playClasspath.files, jvmArgsList)
         pidFile.writeText(process.pid().toString())
         logger.lifecycle("~ OK, ${appDir.absolutePath} is restarted")
         outputBanner(appDir, playId.get()).forEach { logger.lifecycle(it) }
         logger.lifecycle("~ New pid is ${process.pid()}")
+    }
+}
+
+/**
+ * PF-185: a training run that leaves the JDK's AOT cache behind, for an application started
+ * through Gradle with -Dprecompiled=true: from its working copy or from a `play dist` install.
+ * It starts the application for real, with the JVM options playStart would use plus
+ * -XX:AOTCacheOutput, waits until it listens, has it serve one request and stops it: the JVM
+ * writes the cache on its way out, and only out of a normal exit.
+ *
+ * The cache is written beside the one in use and moved over it once complete. Nothing here
+ * reads or writes the pid file: that is playStart's, and the instance it tracks may be
+ * running. `aot-gen` in bundle-play.sh is the same command for a bundle; keep the two in step.
+ */
+@DisableCachingByDefault(because = "Starts the application for a training run; the cache it leaves fits this machine's JDK and paths only")
+abstract class PlayAotGenTask : DefaultTask() {
+    @get:Internal abstract val applicationPath: DirectoryProperty
+    @get:Internal abstract val frameworkPath: DirectoryProperty
+    @get:Internal abstract val frameworkVersion: Property<String>
+    @get:Internal abstract val playId: Property<String>
+    @get:Internal abstract val httpPort: Property<Int>
+    @get:Internal abstract val httpsPort: Property<Int>
+    @get:Internal abstract val playClasspath: ConfigurableFileCollection
+    @get:Internal abstract val extraJvmArgs: Property<String>
+    /** Seconds to wait for the application to listen: PLAY_AOT_TIMEOUT, as for a bundle. */
+    @get:Internal abstract val timeoutSeconds: Property<String>
+
+    @TaskAction
+    fun train() {
+        val appDir = applicationPath.get().asFile
+        // A training run cannot be ended gracefully there: Process.destroy() is
+        // TerminateProcess, and a JVM ended that way writes no cache.
+        if (System.getProperty("os.name").startsWith("Windows")) {
+            throw GradleException(
+                "play aot-gen is not available on Windows. The JVM writes the AOT cache when it exits " +
+                    "normally, and a process started from here can only be ended at once."
+            )
+        }
+        if (!File(appDir, "precompiled/java").isDirectory && !File(appDir, PRECOMPILED_JAR).isFile) {
+            throw GradleException(
+                "play aot-gen starts the application from its precompiled classes, and " +
+                    "${File(appDir, "precompiled").absolutePath} has none. Run `play precompile` first."
+            )
+        }
+        val id = playId.get()
+        val confFile = File(appDir, "conf/application.conf")
+        val conf = if (confFile.isFile) confFile.readText() else ""
+
+        // The port to wait on: -PhttpPort, else http.port in application.conf, else
+        // Play's default. It is also passed on, so the application listens where
+        // this task looks whatever the rest of its configuration says.
+        val port = httpPort.orNull ?: run {
+            val configured = confValue(conf, "http.port", id) ?: "9000"
+            configured.takeIf { it.all(Char::isDigit) }?.toIntOrNull() ?: throw GradleException(
+                "play aot-gen cannot read a port from http.port=$configured in conf/application.conf. " +
+                    "Pass it: play aot-gen --http.port=<port>"
+            )
+        }
+        val host = confValue(conf, "http.address", id) ?: "127.0.0.1"
+        val timeout = timeoutSeconds.get().takeIf { it.isNotEmpty() && it.all(Char::isDigit) }?.toLongOrNull()
+            ?: throw GradleException("PLAY_AOT_TIMEOUT is a number of seconds, not '${timeoutSeconds.get()}'")
+        if (portOpen(host, port)) {
+            throw GradleException(
+                "play aot-gen: $host:$port is already in use. The training run starts the application " +
+                    "itself: stop the one that is running, or pass --http.port=<free port>."
+            )
+        }
+
+        val cache = File(appDir, AOT_CACHE)
+        val fresh = File(appDir, "$AOT_CACHE.new")
+        // The JVM keeps its recording here until the cache is assembled.
+        val recording = File(appDir, "$AOT_CACHE.new.config")
+        val out = File(appDir, "logs/aot-gen.out")
+        val given = extraJvmArgs.orNull?.split(Regex("\\s+"))?.filter { it.isNotEmpty() } ?: emptyList()
+        // The arguments of the start the cache is for. One that already says
+        // -Dprecompiled=true is left as it is, so the two command lines differ in
+        // the cache option alone.
+        val jvmArgsList =
+            if (isPrecompiledStart(confJvmArgs(appDir, id) + given)) given else given + "-Dprecompiled=true"
+
+        // Say why there is no cache and show the end of the application's output:
+        // the reason is usually there. Without the JVM's own [aot] warnings: an
+        // application that gives up while starting still exits normally, so the JVM
+        // assembles a cache for that run too and logs a few hundred of them after
+        // the error that matters. Its [aot] errors stay.
+        fun failed(reason: String): Nothing {
+            val tail = if (!out.isFile) emptyList() else out.readLines()
+                .filterNot { "[warning][aot" in it || it.startsWith("Picked up JAVA_TOOL_OPTIONS") }
+                .takeLast(20)
+            throw GradleException(buildString {
+                append("play aot-gen: $reason. No cache was kept from this run.")
+                if (tail.isNotEmpty()) {
+                    append("\nThe last lines of ${out.absolutePath}:\n")
+                    append(tail.joinToString("\n"))
+                }
+            })
+        }
+
+        logger.lifecycle("~ Training run for the AOT cache: starting ${appDir.absolutePath} on port $port")
+        logger.lifecycle("~ its output (stdout/stderr) -> ${out.absolutePath}")
+        val process = spawnPlay(appDir, frameworkPath.get().asFile, frameworkVersion.get(), id, port, httpsPort.orNull,
+            playClasspath.files, jvmArgsList, aotOption = "-XX:AOTCacheOutput=${fresh.absolutePath}", output = out)
+        try {
+            val deadline = System.nanoTime() + timeout * 1_000_000_000L
+            while (!portOpen(host, port)) {
+                if (!process.isAlive) failed("the application stopped before it was listening on $host:$port")
+                if (System.nanoTime() >= deadline) {
+                    failed("nothing was listening on $host:$port after ${timeout}s (PLAY_AOT_TIMEOUT)")
+                }
+                Thread.sleep(200)
+            }
+            val status = try {
+                httpGetRoot(host, port, timeout)
+            } catch (e: java.io.IOException) {
+                failed("the application did not answer GET / on $host:$port")
+            }
+            logger.lifecycle("~ GET / -> $status")
+
+            // No time limit from here on: the shutdown has the application's own, and
+            // how long the JVM then takes to assemble the cache depends on its size.
+            logger.lifecycle("~ Stopping it; the JVM writes the cache as it exits")
+            process.destroy()
+            process.waitFor()
+            // The JVM assembles the cache in a child process and removes its recording
+            // once that has succeeded. A recording still there means the child died
+            // part way, and what it wrote is a truncated file, not a cache. The exit
+            // status cannot tell the two apart: it is that of the SIGTERM either way.
+            if (fresh.length() == 0L || recording.exists()) failed("the JVM exited without completing the cache")
+            Files.move(fresh.toPath(), cache.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        } finally {
+            // Also when the build is cancelled: a training run that is still up is
+            // stopped and waited for, and whatever it was writing goes. A start must
+            // never find a partial cache.
+            if (process.isAlive) {
+                process.destroy()
+                process.onExit().join()
+            }
+            fresh.delete()
+            recording.delete()
+        }
+
+        logger.lifecycle("~ OK, the AOT cache is at: ${cache.absolutePath} (${cache.length() / 1_048_576} MB)")
+        logger.lifecycle("~ A start with -Dprecompiled=true uses it from now on. Generate it again after a JDK update,")
+        logger.lifecycle("~ a change of JVM options or of the application's libraries: a cache that no longer fits is ignored.")
+        if (!ignoredByGit(appDir)) {
+            logger.lifecycle("~ $AOT_CACHE is not in this application's .gitignore. Add the line /$AOT_CACHE* so it is never committed.")
+        }
+    }
+
+    /**
+     * False only when git says that the cache is a file it would list: an application
+     * created before the skeleton's .gitignore named it. Not a repository, or no git here,
+     * is nothing to report.
+     */
+    private fun ignoredByGit(appDir: File): Boolean = try {
+        ProcessBuilder("git", "check-ignore", "-q", AOT_CACHE)
+            .directory(appDir)
+            .redirectErrorStream(true)
+            .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+            .start().waitFor() != 1
+    } catch (e: java.io.IOException) {
+        true
+    }
+
+    /** Whether something accepts connections on [host]:[port]. */
+    private fun portOpen(host: String, port: Int): Boolean = try {
+        java.net.Socket().use { it.connect(java.net.InetSocketAddress(host, port), 1_000) }
+        true
+    } catch (e: java.io.IOException) {
+        false
+    }
+
+    /**
+     * GET / on [host]:[port], waiting up to [timeout] seconds for the answer. Returns the
+     * status line; the body is read to its end, so the request is served before the
+     * application is stopped. Any status will do: the request is there to be served.
+     */
+    private fun httpGetRoot(host: String, port: Int, timeout: Long): String {
+        val address = if (':' in host) "[$host]" else host
+        val conn = URI("http://$address:$port/").toURL().openConnection(java.net.Proxy.NO_PROXY) as HttpURLConnection
+        conn.instanceFollowRedirects = false
+        conn.connectTimeout = 5_000
+        conn.readTimeout = (timeout * 1_000).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        try {
+            val code = conn.responseCode
+            (if (code in 200..399) conn.inputStream else conn.errorStream)?.use { it.readAllBytes() }
+            return conn.getHeaderField(0) ?: "HTTP $code"
+        } finally {
+            conn.disconnect()
+        }
     }
 }
 
@@ -1640,6 +1920,9 @@ abstract class PlayStatusTask : DefaultTask() {
     }
 }
 
+// [aotOption], when given, is the AOT option to start with: playAotGen's
+// -XX:AOTCacheOutput. Otherwise a precompiled start uses the cache if the
+// application has one. [output] takes the JVM's stdout and stderr.
 private fun spawnPlay(
     appDir: File,
     frameworkPath: File,
@@ -1647,10 +1930,15 @@ private fun spawnPlay(
     playId: String,
     httpPort: Int?,
     httpsPort: Int?,
-    classpath: String,
+    classpath: Collection<File>,
     extraJvmArgs: List<String> = emptyList(),
+    aotOption: String? = null,
+    output: File = File(appDir, "logs/system.out"),
 ): Process {
     val playJar = File(frameworkPath, "framework/play-$frameworkVersion.jar")
+    val confArgs = confJvmArgs(appDir, playId)
+    // PF-185: see isPrecompiledStart for what a precompiled start leaves out and why.
+    val precompiled = isPrecompiledStart(confArgs + extraJvmArgs)
     val cmd = buildList {
         add(System.getProperty("java.home") + "/bin/java")
         add("--enable-native-access=ALL-UNNAMED")
@@ -1659,27 +1947,29 @@ private fun spawnPlay(
         add("-Dapplication.path=${appDir.absolutePath}")
         add("-Dplay.id=$playId")
         add("-Dplay.version=$frameworkVersion")
+        // PF-185: ahead of the conf and command-line flags, like the JUL manager
+        // below and for the same reason.
+        (aotOption ?: if (precompiled) aotCacheArg(appDir, confArgs + extraJvmArgs) else null)?.let { add(it) }
         add(JUL_LOG_MANAGER_ARG)
         // PF-92: conf-driven JVM flags (javaagent.path, agentlib, jvm.memory,
         // jmx.{port,hostname}) lifted from application.conf with %<playId>.
         // priority. Comes before extraJvmArgs so a user's -PjvmArgs overrides
         // a conf value under JVM last-wins semantics.
-        addAll(confJvmArgs(appDir, playId))
+        addAll(confArgs)
         // 1.12-style JVM tuning flags (forwarded by the play wrapper via
         // -PjvmArgs); inserted before -classpath so a user-supplied
         // -classpath would override ours, matching `java`'s last-wins.
         addAll(extraJvmArgs)
         add("-classpath")
-        add(classpath)
+        add((if (precompiled) classpath.filter { it.isFile } else classpath).joinToString(File.pathSeparator))
         add("play.server.Server")
         if (httpPort != null) add("--http.port=$httpPort")
         if (httpsPort != null) add("--https.port=$httpsPort")
     }
-    val logsDir = File(appDir, "logs").apply { mkdirs() }
-    val sysOut = File(logsDir, "system.out")
+    output.parentFile.mkdirs()
     val pb = ProcessBuilder(cmd)
         .directory(appDir)
-        .redirectOutput(sysOut)
+        .redirectOutput(output)
         .redirectErrorStream(true)
     loadDotEnv(File(appDir, "certs/.env")).forEach { (k, v) ->
         pb.environment().putIfAbsent(k, v)
@@ -1962,6 +2252,9 @@ abstract class PlayBundleTask : DefaultTask() {
             for (relpath in sourceFiles) {
                 if (outRelPrefix != null && relpath.startsWith(outRelPrefix)) continue
                 if (ignorePrefixes.any { relpath.startsWith(it) }) continue
+                // PF-185: a working copy's AOT cache fits this machine only, and git
+                // lists it wherever .gitignore does not name it.
+                if (isAotCacheFile(relpath)) continue
                 val srcFile = projDir.resolve(relpath)
                 if (!srcFile.isFile) continue
                 if (relpath.startsWith(PRECOMPILED_TREE)) {

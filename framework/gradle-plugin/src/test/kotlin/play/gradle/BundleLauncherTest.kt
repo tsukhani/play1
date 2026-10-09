@@ -1002,6 +1002,55 @@ class BundleLauncherTest {
     }
 
     @Test
+    fun `the launcher leaves its cache option out for the same options as the Gradle launch paths`(@TempDir tmp: File) {
+        // aot_cache_arg in bundle-play.sh and aotCacheArg in Play1Plugin.kt (PF-185) are one
+        // rule written twice: which options of the operator's own the JVM refuses to start
+        // with next to -XX:AOTCache. An option missing from one of the two lists is a start
+        // that fails only for the applications launched that way, so the two are compared
+        // directly rather than each against its own expectations.
+        val (bundle, stubs) = bundleWithConf(tmp, "application.name=testapp\n")
+        val cases = listOf(
+            "" to emptyList(),
+            "" to listOf("-Xmx1g", "-XX:+UseZGC", "-Dpf185=-Xshare:off"),
+            "" to listOf("-XX:AOTCache=/srv/caches/other.aot"),
+            "" to listOf("-XX:AOTMode=off"),
+            "" to listOf("-XX:AOTMode=on"),
+            "" to listOf("-XX:AOTMode=auto"),
+            "" to listOf("-XX:AOTMode=record", "-XX:AOTConfiguration=app.aotconf"),
+            "" to listOf("-XX:AOTMode=create"),
+            "" to listOf("-XX:AOTConfiguration=app.aotconf"),
+            "" to listOf("-XX:AOTCacheOutput=new.aot"),
+            "" to listOf("-Xshare:off"),
+            "" to listOf("-Xshare:auto"),
+            "" to listOf("-Xshare:on"),
+            "" to listOf("-Xshare:dump"),
+            "" to listOf("-XX:SharedArchiveFile=app.jsa"),
+            "" to listOf("-XX:SharedClassListFile=app.classlist"),
+            "" to listOf("-XX:DumpLoadedClassList=app.classlist"),
+            "" to listOf("-XX:+AOTClassLinking"),
+            // application.conf speaks for the operator as well.
+            "jvm.memory=-Xmx1g -Xshare:off\n" to emptyList(),
+            "jvm.memory=-Xmx1g -XX:+UseZGC\n" to listOf("-XX:MaxGCPauseMillis=50"),
+            "jvm.memory=-XX:AOTMode=record\n%prod.jvm.memory=-Xmx1g\n" to emptyList(),
+            "jvm.memory=-Xmx1g\n%prod.jvm.memory=-XX:AOTMode=record\n" to emptyList()
+        )
+        // Without a cache neither has an option to give.
+        assertNull(aotCacheArg(bundle, emptyList()))
+        assertEquals(emptyList<String>(), aotFlags(launcherArgv(bundle, stubs)))
+
+        File(bundle, "app.aot").writeText("a cache, for all either can tell")
+        cases.forEach { (conf, commandLine) ->
+            File(bundle, "conf/application.conf").writeText("application.name=testapp\n$conf")
+            assertEquals(
+                // PLAY_ID is prod when the launcher is given none.
+                aotCacheArg(bundle, confJvmArgs(bundle, "prod") + commandLine) != null,
+                "-XX:AOTCache=app.aot" in launcherArgv(bundle, stubs, *commandLine.toTypedArray()),
+                "application.conf: [${conf.trim()}], command line: $commandLine"
+            )
+        }
+    }
+
+    @Test
     @DisabledOnOs(OS.WINDOWS, disabledReason = "aot-gen refuses under Git Bash, where kill cannot stop a JVM gracefully")
     fun `aot-gen starts the JVM with the options of run plus the cache output flag`(@TempDir tmp: File) {
         val (bundle, stubs) = bundleWithConf(

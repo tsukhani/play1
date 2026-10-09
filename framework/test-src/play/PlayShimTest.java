@@ -208,6 +208,22 @@ public class PlayShimTest {
     }
 
     @Test
+    public void aotGenRunsTheTrainingTaskWithTheArgumentsOfAStart(@TempDir File tmp) throws Exception {
+        // PF-185: the training run has to be started the way the application is, so the
+        // play id, the port and the JVM options travel exactly as they do for `play start`.
+        File cwd = new File(tmp, "gradleproject");
+        cwd.mkdirs();
+        makeGradleBuild(cwd);
+
+        Result r = run(cwd, stubGradleBin(tmp), "aot-gen", "--%prod", "--http.port=9123",
+            "-XX:+UseZGC", "-Dprecompiled=true");
+
+        assertThat(r.output()).contains(
+            DELEGATED + " playAotGen -PplayId=prod -PhttpPort=9123 -PjvmArgs=-XX:+UseZGC -Dprecompiled=true");
+        assertThat(r.exitCode()).isZero();
+    }
+
+    @Test
     public void newIsUnaffectedByTheDirectoryCheck(@TempDir File tmp) throws Exception {
         // `play new` scaffolds from anywhere and never goes through find_gradle. Asserted via
         // the no-name usage error, which is reached before any runner is chosen — cheap, and

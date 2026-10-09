@@ -120,6 +120,26 @@ class PrecompiledJarPackagingTest {
         assertFalse(File(app, "precompiled/classes.jar").exists(), "no jar is written into the working copy")
     }
 
+    @Test
+    fun `a working copy's AOT cache is in neither artifact`(@TempDir tmp: File) {
+        // PF-185: `play aot-gen` leaves app.aot in the application directory, and git lists
+        // an untracked file wherever .gitignore does not name it. The cache fits the machine
+        // it was trained on only; in a bundle it would also be the name the launcher looks for.
+        val app = app(tmp)
+        File(app, "app.aot").writeText("fits this machine only")
+        File(app, "app.aot.new").writeText("a training run in progress")
+
+        TestProject.runner(app, "playDist", "playBundle").build()
+
+        for (artifact in listOf("dist/testapp.zip", "dist/testapp-bundle.zip")) {
+            ZipFile(File(app, artifact)).use { zip ->
+                val names = zip.entries().asSequence().map { it.name }.toList()
+                assertTrue("testapp/conf/application.conf" in names, "$artifact: $names")
+                assertEquals(emptyList<String>(), names.filter { "app.aot" in it }, artifact)
+            }
+        }
+    }
+
     private fun precompiledJarOf(artifact: File): ByteArray =
         ZipFile(artifact).use { zip ->
             val entry = zip.getEntry("testapp/precompiled/classes.jar")

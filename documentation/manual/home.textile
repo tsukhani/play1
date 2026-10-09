@@ -169,6 +169,7 @@ Everything you need to know about Play.
 # "Deployment options":deployment
 ## "Standalone Play application":deployment#standalone
 ## "The AOT cache for a play bundle":deployment#aot-cache
+## "The AOT cache for play start and play run":deployment#aot-cache-precompiled
 ## "Where a bundle's startup time goes":deployment#startup-profile
 ## "Upgrading: conf/ and a bundle's classpath":deployment#bundle-classpath
 ## "Behind a reverse proxy":deployment#reverseproxy
