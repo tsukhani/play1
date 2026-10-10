@@ -10,11 +10,11 @@ require:    &allDependencies
     - org.antlr -> antlr4-runtime 4.13.2
     - com.github.ben-manes.caffeine -> caffeine 3.3.0
     - com.zaxxer -> HikariCP 7.1.0
-    - org.ow2.asm -> asm 9.10.1
-    - org.ow2.asm -> asm-commons 9.10.1
-    - org.ow2.asm -> asm-util 9.10.1
-    - org.ow2.asm -> asm-tree 9.10.1
-    - org.ow2.asm -> asm-analysis 9.10.1
+    - org.ow2.asm -> asm 9.11
+    - org.ow2.asm -> asm-commons 9.11
+    - org.ow2.asm -> asm-util 9.11
+    - org.ow2.asm -> asm-tree 9.11
+    - org.ow2.asm -> asm-analysis 9.11
     - com.google.code.gson -> gson 2.14.0
     - com.jamonapi -> jamon 2.82
 
@@ -201,7 +201,7 @@ require:    &allDependencies
     - com.fasterxml.jackson.dataformat -> jackson-dataformat-yaml 2.22.3
     - com.fasterxml.jackson.datatype -> jackson-datatype-jsr310 2.22.3
     - com.fasterxml.woodstox -> woodstox-core 7.3.0
-    - org.codehaus.woodstox -> stax2-api 4.3.1
+    - org.codehaus.woodstox -> stax2-api 4.3.2
     # PF-12: OpenAPI 3 spec generation. swagger-models supplies the OpenAPI
     # object graph; swagger-core supplies Json/Yaml pretty-printers that wrap
     # Jackson with consistent ordering; swagger-annotations is a compile-time
