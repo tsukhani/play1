@@ -172,6 +172,16 @@ public class ApplicationClassloader extends ClassLoader {
             if (applicationClass.isDefinable()) {
                 return applicationClass.javaClass;
             }
+            // PF-186: a package-info read from tmp/bytecode is defined without being compiled, so
+            // isDefinable() never holds for it, and the check at the top leaves package-info names
+            // out. getAllClasses comes back to it after a class of its package has defined it
+            // through loadPackage, and defining its package or the class a second time throws.
+            if (!applicationClass.isClass()) {
+                Class<?> loaded = findLoadedClass(name);
+                if (loaded != null) {
+                    return loaded;
+                }
+            }
             byte[] bc = BytecodeCache.getBytecode(name, applicationClass.javaSource);
 
             if (Logger.isTraceEnabled()) {
@@ -190,6 +200,13 @@ public class ApplicationClassloader extends ClassLoader {
                 resolveClass(applicationClass.javaClass);
                 if (!applicationClass.isClass()) {
                     applicationClass.javaPackage = applicationClass.javaClass.getPackage();
+                }
+                // PF-186: the cache answers only for the source as it is now, so the file is as new as
+                // these bytes. Record that as compiled() does, or detectChanges takes the class for
+                // edited on the next request. Only a package-info gets here uncompiled: getAllClasses
+                // compiles every other class first, and its stamp is left alone.
+                if (applicationClass.timestamp == 0L) {
+                    applicationClass.timestamp = applicationClass.javaFile.lastModified();
                 }
 
                 if (Logger.isTraceEnabled()) {
