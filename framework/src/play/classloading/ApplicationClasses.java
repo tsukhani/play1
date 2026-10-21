@@ -3,6 +3,7 @@ package play.classloading;
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.lang.annotation.Annotation;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -16,6 +17,7 @@ import javassist.CtClass;
 import play.Logger;
 import play.Play;
 import play.PlayPlugin;
+import play.classloading.enhancers.CodeTypeAnnotations;
 import play.classloading.enhancers.Enhancer;
 import play.exceptions.UnexpectedException;
 import play.vfs.VirtualFile;
@@ -309,6 +311,16 @@ public class ApplicationClasses {
 
                 if (shouldEnhance) {
                     Play.pluginCollection.enhance(this);
+                    // PF-187: Javassist's gap insertion never shifts the Code attribute's
+                    // type annotations, so a method an enhancer grew carries offsets into the
+                    // wrong bytes; ProGuard rejects such a class. Done here, after every
+                    // enhancer (plugins' included), so both the in-JVM define and the
+                    // precompiled/java write below get the corrected bytes.
+                    try {
+                        this.enhancedByteCode = CodeTypeAnnotations.dropWhereCodeMoved(this.javaByteCode, this.enhancedByteCode);
+                    } catch (IOException e) {
+                        throw new UnexpectedException("While dropping moved type annotations from " + name, e);
+                    }
                 }
             }
             // precompile compiles test/ sources too (so a broken test fails the
