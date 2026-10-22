@@ -353,7 +353,7 @@ h2. <a class="fixtures">Fixture を使ったより複雑なテスト</a>
 
 より複雑なテストを書き始める場合、しばしばテストに使うデータセットが必要になります。Fixtures は、モデルを "YAML":http://en.wikipedia.org/wiki/Yaml ファイルに記述して、テストを実行する前にはいつでもロードできるようにします。
 
-@/yabe/test/data.yml@ ファイルを編集して User を定義してみましょう:
+@/yabe/test/data.yml@ ファイルを作成して User を定義してみましょう:
 
 bc. 
 User(bob):

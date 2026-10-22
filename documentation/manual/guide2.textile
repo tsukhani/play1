@@ -353,7 +353,7 @@ h2. <a class="fixtures">Using Fixtures to write more complicated tests</a>
 
 When you start to write more complex tests, you often need a set of data to test on. Fixtures let you describe your model in a "YAML":http://en.wikipedia.org/wiki/Yaml file and load it at any time before a test.
 
-Edit the @/yabe/test/data.yml@ file and start to describe a User:
+Create a @/yabe/test/data.yml@ file and start to describe a User:
 
 bc. 
 User(bob):
