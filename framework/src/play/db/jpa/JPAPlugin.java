@@ -410,6 +410,10 @@ public class JPAPlugin extends PlayPlugin {
         if (JPA.isEnabled()) {
             for(String emfKey: JPA.emfs.keySet()) {
                 JPA.em(emfKey).clear();
+                // PF-190: Fixtures deletes with plain SQL, which Hibernate never sees, so the
+                // shared second-level cache still holds the deleted rows. Not JPA's evictAll():
+                // Hibernate's evicts entity data only, leaving collections and query results.
+                JPA.emfs.get(emfKey).unwrap(SessionFactory.class).getCache().evictAllRegions();
             }
         }
     } 

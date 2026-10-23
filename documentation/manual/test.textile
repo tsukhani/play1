@@ -117,6 +117,8 @@ public void setUp() {
     Fixtures.deleteDatabase();
 }
 
+p(note). @deleteDatabase@ deletes with plain SQL, which Hibernate does not see, so it also evicts every region of the second-level cache: entities, collections and cached query results. The eviction covers the whole JVM, so a test class running at the same time reloads its cached entities from the database.
+
 To import data, it is simpler to define them in a YAML file that the Fixtures helper can automatically import.
 
 bc. # Test data
