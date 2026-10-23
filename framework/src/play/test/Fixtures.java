@@ -28,6 +28,7 @@ import java.util.regex.Pattern;
 import jakarta.persistence.Entity;
 
 import org.apache.commons.io.FileUtils;
+import org.hibernate.SessionFactory;
 import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.constructor.CustomClassLoaderConstructor;
 import org.yaml.snakeyaml.introspector.BeanAccess;
@@ -45,6 +46,7 @@ import play.db.DB;
 import play.db.DBPlugin;
 import play.db.Model;
 import play.db.SQLSplitter;
+import play.db.jpa.JPA;
 import play.db.jpa.JPAModelLoader;
 import play.exceptions.DatabaseException;
 import play.exceptions.UnexpectedException;
@@ -70,12 +72,28 @@ public class Fixtures {
      */
     private static final String INFORMATION_SCHEMA = "INFORMATION_SCHEMA";
 
+    /**
+     * Run a SQL script against the default database, statement by statement, then evict the
+     * default persistence unit's second-level cache, which the script went past. The entity
+     * manager is left alone: an entity the current transaction loaded before the script keeps the
+     * values it was loaded with until you refresh it. Later transactions see the script's changes.
+     *
+     * @param sqlScript
+     *            The SQL statements, separated by semicolons
+     */
     public static void executeSQL(String sqlScript) {
         for (CharSequence sql : new SQLSplitter(sqlScript)) {
             String s = sql.toString().strip();
             if (!s.isEmpty()) {
                 DB.execute(s);
             }
+        }
+        // PF-191: Hibernate never sees the script, so evict the default persistence unit's
+        // second-level cache, which it writes to. Not afterFixtureLoad(): that also clears the
+        // entity manager, detaching what the caller loaded. With JPA, DB.execute runs only in
+        // a transaction, so outside one nothing ran.
+        if (JPA.isInsideTransaction()) {
+            JPA.em().getEntityManagerFactory().unwrap(SessionFactory.class).getCache().evictAllRegions();
         }
     }
 

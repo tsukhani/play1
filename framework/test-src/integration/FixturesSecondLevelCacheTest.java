@@ -29,6 +29,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * now calls Hibernate's {@code evictAllRegions()}. JPA's {@code Cache.evictAll()} is not enough:
  * Hibernate's evicts entity data alone, and the collection and query cases below fail with it.
  *
+ * <p>PF-191: {@link Fixtures#executeSQL(String)} writes with plain SQL as well, and called no hook
+ * at all. It now evicts the default persistence unit's cache, the one its script writes to, and
+ * leaves the entity manager alone: {@code afterFixtureLoad()} would also detach every entity the
+ * test had loaded.
+ *
  * <p>Rows are written with {@link Fixtures#executeSQL(String)}, as an application's SQL fixture
  * writes them, so Hibernate first sees them when a test loads them. The cache is the fixture
  * app's {@link MapRegionFactory}. {@code CachedShelf} is resolved through {@link Play#classloader}
@@ -92,6 +97,65 @@ public class FixturesSecondLevelCacheTest {
 
         assertEquals(List.of(), titles(),
                 "deleteDatabase() deleted the books, but the query cache still returned their titles");
+    }
+
+    @Test
+    public void anEntityUpdatedByExecuteSQLHasItsNewValues() throws Throwable {
+        executeSQL("insert into CachedShelf (id, name) values (1, 'fiction')");
+        assertEquals("fiction", nameOfShelf1());
+        assertTrue(sessionFactory.getCache().containsEntity(shelf, 1L),
+                "precondition: the shelf is in the second-level cache");
+
+        executeSQL("update CachedShelf set name = 'poetry' where id = 1");
+
+        assertEquals("poetry", nameOfShelf1(),
+                "executeSQL() renamed the shelf, but the second-level cache still returned its old name");
+    }
+
+    @Test
+    public void aRowInsertedByExecuteSQLJoinsACachedCollection() throws Throwable {
+        executeSQL("insert into CachedShelf (id, name) values (1, 'fiction');"
+                + "insert into CachedBook (id, title, shelf_id) values (1, 'Emma', 1)");
+        assertEquals(1, booksOnShelf1());
+        assertTrue(sessionFactory.getCache().containsCollection(shelf.getName() + ".books", 1L),
+                "precondition: the shelf's books are in the second-level cache");
+
+        executeSQL("insert into CachedBook (id, title, shelf_id) values (2, 'Persuasion', 1)");
+
+        assertEquals(2, booksOnShelf1(),
+                "executeSQL() shelved a second book, but the shelf's cached collection still listed one");
+    }
+
+    @Test
+    public void aRowInsertedByExecuteSQLJoinsACacheableQuery() throws Throwable {
+        executeSQL("insert into CachedBook (id, title) values (1, 'Emma')");
+        assertEquals(List.of("Emma"), titles());
+        long hits = sessionFactory.getStatistics().getQueryCacheHitCount();
+        titles();
+        assertEquals(hits + 1, sessionFactory.getStatistics().getQueryCacheHitCount(),
+                "precondition: the titles come from the query cache");
+
+        executeSQL("insert into CachedBook (id, title) values (2, 'Persuasion')");
+
+        assertEquals(List.of("Emma", "Persuasion"), titles(),
+                "executeSQL() inserted a book, but the query cache still returned the old titles");
+    }
+
+    @Test
+    public void executeSQLLeavesTheEntitiesATransactionLoadedManaged() throws Throwable {
+        executeSQL("insert into CachedShelf (id, name) values (1, 'fiction')");
+
+        boolean managed = inTransaction(() -> {
+            Object shelf1 = JPA.em().find(shelf, 1L);
+            Fixtures.executeSQL("insert into CachedBook (id, title) values (1, 'Emma')");
+            return JPA.em().contains(shelf1);
+        });
+
+        assertTrue(managed, "executeSQL() detached the shelf the transaction had loaded");
+    }
+
+    private Object nameOfShelf1() throws Throwable {
+        return inTransaction(() -> shelf.getField("name").get(JPA.em().find(shelf, 1L)));
     }
 
     private int booksOnShelf1() throws Throwable {
