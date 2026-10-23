@@ -7,7 +7,9 @@ import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 import io.netty.bootstrap.Bootstrap;
 import io.netty.bootstrap.ServerBootstrap;
@@ -22,6 +24,7 @@ import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.http3.Http3;
 import io.netty.handler.codec.quic.InsecureQuicTokenHandler;
 import io.netty.handler.codec.quic.Quic;
+import org.apache.logging.log4j.LogManager;
 import play.Invoker;
 import play.Logger;
 import play.Play;
@@ -64,7 +67,35 @@ public class Server {
      */
     private static final List<Channel> serverChannels = new ArrayList<>();
 
+    /**
+     * Test-only hook (PF-188): run on the constructor's thread just before the HTTPS bind and
+     * just before the HTTP/3 bind, with the listener's name ({@code "HTTPS"}, {@code "HTTP/3"}),
+     * so a test can act inside a start: begin a shutdown there, or refuse the bind.
+     */
+    static Consumer<String> beforeBind;
+
+    /**
+     * PF-188: open while the constructor binds its listeners. Netty serves the HTTP channel as
+     * soon as it is bound, so a SIGTERM can arrive with the HTTPS and HTTP/3 binds still to come
+     * ({@code play aot-gen} sends one right after its first answered request). The drain waits
+     * for this, at most {@link #BIND_WAIT_MS}, so the remaining binds complete on event loops it
+     * has not yet terminated and every listener the start bound is closed with the rest.
+     */
+    private static volatile CountDownLatch binding = new CountDownLatch(0);
+
+    /** How long the drain waits for the constructor to finish binding. Binding takes milliseconds. */
+    static final long BIND_WAIT_MS = 5_000;
+
     public Server(String[] args) {
+        binding = new CountDownLatch(1);
+        try {
+            listen(args);
+        } finally {
+            binding.countDown();
+        }
+    }
+
+    private void listen(String[] args) {
 
         System.setProperty("file.encoding", "utf-8");
         Properties p = Play.configuration;
@@ -78,7 +109,7 @@ public class Server {
 
         if (httpPort == httpsPort) {
             Logger.error("Could not bind on https and http on the same port " + httpPort);
-            Play.fatalServerErrorOccurred();
+            fatal();
         }
 
         InetAddress address = null;
@@ -92,7 +123,7 @@ public class Server {
 
         } catch (Exception e) {
             Logger.error(e, "Could not understand http.address");
-            Play.fatalServerErrorOccurred();
+            fatal();
         }
         try {
             if (p.getProperty("https.address") != null) {
@@ -102,7 +133,7 @@ public class Server {
             }
         } catch (Exception e) {
             Logger.error(e, "Could not understand https.address");
-            Play.fatalServerErrorOccurred();
+            fatal();
         }
 
         try {
@@ -139,7 +170,7 @@ public class Server {
 
         } catch (ChannelException e) {
             Logger.error("Could not bind on port " + httpPort, e);
-            Play.fatalServerErrorOccurred();
+            fatal();
         }
 
         try {
@@ -153,6 +184,7 @@ public class Server {
                         .childHandler(new SslHttpServerPipelineFactory())
                         .childOption(ChannelOption.TCP_NODELAY, true);
 
+                if (beforeBind != null) beforeBind.accept("HTTPS");
                 serverChannels.add(bootstrap.bind(new InetSocketAddress(secureAddress, httpsPort)).syncUninterruptibly().channel());
 
                 if (Play.mode == Mode.DEV) {
@@ -173,7 +205,7 @@ public class Server {
 
         } catch (ChannelException e) {
             Logger.error("Could not bind on port " + httpsPort, e);
-            Play.fatalServerErrorOccurred();
+            fatal();
         }
 
         // PF-57 + flag-removal: HTTP/3 over QUIC, implicitly activated when HTTPS is
@@ -215,6 +247,7 @@ public class Server {
                     bootstrap.group(quicGroup)
                             .channel(NioDatagramChannel.class)
                             .handler(quicCodec);
+                    if (beforeBind != null) beforeBind.accept("HTTP/3");
                     serverChannels.add(bootstrap.bind(new InetSocketAddress(secureAddress, httpsPort)).syncUninterruptibly().channel());
                     http3BoundOnHttpsPort = true;
                     if (secureAddress == null) {
@@ -242,6 +275,17 @@ public class Server {
            // print this line to STDOUT - not using logger, so auto test runner will not block if logger is misconfigured (see #1222)
            System.out.println("~ Server is up and running");
         }
+    }
+
+    /**
+     * PF-188: on a standalone server {@link Play#fatalServerErrorOccurred()} exits the JVM from
+     * inside the constructor, whose {@code finally} is then never reached: the exit runs the drain
+     * and waits for it. So the binds are declared over first, or a failed start would wait out
+     * {@link #BIND_WAIT_MS} before it exits.
+     */
+    private static void fatal() {
+        binding.countDown();
+        Play.fatalServerErrorOccurred();
     }
 
     /**
@@ -323,8 +367,20 @@ public class Server {
      * {@link #shutdownEventLoops()} closes the event loops. The phase-2 wait is lock-free
      * ({@link Invoker#awaitQuiescence(long)} polls an atomic and holds no monitor), so it cannot
      * reintroduce the shutdown lock-order inversion this change set prevents.
+     * <p>
+     * PF-188: before all three it waits, at most {@link #BIND_WAIT_MS}, for a constructor still
+     * binding. That wait holds no monitor either: the constructor takes this class's to register
+     * its event loops.
      */
     public static void gracefulShutdown() {
+        try {
+            if (!binding.await(BIND_WAIT_MS, TimeUnit.MILLISECONDS)) {
+                Logger.warn("Shutdown drain stopped waiting for the server to finish binding after %d ms;"
+                        + " closing the listeners bound so far", BIND_WAIT_MS);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
         stopAccepting();
         long timeoutMs = drainTimeoutMs();
         long before = Invoker.inflightInvocations.get();
@@ -367,6 +423,16 @@ public class Server {
     }
 
     public static void main(String[] args) throws Exception {
+        // PF-189: every launcher turns log4j's own shutdown hook off, and Play.shutdownHook,
+        // which Play.start() registers, stops log4j once the application has stopped. A JVM
+        // that ends before any start -- play precompile, a start that fails in Play.init, a
+        // DEV server stopped before its first request -- has only this hook, which stops
+        // log4j so that appenders that buffer still write what they hold.
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            if (!Play.shutdownHookEnabled()) {
+                LogManager.shutdown();
+            }
+        }, "play-log4j-shutdown"));
         try {
             File root = new File(System.getProperty("application.path", "."));
             if (System.getProperty("precompiled", "false").equals("true")) {

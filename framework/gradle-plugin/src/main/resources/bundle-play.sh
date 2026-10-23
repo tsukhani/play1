@@ -244,6 +244,11 @@ build_java_cmd() {
         # honours the last -D for a key. Conf before command line, for the
         # same reason: what the operator types overrides application.conf.
         -Djava.util.logging.manager=org.apache.logging.log4j.jul.LogManager
+        # PF-189: Play stops log4j itself once the application has stopped;
+        # log4j's own hook ran beside Play's and dropped what onApplicationStop
+        # logged. Same value, place and reason as LOG4J_SHUTDOWN_HOOK_ARG in
+        # Play1Plugin.kt; a later =true from conf or command line turns it back on.
+        -Dlog4j2.shutdownHookEnabled=false
         "${CONF_JVM[@]}"
         "${JVM_EXTRA[@]}"
         -classpath "$CP"

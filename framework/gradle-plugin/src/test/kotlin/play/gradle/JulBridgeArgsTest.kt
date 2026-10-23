@@ -24,9 +24,13 @@ import javax.tools.ToolProvider
  * missing it is exactly the failure this guards: an app bridged under playStart but not
  * under playAutotest.
  *
+ * PF-189 puts log4j2.shutdownHookEnabled=false beside it, at the same three places and with
+ * the same precedence: Play stops log4j itself once the application has stopped, and an app
+ * that wants log4j's own hook back sets the property to true.
+ *
  * The argv alone would not prove "the app wins", which depends on where each site places the
  * arg relative to conf and command-line args. So each task runs for real against a fake
- * framework whose play.server.Server prints the value the JVM actually resolved.
+ * framework whose play.server.Server prints the values the JVM actually resolved.
  */
 // The forked JVMs and the detached playStart child are unverified on Windows, where a child
 // still holding its files can fail @TempDir cleanup; the argv code under test is OS-neutral.
@@ -35,12 +39,14 @@ class JulBridgeArgsTest {
 
     private val fwVersion = "9.9.9-TEST"
     private val log4jManager = "org.apache.logging.log4j.jul.LogManager"
+    private val julManager = "JUL_MANAGER"
+    private val shutdownHook = "LOG4J_SHUTDOWN_HOOK"
 
     @ParameterizedTest
     @ValueSource(strings = ["playRun", "playStart", "playAutotest"])
     fun `forked Play JVM routes java util logging into log4j2`(task: String, @TempDir tmp: File) {
         val app = writeApp(tmp, confExtra = "")
-        assertEquals(log4jManager, resolvedJulManager(app, task))
+        assertEquals(log4jManager, resolved(app, task, julManager))
     }
 
     @ParameterizedTest
@@ -48,7 +54,7 @@ class JulBridgeArgsTest {
     fun `an app-set java util logging manager is not overridden`(task: String, @TempDir tmp: File) {
         // jvm.memory is the one conf channel all three sites lift onto the command line.
         val app = writeApp(tmp, confExtra = "jvm.memory=-Djava.util.logging.manager=com.example.AppLogManager")
-        assertEquals("com.example.AppLogManager", resolvedJulManager(app, task))
+        assertEquals("com.example.AppLogManager", resolved(app, task, julManager))
     }
 
     @Test
@@ -63,11 +69,39 @@ class JulBridgeArgsTest {
             }
             """.trimIndent() + "\n"
         )
-        assertEquals("com.example.ScriptLogManager", resolvedJulManager(app, "playRun"))
+        assertEquals("com.example.ScriptLogManager", resolved(app, "playRun", julManager))
     }
 
-    /** Run [task] and return the java.util.logging.manager its forked JVM resolved. */
-    private fun resolvedJulManager(app: File, task: String): String {
+    @ParameterizedTest
+    @ValueSource(strings = ["playRun", "playStart", "playAutotest"])
+    fun `forked Play JVM leaves stopping log4j to Play`(task: String, @TempDir tmp: File) {
+        val app = writeApp(tmp, confExtra = "")
+        assertEquals("false", resolved(app, task, shutdownHook))
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["playRun", "playStart", "playAutotest"])
+    fun `an app that turns log4j's shutdown hook back on gets it`(task: String, @TempDir tmp: File) {
+        val app = writeApp(tmp, confExtra = "jvm.memory=-Dlog4j2.shutdownHookEnabled=true")
+        assertEquals("true", resolved(app, task, shutdownHook))
+    }
+
+    @Test
+    fun `a build script systemProperty turns log4j's shutdown hook back on for playRun`(@TempDir tmp: File) {
+        // The same channel as the JUL manager's above, and open for the same reason.
+        val app = writeApp(tmp, confExtra = "")
+        File(app, "build.gradle.kts").appendText(
+            """
+            tasks.named<JavaExec>("playRun") {
+                systemProperty("log4j2.shutdownHookEnabled", "true")
+            }
+            """.trimIndent() + "\n"
+        )
+        assertEquals("true", resolved(app, "playRun", shutdownHook))
+    }
+
+    /** Run [task] and return the value its forked JVM resolved for the property the fake Server reports as [label]. */
+    private fun resolved(app: File, task: String, label: String): String {
         // An explicit free port: playAutotest POSTs /@kill to its port before and after the
         // run, which must never reach a real Play server on this machine's default 9000.
         val port = ServerSocket(0).use { it.localPort }
@@ -75,15 +109,16 @@ class JulBridgeArgsTest {
         // playRun forwards the JVM's stdout into the build output; the other two redirect it
         // to logs/system.out, and playStart returns before its detached child has written.
         val out = if (task == "playRun") result.output else awaitSystemOut(app)
-        return Regex("JUL_MANAGER=(\\S+)").find(out)?.groupValues?.get(1)
-            ?: fail("$task's JVM never reported its JUL manager:\n$out")
+        return Regex("$label=(\\S+)").find(out)?.groupValues?.get(1)
+            ?: fail("$task's JVM never reported $label:\n$out")
     }
 
     private fun awaitSystemOut(app: File): String {
         val systemOut = File(app, "logs/system.out")
         val deadline = System.currentTimeMillis() + 30_000
         while (System.currentTimeMillis() < deadline) {
-            if (systemOut.isFile && systemOut.readText().contains("JUL_MANAGER=")) return systemOut.readText()
+            // Server prints this one last.
+            if (systemOut.isFile && systemOut.readText().contains("$shutdownHook=")) return systemOut.readText()
             Thread.sleep(100)
         }
         return if (systemOut.isFile) systemOut.readText() else ""
@@ -128,6 +163,7 @@ class JulBridgeArgsTest {
                 public class Server {
                     public static void main(String[] args) throws Exception {
                         System.out.println("JUL_MANAGER=" + System.getProperty("java.util.logging.manager"));
+                        System.out.println("LOG4J_SHUTDOWN_HOOK=" + System.getProperty("log4j2.shutdownHookEnabled"));
                         System.out.println("Server is up and running");
                         System.out.flush();
                         // playAutotest (play.id=test) needs the server alive while FirePhoque

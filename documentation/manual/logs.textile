@@ -68,6 +68,17 @@ logger.lucene.level = WARN
 To use a different JUL manager, set the property yourself in @jvm.memory@ in @application.conf@, which accepts any JVM flags, not just heap sizes. The launcher inside a @play bundle@ reads @jvm.memory@ too (see "JVM settings in application.conf":deployment#conf-jvm). Passing @-Djava.util.logging.manager=...@ on the command line works as well. Either way your value takes precedence over the framework's.
 
 
+h2. <a name="shutdown">Logging while the application stops</a>
+
+What your application logs while it stops, from an @@OnApplicationStop@ job or a plugin's @onApplicationStop()@, reaches your appenders. Play stops Log4j itself once the application has stopped, and only then, which also writes out what buffering and asynchronous appenders still hold. To make that possible, the same JVMs that bridge @java.util.logging@ also set
+
+bc. -Dlog4j2.shutdownHookEnabled=false
+
+which turns off Log4j's own shutdown hook. That hook would otherwise run beside Play's when the JVM is told to stop, and would close the appenders while the application is still logging. A @shutdownHook="disable"@ in your Log4j configuration is not enough: in a bundle, or a start from the AOT cache, Log4j registers its hook before Play has read that configuration.
+
+If you start the JVM with a command line of your own rather than through one of Play's launchers, add the property yourself. To get Log4j's hook back, set @-Dlog4j2.shutdownHookEnabled=true@ in @jvm.memory@ or on the command line. Lines logged during the stop can then be lost again.
+
+
 h2. <a name="json">Structured JSON logging</a>
 
 For deployments that ship logs to "Loki":https://grafana.com/oss/loki/, "Datadog":https://www.datadoghq.com, "Splunk":https://www.splunk.com, or the Elastic stack, plain-text @PatternLayout@ output forces fragile regex parsing in the log pipeline. Play 1.12 supports first-class JSON logging (PF-9) via Log4j 2's "JsonTemplateLayout":https://logging.apache.org/log4j/2.x/manual/json-template-layout.html with the bundled "Elastic Common Schema":https://www.elastic.co/guide/en/ecs/current/index.html template.

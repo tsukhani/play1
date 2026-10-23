@@ -22,6 +22,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.apache.logging.log4j.LogManager;
+
 import play.cache.Caches;
 import play.classloading.ApplicationClasses;
 import play.classloading.ApplicationClassloader;
@@ -78,9 +80,10 @@ public class Play {
      */
     public static boolean started = false;
     /**
-     * True when the one and only shutdown hook is enabled
+     * True when the one and only shutdown hook is enabled. Volatile: another shutdown hook
+     * reads it as the JVM exits (PF-189, see {@link #shutdownHookEnabled()}).
      */
-    private static boolean shutdownHookEnabled = false;
+    private static volatile boolean shutdownHookEnabled = false;
     /**
      * PF-119: optional drain action a server implementation registers via
      * {@link #registerShutdownDrain(Runnable)}. The standalone JVM-shutdown hook runs it
@@ -856,6 +859,11 @@ public class Play {
      * {@code pluginCollection.onApplicationStop()} against a still-live request pipeline. This
      * replaces the previous arrangement where the Netty drain was an independent, unordered
      * JVM hook that raced {@code stop()}.
+     * <p>
+     * PF-189: log4j's own hook raced it the same way, stopping the appenders while
+     * {@code onApplicationStop()} still logged, so every launcher starts Play with
+     * {@code -Dlog4j2.shutdownHookEnabled=false} and logging is stopped here, last, which also
+     * flushes the appenders that buffer. Not in {@code stop()}, which a DEV reload runs too.
      */
     private static void shutdownHook() {
         Runnable drain = shutdownDrain;
@@ -866,7 +874,11 @@ public class Play {
                 Logger.warn(t, "Server drain during shutdown failed");
             }
         }
-        stop();
+        try {
+            stop();
+        } finally {
+            LogManager.shutdown();
+        }
     }
 
     /**
@@ -882,6 +894,15 @@ public class Play {
      */
     public static boolean registerShutdownDrain(Runnable drain) {
         shutdownDrain = drain;
+        return shutdownHookEnabled;
+    }
+
+    /**
+     * PF-189: whether the standalone shutdown hook is registered, and so stops log4j once the
+     * application has stopped. {@link #start()} registers it, so an exit before the first start
+     * has none: {@code Server.main} stops log4j itself then.
+     */
+    public static boolean shutdownHookEnabled() {
         return shutdownHookEnabled;
     }
 

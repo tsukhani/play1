@@ -544,6 +544,8 @@ class Play1Plugin : Plugin<Project> {
             // replaces it and a -D from jvm.memory, -PjvmArgs or the app's jvmArgs(...)
             // lands after it; as a jvmArgs -D it would beat the first of those.
             systemProperty(JUL_MANAGER_PROPERTY, LOG4J_JUL_MANAGER)
+            // PF-189: a systemProperty for the same reason.
+            systemProperty(LOG4J_SHUTDOWN_HOOK_PROPERTY, "false")
             // Built-in tasks (playTest, playPrecompile, playAutotest) hardcode
             // playIdOverride = "test". For playRun and other "no override" tasks,
             // honor -PplayId from the command line; else default to empty (no
@@ -905,6 +907,7 @@ abstract class PlayAutotestTask : DefaultTask() {
             add("-javaagent:${playJar.absolutePath}")
             // Ahead of confJvmArgs so a conf-set JUL manager still wins.
             add(JUL_LOG_MANAGER_ARG)
+            add(LOG4J_SHUTDOWN_HOOK_ARG)
             addAll(confJvmArgs(appDir, "test"))
             add("-Dfile.encoding=utf-8")
             add("-Dapplication.path=${appDir.absolutePath}")
@@ -1146,6 +1149,17 @@ private fun outputBanner(appDir: File, playId: String): List<String> {
 private const val JUL_MANAGER_PROPERTY = "java.util.logging.manager"
 private const val LOG4J_JUL_MANAGER = "org.apache.logging.log4j.jul.LogManager"
 private const val JUL_LOG_MANAGER_ARG = "-D$JUL_MANAGER_PROPERTY=$LOG4J_JUL_MANAGER"
+
+// PF-189: the first JUL call starts log4j before Play configures it, and where the
+// classpath has no conf/ (a bundle, a start from the AOT cache) that context finds
+// no config of the application's and registers log4j's own JVM shutdown hook. At
+// SIGTERM that hook stopped the appenders while Play's hook was still in
+// onApplicationStop, losing everything logged from there on. With it off, Play
+// stops log4j itself, last (Play.shutdownHook). log4j reads the property when the
+// first context starts, so like the JUL manager it is a JVM arg, set at the same
+// four places and in the same slot, so an application's own =true still wins.
+private const val LOG4J_SHUTDOWN_HOOK_PROPERTY = "log4j2.shutdownHookEnabled"
+private const val LOG4J_SHUTDOWN_HOOK_ARG = "-D$LOG4J_SHUTDOWN_HOOK_PROPERTY=false"
 
 // PF-185: the JDK's AOT cache for an application started through Gradle, relative
 // to the application directory. playAotGen writes it; playRun, playStart and
@@ -1938,6 +1952,7 @@ private fun spawnPlay(
         // for the same reason.
         aot?.let { add(it) }
         add(JUL_LOG_MANAGER_ARG)
+        add(LOG4J_SHUTDOWN_HOOK_ARG)
         // PF-92: conf-driven JVM flags (javaagent.path, agentlib, jvm.memory,
         // jmx.{port,hostname}) lifted from application.conf with %<playId>.
         // priority. Comes before extraJvmArgs so a user's -PjvmArgs overrides

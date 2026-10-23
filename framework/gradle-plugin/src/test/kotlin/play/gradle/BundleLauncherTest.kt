@@ -259,7 +259,7 @@ class BundleLauncherTest {
 
     /** What the app asked for: java's argv between the launcher's own flags and -classpath. */
     private fun appJvmFlags(argv: List<String>) = argv.subList(
-        argv.indexOf("-Djava.util.logging.manager=org.apache.logging.log4j.jul.LogManager") + 1,
+        argv.indexOf("-Dlog4j2.shutdownHookEnabled=false") + 1,
         argv.indexOf("-classpath")
     )
 
@@ -367,6 +367,22 @@ class BundleLauncherTest {
             listOf("org.apache.logging.log4j.jul.LogManager", "com.example.AppLogManager"),
             julManagers(launcherArgv(bundle, stubs, "-Djava.util.logging.manager=com.example.AppLogManager"))
         )
+    }
+
+    @Test
+    fun `launcher leaves stopping log4j to Play and lets conf and the command line turn its hook back on`(@TempDir tmp: File) {
+        val (bundle, stubs) = bundleWithConf(tmp, "application.name=testapp\n")
+        fun shutdownHooks(argv: List<String>) =
+            argv.filter { it.startsWith("-Dlog4j2.shutdownHookEnabled=") }.map { it.substringAfter('=') }
+
+        // PF-189: log4j's own hook stopped the appenders while onApplicationStop still logged.
+        val argv = launcherArgv(bundle, stubs)
+        assertEquals(listOf("false"), shutdownHooks(argv))
+        assertEquals(argv.indexOf(julManager) + 1, argv.indexOf("-Dlog4j2.shutdownHookEnabled=false"), "beside the JUL manager: $argv")
+        // Ours first, so the JVM keeps the application's: it honours the last -D.
+        assertEquals(listOf("false", "true"), shutdownHooks(launcherArgv(bundle, stubs, "-Dlog4j2.shutdownHookEnabled=true")))
+        File(bundle, "conf/application.conf").writeText("jvm.memory=-Dlog4j2.shutdownHookEnabled=true\n")
+        assertEquals(listOf("false", "true"), shutdownHooks(launcherArgv(bundle, stubs)))
     }
 
     @Test
