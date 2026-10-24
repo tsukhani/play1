@@ -414,6 +414,27 @@
         </java>
     </target>
 
+    <!-- PF-195: OWASP dependency-check over every jar the release zip ships, failing at CVSS 7.0
+         after dependency-check-suppressions.xml, which the zip carries for applications that
+         scan framework/lib themselves. The scan set and the NVD settings are in
+         dependency-check/build.gradle.kts, a Gradle build of its own. Depends on jar because
+         play-${version}.jar is one of the jars, and builds the gradle-plugin jar, which `package`
+         publishes, for the same reason. The NVD data is refreshed once it is a day old;
+         -Dnvd.update=false scans what is there, for when NVD is unreachable. Not part of `test`:
+         CI has no NVD data. /deploy runs it before a release. -->
+    <target name="dependency-check" depends="jar" description="scan the jars the release ships for known vulnerabilities (fails at CVSS 7.0); -Dnvd.update=false skips the NVD update">
+        <property name="nvd.update" value="true"/>
+        <exec executable="${gradlew.executable}" dir="${basedir}/.." failonerror="true">
+            <arg value=":gradle-plugin:jar" />
+            <arg value="--console=plain" />
+        </exec>
+        <exec executable="${gradlew.executable}" dir="${basedir}/dependency-check" failonerror="true">
+            <arg value="dependencyCheckAnalyze" />
+            <arg value="--console=plain" />
+            <arg value="-PnvdUpdate=${nvd.update}" />
+        </exec>
+    </target>
+
     <!-- PF: the runtime half of the dependency audit. Drives the suites with
          -Xlog:class+load and reports which lib/ jars actually supplied a loaded class.
          Opt-in, and deliberately never fails the build: "never loaded" means these suites
@@ -496,9 +517,10 @@
              (.classpath, .project, .settings/), which an IDE or a Java language server
              writes into every Gradle project it imports and which name paths on the
              machine that built the release, and test-result/ directories were shipped
-             that way. -->
+             that way, as was lib-test/, the framework's own test jars, which are of no use
+             without test-src/ and carried a vulnerable Ant (PF-195). -->
         <copy todir="dist/play-${version}">
-            <fileset dir=".." excludes=".github/**,**/cobertura.ser,**/*.pyc,**/*.log,hs_err*,.*,.*/*,build/**,framework/gradle-plugin/build/**,framework/gradle-plugin/bin/**,framework/gradle-plugin-repo/**,**/.gradle/**,**/.kotlin/**,**/.classpath,**/.project,**/.settings/**,framework/dist/**,framework/tailwindcss,framework/test-src/**,id,**/.bzr/**,**/.git/**,*.bzrignore,framework/classes/**,framework/tests-results/**,**/test-result/**,docs/**,renovate.json5,modules/**,openspec/**,.claude/**,CLAUDE.md,CONTRIBUTING.md,CODE_OF_CONDUCT.md,_bmad/**,_bmad-output/**,.agents/**,AGENTS.md" />
+            <fileset dir=".." excludes=".github/**,**/cobertura.ser,**/*.pyc,**/*.log,hs_err*,.*,.*/*,build/**,framework/gradle-plugin/build/**,framework/gradle-plugin/bin/**,framework/dependency-check/build/**,framework/gradle-plugin-repo/**,**/.gradle/**,**/.kotlin/**,**/.classpath,**/.project,**/.settings/**,framework/dist/**,framework/tailwindcss,framework/test-src/**,framework/lib-test/**,id,**/.bzr/**,**/.git/**,*.bzrignore,framework/classes/**,framework/tests-results/**,**/test-result/**,docs/**,renovate.json5,modules/**,openspec/**,.claude/**,CLAUDE.md,CONTRIBUTING.md,CODE_OF_CONDUCT.md,_bmad/**,_bmad-output/**,.agents/**,AGENTS.md" />
             <fileset dir=".." includes="modules/docviewer/**,modules/testrunner/**" excludes="**/*.pyc" />
             <!-- Ant leaves every .gitignore and .gitattributes out of a fileset unless told
                  otherwise, and the application skeleton's are part of what `play new`

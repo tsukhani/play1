@@ -70,6 +70,55 @@ library over only when you need a different one. @play classpath@ shows the
 result.
 
 
+h2. <a name="scanning">Scanning the framework's libraries for vulnerabilities</a>
+
+A vulnerability scanner that reads what Gradle resolves does not see the
+libraries in @framework/lib/@, because your application no longer resolves
+them. The framework scans every jar it ships before each release, with
+"OWASP dependency-check":https://dependency-check.github.io/DependencyCheck/
+failing at CVSS 7.0, and ships the false positives that scan has looked into
+in @framework/dependency-check-suppressions.xml@, each with its reason. To
+cover @framework/lib/@ in your application's own dependency-check, add the
+directory to its scan and that file to its suppressions:
+
+bc. plugins {
+    id("org.playframework.play1")
+    id("org.owasp.dependencycheck") version "12.2.2"
+}
+
+play1 {
+    frameworkPath.set(file("/opt/play1"))
+}
+
+dependencyCheck {
+    val framework = play1.frameworkPath.get().dir("framework").asFile
+    setScanSet(listOf(framework.resolve("lib")))
+    suppressionFiles = listOf(framework.resolve("dependency-check-suppressions.xml").path)
+}
+
+The @dependencyCheck@ block has to come after the @play1@ block that sets
+@frameworkPath@. The plugin reads @suppressionFile@ and @suppressionFiles@
+together, so a suppressions file of your own stays where it is.
+
+Two traps:
+
+* Use @setScanSet(...)@. In dependency-check-gradle 12.2.2 only that setter marks the scan set as configured. With @scanSet.from(...)@ or a Kotlin @scanSet = ...@ the set stays unconfigured, and the plugin scans its defaults (@src/main/resources@, @package.json@ and so on) instead, without a word about @framework/lib@.
+* A jar scanned from a directory has a package URL only when it carries Maven metadata of its own, and many, Micrometer's among them, do not. A suppression that names one by @packageUrl@ can therefore match nothing, without a warning. Match it by @filePath@, as the shipped file does:
+
+bc. <suppress>
+    <notes>Why this finding does not apply.</notes>
+    <filePath regex="true">.*[/\\]framework[/\\]lib[/\\]some-library-[^/\\]*\.jar$</filePath>
+    <cve>CVE-2026-12345</cve>
+</suppress>
+
+A finding in @framework/lib/@ that is not a false positive is the
+framework's to fix. Until a release carries the fix, @appManagedLibraries@
+(above) lets your application take the library over at a fixed version. The
+framework's jar then stays in @framework/lib/@ but off your classpaths, so
+your scan still reports it: suppress that finding by @filePath@ in your own
+file, saying why.
+
+
 h2. <a name="resolving">Resolving dependencies</a>
 
 Gradle resolves dependencies the first time you run any @play@ command

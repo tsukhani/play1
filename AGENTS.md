@@ -97,7 +97,13 @@ ant package                      # Create distribution ZIP
 ant resolve                      # Resolve framework/dependencies.yml via Ivy and update framework/lib/ in place. Run after editing dependencies.yml. Idempotent. -Dprune=true to delete stray jars; -Dverbose for Ivy detail (PF-62)
 ant audit-deps                   # Fail on a jar in framework/lib/ that nothing reaches and dependencies-audit.conf doesn't justify. -Daudit.strict=false to report without failing
 ant audit-census                 # Runtime half of the audit: drives the suites under -Xlog:class+load and reports which framework/lib/ jars actually supplied a loaded class. Opt-in, never fails the build
+ant dependency-check             # OWASP dependency-check over every jar the release zip ships; fails at CVSS 7.0 after framework/dependency-check-suppressions.xml. Refreshes the NVD data once a day old (NVD_API_KEY speeds that up); -Dnvd.update=false scans what is there (PF-195)
 ```
+
+`ant dependency-check` runs the separate Gradle build in `framework/dependency-check/`. It is a build of its own because a plugin on the root build would be resolved by every `play new` from a distribution. Its scan set has to name every directory `ant artifact` copies jars from: a new one there needs a line in `build.gradle.kts`. It also scans the gradle-plugin jar that `package` publishes, as `:gradle-plugin:jar` builds it (byte-identical to the published one), which the target runs first. The analyze task is forced never to be up to date, because its check covers neither the scanned directories' contents nor the NVD data, and it used to pass without scanning. It shares `~/.gradle/dependency-check-data` with the applications' scans, so its plugin version stays in step with theirs. The scan is not part of `test`, because CI has no NVD data. `/deploy` runs it before publishing and `/renovate` after a resolve. The zip ships `framework/dependency-check-suppressions.xml` for applications that scan `framework/lib` (documented in `dependency.textile`), so every suppression there must be true wherever the framework is installed:
+- match the jar by `filePath`, written with `[/\\]` separators so it also matches on Windows; a jar scanned from a directory has a package URL only if it embeds its own Maven metadata, and many do not;
+- suppress by CVE where the product match is right but the CVE is not, and by CPE only where the product is wrong;
+- give the reason in `<notes>`.
 
 The Gradle plugin lives at `framework/gradle-plugin/` and is built via `./gradlew :gradle-plugin:build` from the repo root.
 Its own tests are gated by `ant test` via the `gradle-plugin-test` target (PF-171) — see Testing Patterns.

@@ -7,7 +7,7 @@ tags: [deploy, release]
 
 Run the full Play Framework release deployment:
 
-1. **Run the full test suite (before any version bump)**
+1. **Run the full test suite and the vulnerability scan (before any version bump)**
 
    Run from `framework/`:
    ```bash
@@ -18,6 +18,14 @@ Run the full Play Framework release deployment:
    **Fail-fast.** If any test fails, stop immediately and report the failure to the user. Do NOT proceed to bump, commit, push, tag, or release. A broken main must never become a release. Because the version bump has not happened yet, the working tree stays clean on failure — no revert needed; the user can fix and rerun `/deploy`.
 
    The integration test binds port 19443 (HTTPS). If a previous Play instance or another deploy is running, the integration suite will fail to bind. Surface that as a clear "port in use" message rather than a generic test failure.
+
+   Then scan the jars the release will ship, also from `framework/`:
+   ```bash
+   ant dependency-check
+   ```
+   OWASP dependency-check over every jar the zip carries (PF-195), failing at CVSS 7.0 after `framework/dependency-check-suppressions.xml`. The same fail-fast rule applies: a finding at or above 7.0 stops the release. Report each CVE with its jar and point at `framework/dependency-check/build/reports/dependency-check-report.html`. The fix is a dependency bump; a suppression only for a false positive the user agrees is one, with its reason in the file.
+
+   The scan first refreshes the NVD data in `~/.gradle/dependency-check-data` once that is a day old. Without `NVD_API_KEY` in the environment that update is slow. If NVD is unreachable, ask the user before rerunning with `ant dependency-check -Dnvd.update=false`, which scans against the data already there.
 
 2. **Bump the version (patch level by default)**
 

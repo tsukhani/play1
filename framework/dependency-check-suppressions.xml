@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OWASP dependency-check suppressions for the jars the Play release ships (PF-195).
+
+  `ant dependency-check` scans with this file. The release zip carries it at
+  framework/dependency-check-suppressions.xml, so that an application scanning framework/lib
+  adds it to its own suppressionFiles (documentation/manual/dependency.textile). Every entry
+  therefore has to hold wherever the framework is installed:
+
+    - Match the jar by filePath, with [/\\] for each separator so that it also matches on
+      Windows. A jar scanned from a directory has a package URL only if it embeds Maven
+      metadata of its own, and many do not, so a packageUrl rule can match nothing.
+    - Suppress by CVE where dependency-check names the right product but the CVE does not
+      apply to this jar, and by CPE only where the product itself is wrong.
+    - Say why in <notes>.
+
+  Section A holds false positives and has no expiry. Section B holds risk accepts: vulnerable
+  code that is present but not fixed yet. Each one has an `until` date, after which the scan
+  fails again. A finding that a version bump fixes belongs in a bump, not here.
+-->
+<suppressions xmlns="https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.3.xsd">
+
+    <!-- ==================================================================
+         SECTION A - FALSE POSITIVES (no expiry)
+         ================================================================== -->
+
+    <suppress>
+        <notes><![CDATA[
+            Wrong product. io.micrometer:micrometer-registry-prometheus is Micrometer's
+            Prometheus exposition registry. dependency-check matches it to
+            cpe:/a:prometheus:prometheus, the Prometheus server, and compares Micrometer's 1.x
+            version with the server's. CVE-2026-42154 (the server's /api/v1/read endpoint before
+            3.5.3) and CVE-2019-3826 (server UI XSS before 2.7.1) are in code this jar does not
+            contain, and so is anything else filed against the server.
+        ]]></notes>
+        <filePath regex="true">.*[/\\]framework[/\\]lib[/\\]micrometer-registry-prometheus-[^/\\]*\.jar$</filePath>
+        <cpe>cpe:/a:prometheus:prometheus</cpe>
+    </suppress>
+
+    <suppress>
+        <notes><![CDATA[
+            Wrong product. gradle-plugin-<version>.jar is this fork's Play 1 Gradle plugin
+            (org.playframework:gradle-plugin, versioned with the framework), which `ant package`
+            publishes into framework/gradle-plugin-repo. dependency-check matches it to
+            cpe:/a:gradle:gradle, Gradle itself, and compares the plugin's 1.13.x with Gradle's
+            version ranges, which reports every Gradle CVE before 7.x. The jar holds the plugin's
+            own classes and no Gradle code.
+        ]]></notes>
+        <filePath regex="true">.*[/\\]framework[/\\]gradle-plugin(-repo[/\\].*|[/\\]build[/\\]libs)[/\\]gradle-plugin-[^/\\]*\.jar$</filePath>
+        <cpe>cpe:/a:gradle:gradle</cpe>
+    </suppress>
+
+    <suppress>
+        <notes><![CDATA[
+            Right product, wrong language. CVE-2026-0994 is a recursion-depth bypass in
+            google.protobuf.json_format.ParseDict() in the Python package, for protobuf releases
+            up to 33.4. protobuf-java 4.36.x is release 36.x of the Java runtime; dependency-check
+            compares "4.36.x" with 33.4 and finds it lower. Suppressed by CVE, so protobuf CVEs
+            that do apply to protobuf-java still report.
+        ]]></notes>
+        <filePath regex="true">.*[/\\]framework[/\\]lib[/\\]protobuf-java-[^/\\]*\.jar$</filePath>
+        <cve>CVE-2026-0994</cve>
+    </suppress>
+
+    <suppress>
+        <notes><![CDATA[
+            Right project, other implementations. io.opentelemetry.proto:opentelemetry-proto is the
+            Java binding of the OTLP protocol definitions. dependency-check matches it to
+            cpe:/a:opentelemetry:opentelemetry, and these CVEs are filed against that CPE with a
+            target_sw of another language: CVE-2026-39882 and CVE-2026-41178 against
+            OpenTelemetry-Go, CVE-2026-40894 against OpenTelemetry .NET, CVE-2026-44967 against
+            OpenTelemetry-cpp and CVE-2026-54285 against opentelemetry-js. Suppressed by CVE, so a
+            CVE against OpenTelemetry Java still reports.
+        ]]></notes>
+        <filePath regex="true">.*[/\\]framework[/\\]lib[/\\]opentelemetry-proto-[^/\\]*\.jar$</filePath>
+        <cve>CVE-2026-39882</cve>
+        <cve>CVE-2026-40894</cve>
+        <cve>CVE-2026-41178</cve>
+        <cve>CVE-2026-44967</cve>
+        <cve>CVE-2026-54285</cve>
+    </suppress>
+
+    <suppress>
+        <notes><![CDATA[
+            Code not in the jar. htmlunit-websocket-client (HtmlUnit's, for play autotest) shades
+            Jetty's websocket client, relocated to org.htmlunit.jetty: the client, http, io, util
+            and websocket packages and nothing else. CVE-2025-5115 is in Jetty's HTTP/2 server,
+            CVE-2026-10050 in its server-side Digest authentication and CVE-2026-5795 in its
+            JASPIAuthenticator, none of which the jar contains. The path also matches the
+            shaded jetty-client POM inside the jar, which is what dependency-check reports.
+        ]]></notes>
+        <filePath regex="true">.*[/\\]modules[/\\]testrunner[/\\]firephoque[/\\]htmlunit-websocket-client-[^/\\]*\.jar([/\\].*)?$</filePath>
+        <cve>CVE-2025-5115</cve>
+        <cve>CVE-2026-10050</cve>
+        <cve>CVE-2026-5795</cve>
+    </suppress>
+
+    <!-- ==================================================================
+         SECTION B - TIME-BOXED RISK ACCEPTS (expire and fail the scan again)
+         ================================================================== -->
+
+    <suppress until="2027-01-31Z">
+        <notes><![CDATA[
+            Present, not exploitable as used, no fix in this line. CVE-2026-2332 is request
+            smuggling through chunk extensions in Jetty's HTTP/1.1 parser, fixed in 9.4.60.
+            htmlunit-websocket-client 4.14.0 shades Jetty 9.4.57, parser included, and the last
+            HtmlUnit 4.x (4.21.0) still shades 9.4.58. The parser smuggles requests past a server
+            or proxy that parses them. FirePhoque uses it only as a client, against the
+            application under test, on a developer or CI machine. firephoque never reaches an
+            application's runtime classpath or a bundle.
+
+            ACTION ON EXPIRY: PF-196, moving FirePhoque to HtmlUnit 5 (Jetty 12), removes this
+            entry.
+        ]]></notes>
+        <filePath regex="true">.*[/\\]modules[/\\]testrunner[/\\]firephoque[/\\]htmlunit-websocket-client-[^/\\]*\.jar([/\\].*)?$</filePath>
+        <cve>CVE-2026-2332</cve>
+    </suppress>
+
+</suppressions>

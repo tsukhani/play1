@@ -1,6 +1,6 @@
 ---
 name: renovate
-description: Discover github/renovate/* branches, merge each into local main by ecosystem, and validate — `ant resolve -Dprune=true` + `ant test` for Ivy/Java bumps, a scratch-copy Nuxt build for skel npm bumps, CI-on-push for workflow bumps. Stops at the local merges; hand off to /deploy to push.
+description: Discover github/renovate/* branches, merge each into local main by ecosystem, and validate — `ant resolve -Dprune=true` + `ant test` + `ant dependency-check` for Ivy/Java bumps, a scratch-copy Nuxt build for skel npm bumps, CI-on-push for workflow bumps. Stops at the local merges; hand off to /deploy to push.
 category: Maintenance
 tags: [renovate, dependencies, merge, git, ivy, ant, gradle, npm]
 argument-hint: "[empty | java | wrapper | npm | ci | <branch-substring>]"
@@ -105,6 +105,11 @@ Batch-merge per ecosystem and run **one** gate per ecosystem. Dependency bumps w
       ant test
       ```
       **Pass** → the whole batch is in. **Fail** → peel back: the resolve commit sits on top, so `/usr/bin/git reset --hard HEAD~1` first to drop it, then drop merges newest-first, re-run `ant resolve -Dprune=true`, re-commit, and re-test until green — marking each peeled branch **FAILED/skipped**. With a handful of branches this converges in at most N−1 extra runs and only costs that on the rare failure. Never guess the culprit without a passing baseline.
+    - **Then scan the resolved jars, from `framework/`:**
+      ```bash
+      ant dependency-check
+      ```
+      OWASP dependency-check over every jar the release ships, failing at CVSS 7.0 after `framework/dependency-check-suppressions.xml` (PF-195). Like `ant test`, it only means something after the resolve. A failure names the CVE and the jar. If a bumped jar brought the finding, peel that branch as above. If the finding is on a jar no branch touched, the NVD data has caught up with it: report it and leave the merges in. Never add a suppression to get past the gate; that is the user's call, with a reason in the file. `/deploy` runs the same scan again before it publishes.
 
 **Phase 4 — Report & hand off**
 
@@ -119,7 +124,7 @@ Batch-merge per ecosystem and run **one** gate per ecosystem. Dependency bumps w
 - **Never `git push`, never edit `framework/build.xml`'s `baseversion`, never run `/deploy`** as part of this command. Stop at the local commits.
 - Never `--no-verify`, `--force`, or any hook/signing bypass.
 - **`ant resolve -Dprune=true` after the Java merge cascade is mandatory.** A green CI check on a Renovate Java PR proves nothing — it built against the stale vendored jars. The only `ant test` that counts is the one run *after* the resolve, with the jar churn verified in `git status framework/lib`.
-- Validate by ecosystem: JAVA/WRAPPER → `ant resolve -Dprune=true` + `ant test`; NPM-SKEL → scratch-copy `pnpm install && pnpm run generate`; CI/CONFIG → no local gate (Actions validates on `/deploy`'s push). A multi-ecosystem branch runs every matching gate.
+- Validate by ecosystem: JAVA/WRAPPER → `ant resolve -Dprune=true` + `ant test` + `ant dependency-check`; NPM-SKEL → scratch-copy `pnpm install && pnpm run generate`; CI/CONFIG → no local gate (Actions validates on `/deploy`'s push). A multi-ecosystem branch runs every matching gate.
 - Never `pnpm install` inside `resources/nuxt-skel/` — build a copy under `mktemp -d`.
 - A failing Java bump is peeled off (`reset --hard`) and skipped, not forced through; a failing skel bump is reported for the user to triage.
 - A suffixed-artifact bump (`-jdk5`, `.MR`, and anything of that shape) is a `renovate.json5` pin, not a merge.
