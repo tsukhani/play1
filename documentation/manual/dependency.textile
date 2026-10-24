@@ -88,6 +88,30 @@ bc. play1 {
     failOnNewerLibraryRequests = true
 }
 
+A member of one of these library families that the framework does not ship,
+such as @mockwebserver3@ beside OkHttp or @jackson-dataformat-csv@ beside
+Jackson, needs the version that matches the framework's. With
+@importFrameworkBoms@ the plugin imports the BOM of each family the framework
+ships, at the framework's version, and you declare such a library without a
+version:
+
+bc. play1 {
+    importFrameworkBoms = true
+}
+
+dependencies {
+    testImplementation("com.squareup.okhttp3:mockwebserver3")
+}
+
+The families are OkHttp, Okio, Jackson, Netty, Micrometer, the Prometheus
+client, Log4j, Kotlin, Groovy, JUnit, SLF4J, ASM, Bouncy Castle and Swagger.
+Gradle resolves the highest version anything asks for, so a BOM also raises
+a family member you declare at a lower version to the framework's. Listing a
+family's main library in @appManagedLibraries@, such as
+@com.squareup.okhttp3:okhttp-jvm@ for OkHttp or
+@com.fasterxml.jackson.core:jackson-databind@ for Jackson, leaves that
+family's BOM out, because the family's version is then yours.
+
 
 h2. <a name="scanning">Scanning the framework's libraries for vulnerabilities</a>
 

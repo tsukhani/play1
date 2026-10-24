@@ -75,6 +75,12 @@ abstract class Play1Extension {
      */
     abstract val failOnNewerLibraryRequests: Property<Boolean>
 
+    /**
+     * PF-193: import the BOM of each library family framework/lib ships, at the version it ships,
+     * so that a member of the family declared without a version resolves at the fork's version.
+     */
+    abstract val importFrameworkBoms: Property<Boolean>
+
     fun modules(vararg names: String) {
         modules.addAll(*names)
     }
@@ -93,6 +99,7 @@ class Play1Plugin : Plugin<Project> {
             modules.convention(emptyList())
             appManagedLibraries.convention(emptyList())
             failOnNewerLibraryRequests.convention(false)
+            importFrameworkBoms.convention(false)
         }
         // play.id and http.port are NOT exposed as DSL properties. Configure them in
         // conf/application.conf (or %prefix.* overrides). Override at task time via
@@ -505,6 +512,7 @@ class Play1Plugin : Plugin<Project> {
         val fwDir = ext.frameworkPath.orNull?.asFile ?: return
         val shipped = readLibCoordinates(fwDir).groupBy { it.module }
         val managed = ext.appManagedLibraries.get().toSet()
+        if (ext.importFrameworkBoms.get()) importFrameworkBoms(project, shipped, managed)
         val classpaths = CLASSPATHS_BESIDE_FRAMEWORK_LIB.mapNotNull { project.configurations.findByName(it) }
         val declared = classpaths.flatMap { it.hierarchy }.distinct().flatMap { cfg ->
             cfg.dependencies.withType(ExternalModuleDependency::class.java).map { cfg.name to it }
@@ -538,6 +546,19 @@ class Play1Plugin : Plugin<Project> {
             )
         }
         reportNewerRequests(project, ext, shipped, managed, classpaths)
+    }
+
+    /**
+     * PF-193: a platform(...) on implementation for each family in FRAMEWORK_BOMS whose anchor
+     * framework/lib ships, at the anchor's version. Not for a family whose anchor the application
+     * manages, since that family's version is then the application's.
+     */
+    private fun importFrameworkBoms(project: Project, shipped: Map<String, List<LibJar>>, managed: Set<String>) {
+        for ((anchor, bom) in FRAMEWORK_BOMS) {
+            if (anchor in managed) continue
+            val version = shipped[anchor]?.first()?.version ?: continue
+            project.dependencies.add("implementation", project.dependencies.platform("$bom:$version"))
+        }
     }
 
     /**
@@ -1340,6 +1361,27 @@ internal fun readLibCoordinates(frameworkDir: File): List<LibJar> {
             if (parts.size < 3) null else LibJar(line.substringBefore('='), parts[0], parts[1], parts[2])
         }
 }
+
+// PF-193: the BOM of each library family framework/lib ships, by the module whose version is the
+// family's (an "anchor"): jackson-annotations, for one, is versioned 2.22 beside databind's
+// 2.22.4. Only BOMs that manage their own family alone, which leaves out hibernate-platform and
+// jaxb-bom, and each is published with every release of its anchor.
+internal val FRAMEWORK_BOMS = listOf(
+    "com.squareup.okhttp3:okhttp-jvm" to "com.squareup.okhttp3:okhttp-bom",
+    "com.squareup.okio:okio-jvm" to "com.squareup.okio:okio-bom",
+    "com.fasterxml.jackson.core:jackson-databind" to "com.fasterxml.jackson:jackson-bom",
+    "io.netty:netty-common" to "io.netty:netty-bom",
+    "io.micrometer:micrometer-core" to "io.micrometer:micrometer-bom",
+    "io.prometheus:prometheus-metrics-core" to "io.prometheus:prometheus-metrics-bom",
+    "org.apache.logging.log4j:log4j-api" to "org.apache.logging.log4j:log4j-bom",
+    "org.jetbrains.kotlin:kotlin-stdlib" to "org.jetbrains.kotlin:kotlin-bom",
+    "org.codehaus.groovy:groovy" to "org.codehaus.groovy:groovy-bom",
+    "org.junit.jupiter:junit-jupiter-api" to "org.junit:junit-bom",
+    "org.slf4j:slf4j-api" to "org.slf4j:slf4j-bom",
+    "org.ow2.asm:asm" to "org.ow2.asm:asm-bom",
+    "org.bouncycastle:bcprov-jdk18on" to "org.bouncycastle:bc-jdk18on-bom",
+    "io.swagger.core.v3:swagger-core" to "io.swagger.core.v3:swagger-bom",
+)
 
 /**
  * Whether framework/lib's [fork] version leaves a request for [requested] unmet (PF-194): a
