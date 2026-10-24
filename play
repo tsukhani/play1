@@ -107,6 +107,11 @@ Information:
 Argument forwarding:
   --key=value          Pass a property override to the build
   --key                Pass a boolean property flag
+
+Gradle daemon:
+  Under Jenkins (JENKINS_URL set) or a CI that sets CI, every command runs
+  Gradle with --no-daemon, so builds that overlap never share a daemon.
+  PLAY_GRADLE_DAEMON=true keeps the daemon there; =false drops it anywhere.
 EOF
 }
 
@@ -269,6 +274,28 @@ forward_args() {
     return 0
 }
 
+# --- No shared Gradle daemon under CI (PF-197) -----------------------------
+# A CI server runs every build as one user, so they all share one pool of
+# Gradle daemons, and Jenkins kills every process a build started once that
+# build ends. A daemon one job's build had started, then lent to another job's
+# build, died under that second build ("Gradle build daemon disappeared
+# unexpectedly"). Under Jenkins (JENKINS_URL) or any CI that sets CI, every
+# Gradle run therefore gets --no-daemon. PLAY_GRADLE_DAEMON=true keeps the
+# daemon there, and PLAY_GRADLE_DAEMON=false drops it anywhere.
+gradle_without_daemon() {
+    case "${PLAY_GRADLE_DAEMON:-}" in
+        true)  return 1 ;;
+        false) return 0 ;;
+    esac
+    if [ -n "${JENKINS_URL:-}" ]; then
+        return 0
+    fi
+    case "${CI:-}" in
+        '' | false | 0) return 1 ;;
+    esac
+    return 0
+}
+
 # --- Strip --silent from args (controls banner only; never reaches Gradle) -
 SILENT=0
 NARGS=$#
@@ -393,11 +420,15 @@ case "$CMD" in
         # configuring it would force its own build dir to be writable too.
         printf 'rootProject.name = "play1-scaffold"\n' > "$SCRATCH/settings.gradle.kts"
         cd "$SCRATCH"
+        NO_DAEMON=""
+        if gradle_without_daemon; then
+            NO_DAEMON="--no-daemon"
+        fi
         # -PframeworkPath pins the *real* framework location into the generated
         # app's build.gradle.kts (instead of leaking the scratch dir, which we're
         # about to delete).
-        # shellcheck disable=SC2086  # word-splitting EXTRA is intentional
-        ./gradlew playNewApp -PframeworkPath="$PLAY_HOME" -Pname="$APP_NAME" -Pdest="$DEST" $EXTRA
+        # shellcheck disable=SC2086  # word-splitting EXTRA and NO_DAEMON is intentional
+        ./gradlew playNewApp -PframeworkPath="$PLAY_HOME" -Pname="$APP_NAME" -Pdest="$DEST" $EXTRA $NO_DAEMON
         ;;
     deps|check|ant|install|list-modules|build-module|new-module|id)
         cat >&2 <<EOF
@@ -436,6 +467,12 @@ EOF
             done <<EOF
 $TRANSLATED
 EOF
+            if gradle_without_daemon; then
+                case " $* " in
+                    *" --no-daemon "*) ;;
+                    *) set -- "$@" --no-daemon ;;
+                esac
+            fi
             exec "$GRADLEW" "$TASK" "$@"
         else
             echo "play: unknown command '$CMD'. Run 'play help' for usage." >&2

@@ -6,6 +6,7 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.util.List;
 import java.util.Map;
 
 import org.junit.jupiter.api.Test;
@@ -38,6 +39,9 @@ import org.junit.jupiter.api.io.TempDir;
  * of the shim out of a stand-in PLAY_HOME whose {@code gradlew} only echoes its arguments — see
  * {@link #fakeHome} — so the -Pname/-Pdest handed to the scaffolder are asserted without ever
  * launching a real Gradle.
+ *
+ * <p>And that under CI every Gradle run gets {@code --no-daemon} (PF-197), which the stubs
+ * show by echoing what they were handed.
  */
 @DisabledOnOs(value = OS.WINDOWS, disabledReason = "the play shim is #!/bin/sh and needs a POSIX shell")
 public class PlayShimTest {
@@ -97,6 +101,9 @@ public class PlayShimTest {
         ProcessBuilder pb = new ProcessBuilder(cmd).directory(cwd).redirectErrorStream(true);
         pb.environment().put("PATH",
             stubBin.getAbsolutePath() + File.pathSeparator + System.getenv("PATH"));
+        // The CI detection (PF-197) reads these: a suite run on a CI server must not see
+        // its own, or every case would get --no-daemon. A case that wants one passes it.
+        pb.environment().keySet().removeAll(List.of("CI", "JENKINS_URL", "PLAY_GRADLE_DAEMON"));
         pb.environment().putAll(env);
         Process p = pb.start();
         String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
@@ -221,6 +228,79 @@ public class PlayShimTest {
         assertThat(r.output()).contains(
             DELEGATED + " playAotGen -PplayId=prod -PhttpPort=9123 -PjvmArgs=-XX:+UseZGC -Dprecompiled=true");
         assertThat(r.exitCode()).isZero();
+    }
+
+    /**
+     * PF-197: under CI every Gradle run gets --no-daemon. Jenkins kills the processes a build
+     * started when it ends, a Gradle daemon included, and on one CI user that daemon may be
+     * serving another job's build at that moment.
+     */
+    @Test
+    public void underCiGradleRunsWithoutADaemon(@TempDir File tmp) throws Exception {
+        File cwd = new File(tmp, "gradleproject");
+        cwd.mkdirs();
+        makeGradleBuild(cwd);
+        File stubBin = stubGradleBin(tmp);
+
+        for (Map<String, String> ci : List.of(
+                Map.of("JENKINS_URL", "https://jenkins.example/"), Map.of("CI", "true"))) {
+            Result r = run(shim(), ci, cwd, stubBin, "status");
+            assertThat(r.output()).as("%s", ci).contains(DELEGATED + " playStatus --no-daemon");
+        }
+    }
+
+    @Test
+    public void outsideCiGradleKeepsItsDaemon(@TempDir File tmp) throws Exception {
+        File cwd = new File(tmp, "gradleproject");
+        cwd.mkdirs();
+        makeGradleBuild(cwd);
+        File stubBin = stubGradleBin(tmp);
+
+        for (Map<String, String> env : List.of(Map.<String, String>of(), Map.of("CI", "false"))) {
+            Result r = run(shim(), env, cwd, stubBin, "status");
+            assertThat(r.output()).as("%s", env).contains(DELEGATED + " playStatus");
+            assertThat(r.output()).as("%s", env).doesNotContain("--no-daemon");
+        }
+    }
+
+    @Test
+    public void playGradleDaemonOverridesTheDetection(@TempDir File tmp) throws Exception {
+        File cwd = new File(tmp, "gradleproject");
+        cwd.mkdirs();
+        makeGradleBuild(cwd);
+        File stubBin = stubGradleBin(tmp);
+
+        Result kept = run(shim(), Map.of("CI", "true", "PLAY_GRADLE_DAEMON", "true"), cwd, stubBin, "status");
+        Result dropped = run(shim(), Map.of("PLAY_GRADLE_DAEMON", "false"), cwd, stubBin, "status");
+
+        assertThat(kept.output()).contains(DELEGATED).doesNotContain("--no-daemon");
+        assertThat(dropped.output()).contains(DELEGATED + " playStatus --no-daemon");
+    }
+
+    @Test
+    public void anExplicitNoDaemonIsNotRepeatedUnderCi(@TempDir File tmp) throws Exception {
+        File cwd = new File(tmp, "gradleproject");
+        cwd.mkdirs();
+        makeGradleBuild(cwd);
+
+        Result r = run(shim(), Map.of("CI", "true"), cwd, stubGradleBin(tmp), "start", "--no-daemon");
+
+        assertThat(r.output()).contains(DELEGATED + " playStart --no-daemon");
+        assertThat(r.output().split("--no-daemon", -1)).hasSize(2);
+    }
+
+    @Test
+    public void newUnderCiScaffoldsWithoutADaemon(@TempDir File tmp) throws Exception {
+        File home = fakeHome(tmp);
+        File cwd = invokingDir(tmp);
+        String scratch = new File(home, "scratch").getAbsolutePath();
+
+        Result ci = run(new File(home, "play"), Map.of("TMPDIR", scratch, "CI", "true"), cwd,
+            stubGradleBin(tmp), "new", "demo");
+        Result local = runFrom(home, cwd, stubGradleBin(tmp), "new", "demo");
+
+        assertThat(ci.output()).contains(gradlewArg("playNewApp"), gradlewArg("--no-daemon"));
+        assertThat(local.output()).contains(gradlewArg("playNewApp")).doesNotContain(gradlewArg("--no-daemon"));
     }
 
     @Test
