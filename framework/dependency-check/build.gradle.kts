@@ -3,7 +3,7 @@
 // play-<version>.jar first.
 plugins {
     // In step with the applications' plugin: the NVD database below is shared with their scans,
-    // and a dependency-check release may change its schema.
+    // and a dependency-check release may change its schema. renovate.json5 leaves it alone.
     id("org.owasp.dependencycheck") version "12.2.2"
 }
 

@@ -183,6 +183,16 @@
       allowedVersions: "!/\\.MR$/i"
     },
     {
+      // PF-195: framework/dependency-check pins OWASP dependency-check to the version the
+      // applications' builds use, because every scan on a machine shares one NVD database
+      // and a dependency-check release may change its schema. On the Jenkins host the
+      // nightly Dependency_Check_NVD_Update job, from the payments repo, writes it, and the
+      // fork's own nightly scan reads it. A bump here alone could leave that database
+      // unreadable to one side, so bump by hand, together with payments and api.
+      matchPackageNames: ["org.owasp.dependencycheck**"],
+      enabled: false
+    },
+    {
       // Major bumps go through manual review — never auto-merge.
       matchUpdateTypes: ["major"],
       automerge: false,
