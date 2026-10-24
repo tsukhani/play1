@@ -4,7 +4,12 @@ import org.gradle.api.DefaultTask
 import org.gradle.api.GradleException
 import org.gradle.api.Plugin
 import org.gradle.api.Project
+import org.gradle.api.artifacts.Configuration
 import org.gradle.api.artifacts.ExternalModuleDependency
+import org.gradle.api.artifacts.component.ModuleComponentSelector
+import org.gradle.api.artifacts.result.ResolvedDependencyResult
+import org.gradle.api.attributes.Attribute
+import org.gradle.api.attributes.AttributeContainer
 import org.gradle.api.file.ArchiveOperations
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.DirectoryProperty
@@ -63,6 +68,13 @@ abstract class Play1Extension {
      */
     abstract val appManagedLibraries: ListProperty<String>
 
+    /**
+     * PF-194: fail the build, rather than only warn, when one of the application's dependencies
+     * asks for a newer version of a library framework/lib ships. -PfailOnNewerLibraryRequests
+     * overrides it for one build.
+     */
+    abstract val failOnNewerLibraryRequests: Property<Boolean>
+
     fun modules(vararg names: String) {
         modules.addAll(*names)
     }
@@ -80,6 +92,7 @@ class Play1Plugin : Plugin<Project> {
             frameworkVersion.convention("1.13.0-SNAPSHOT")
             modules.convention(emptyList())
             appManagedLibraries.convention(emptyList())
+            failOnNewerLibraryRequests.convention(false)
         }
         // play.id and http.port are NOT exposed as DSL properties. Configure them in
         // conf/application.conf (or %prefix.* overrides). Override at task time via
@@ -524,6 +537,78 @@ class Play1Plugin : Plugin<Project> {
                     "(${jars.joinToString(", ") { "framework/lib/${it.jar}" }} left off every classpath)"
             )
         }
+        reportNewerRequests(project, ext, shipped, managed, classpaths)
+    }
+
+    /**
+     * PF-194: the excludes drop every edge to a library framework/lib ships, and with it the
+     * version that edge asked for, so a dependency built against a newer version ran on the
+     * fork's copy without a word. This resolves the graph of the same declarations without the
+     * excludes, metadata only, and warns once per library that a dependency asks for at a higher
+     * version, or through a range the fork's version is outside of. Requests the classpaths never
+     * see are left out: the application's own, which get the "has no effect" warning, and those
+     * of a library framework/lib replaces or of anything only such a library brings in.
+     */
+    private fun reportNewerRequests(
+        project: Project,
+        ext: Play1Extension,
+        shipped: Map<String, List<LibJar>>,
+        managed: Set<String>,
+        classpaths: List<Configuration>,
+    ) {
+        val replaced = shipped.keys - managed
+        if (replaced.isEmpty() || classpaths.isEmpty()) return
+        val buckets = classpaths.flatMap { it.hierarchy }.distinct()
+        val graph = project.configurations.detachedConfiguration(*buckets.flatMap { it.dependencies }.map { it.copy() }.toTypedArray())
+        graph.dependencyConstraints.addAll(buckets.flatMap { it.dependencyConstraints })
+        val runtime = project.configurations.getByName("runtimeClasspath").attributes
+        graph.attributes { runtime.keySet().forEach { @Suppress("UNCHECKED_CAST") copyAttribute(runtime, this, it as Attribute<Any>) } }
+
+        // The check must not fail a build the classpaths themselves would resolve: this graph has
+        // edges they do not, such as two strict versions of a library framework/lib replaces.
+        val root = try {
+            graph.incoming.resolutionResult.rootComponent.get()
+        } catch (e: Exception) {
+            project.logger.warn("~ WARNING: could not check the versions of framework/lib's libraries the application's dependencies ask for: ${e.message}")
+            return
+        }
+        val requests = mutableMapOf<String, MutableSet<Pair<String, String>>>()
+        val seen = mutableSetOf(root.id)
+        val queue = ArrayDeque(listOf(root))
+        while (queue.isNotEmpty()) {
+            val component = queue.removeFirst()
+            for (dependency in component.dependencies) {
+                if (dependency.isConstraint) continue
+                val requested = dependency.requested
+                if (component != root && requested is ModuleComponentSelector && "${requested.group}:${requested.module}" in replaced) {
+                    val constraint = requested.versionConstraint
+                    val version = constraint.strictVersion.ifEmpty { constraint.requiredVersion }.ifEmpty { constraint.preferredVersion }
+                    val requester = component.moduleVersion?.let { "${it.group}:${it.name}:${it.version}" } ?: component.id.displayName
+                    requests.getOrPut("${requested.group}:${requested.module}") { mutableSetOf() }.add(requester to version)
+                }
+                val selected = (dependency as? ResolvedDependencyResult)?.selected ?: continue
+                if (selected.moduleVersion?.let { "${it.group}:${it.name}" } in replaced) continue
+                if (seen.add(selected.id)) queue.add(selected)
+            }
+        }
+
+        val warnings = requests.toSortedMap().mapNotNull { (module, asks) ->
+            val fork = shipped.getValue(module).first().version
+            asks.filter { (_, version) -> asksBeyond(version, fork) }.takeIf { it.isNotEmpty() }?.let { newerRequestWarning(module, fork, it) }
+        }
+        warnings.forEach { project.logger.warn(it) }
+        val fail = project.providers.gradleProperty("failOnNewerLibraryRequests").map(String::toBoolean)
+            .getOrElse(ext.failOnNewerLibraryRequests.get())
+        if (fail && warnings.isNotEmpty()) {
+            throw GradleException(
+                "The application's dependencies ask for newer versions of libraries framework/lib ships, and " +
+                    "failOnNewerLibraryRequests is on:\n" + warnings.joinToString("\n")
+            )
+        }
+    }
+
+    private fun <T : Any> copyAttribute(from: AttributeContainer, to: AttributeContainer, key: Attribute<T>) {
+        to.attribute(key, from.getAttribute(key)!!)
     }
 
     private fun playClasspathFor(project: Project, ext: Play1Extension, includeTestrunner: Boolean): FileCollection {
@@ -1254,6 +1339,84 @@ internal fun readLibCoordinates(frameworkDir: File): List<LibJar> {
             val parts = line.substringAfter('=').split(':')
             if (parts.size < 3) null else LibJar(line.substringBefore('='), parts[0], parts[1], parts[2])
         }
+}
+
+/**
+ * Whether framework/lib's [fork] version leaves a request for [requested] unmet (PF-194): a
+ * higher version, or a range or `+` prefix the fork's version is outside of. `latest.*` never is.
+ */
+internal fun asksBeyond(requested: String, fork: String): Boolean {
+    val v = requested.trim()
+    if (v.isEmpty() || v.startsWith("latest.")) return false
+    if (v.endsWith("+")) return !fork.startsWith(v.dropLast(1))
+    if (v.first() in "[](" && v.last() in "[])") {
+        // "[1.0]" is a range of one version: lower and upper are then the same.
+        val bounds = v.substring(1, v.length - 1).split(',')
+        val lower = bounds.first().trim()
+        val upper = bounds.last().trim()
+        val fromLower = lower.isEmpty() || GradleVersionOrder.compare(fork, lower).let { it > 0 || it == 0 && v.first() == '[' }
+        val toUpper = upper.isEmpty() || GradleVersionOrder.compare(fork, upper).let { it < 0 || it == 0 && v.last() == ']' }
+        return !(fromLower && toUpper)
+    }
+    return GradleVersionOrder.compare(v, fork) > 0
+}
+
+/** One warning for [module], naming every requester and the version each asks for, highest first (PF-194). */
+internal fun newerRequestWarning(module: String, fork: String, asks: Collection<Pair<String, String>>): String {
+    val clauses = asks.groupBy({ it.second }, { it.first }).entries
+        .sortedWith(compareBy(GradleVersionOrder.reversed()) { it.key })
+        .map { (version, requesters) ->
+            val names = requesters.distinct().sorted()
+            val who = if (names.size == 1) names.single() else names.dropLast(1).joinToString(", ") + " and " + names.last()
+            "$who ${if (names.size == 1) "asks" else "ask"} for $module $version"
+        }
+    val runsOn = if (asks.map { it.first }.distinct().size == 1) "which it runs on" else "which they run on"
+    return "~ WARNING: ${clauses.joinToString("; ")}, but framework/lib ships $fork, $runsOn. Upgrade the framework's copy, " +
+        "or add \"$module\" to play1 { appManagedLibraries(...) } to keep the application's version."
+}
+
+/**
+ * Gradle's documented version ordering ("Declaring Versions and Ranges"), which the PF-194 check
+ * has to agree with: parts split at . - _ + and between digits and letters; a numeric part ranks
+ * above a word; "dev" below every other word and rc < snapshot < final < ga < release < sp above
+ * them, without regard to case; an extra numeric part ranks higher, an extra word lower.
+ */
+internal object GradleVersionOrder : Comparator<String> {
+    private val special = listOf("rc", "snapshot", "final", "ga", "release", "sp")
+
+    private fun parts(version: String) = version.split('.', '-', '_', '+')
+        .flatMap { Regex("\\d+|\\D+").findAll(it).map { m -> m.value }.toList() }
+
+    private fun rank(word: String) = when (val lower = word.lowercase()) {
+        "dev" -> -1
+        in special -> 1 + special.indexOf(lower)
+        else -> 0
+    }
+
+    private fun comparePart(a: String, b: String): Int {
+        val numericA = a.all(Char::isDigit)
+        val numericB = b.all(Char::isDigit)
+        return when {
+            numericA && numericB -> a.toBigInteger().compareTo(b.toBigInteger())
+            numericA -> 1
+            numericB -> -1
+            rank(a) != rank(b) -> rank(a).compareTo(rank(b))
+            rank(a) == 0 -> a.compareTo(b)
+            else -> 0
+        }
+    }
+
+    override fun compare(a: String, b: String): Int {
+        val pa = parts(a)
+        val pb = parts(b)
+        for (i in 0 until minOf(pa.size, pb.size)) {
+            comparePart(pa[i], pb[i]).let { if (it != 0) return it }
+        }
+        if (pa.size == pb.size) return 0
+        val extra = (if (pa.size > pb.size) pa else pb)[minOf(pa.size, pb.size)]
+        val longerRanks = if (extra.all(Char::isDigit)) 1 else -1
+        return if (pa.size > pb.size) longerRanks else -longerRanks
+    }
 }
 
 // PF-185: the JDK's AOT cache for an application started through Gradle, relative

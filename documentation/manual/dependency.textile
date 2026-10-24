@@ -69,6 +69,25 @@ The framework was built and tested against its own version, so take a
 library over only when you need a different one. @play classpath@ shows the
 result.
 
+A library your dependencies bring in may have been built against a newer
+version of one of these libraries than the framework ships. It then runs on
+the framework's copy, and fails with @NoSuchMethodError@ or
+@NoClassDefFoundError@ when it reaches something the older copy lacks. The
+plugin reads the versions your dependencies ask for, and warns once for each
+library asked for above the framework's version, or through a range the
+framework's version is outside of:
+
+bc. ~ WARNING: org.apache.tika:tika-parser-xml-module:4.1.0 asks for commons-codec:commons-codec 1.22.1, but framework/lib ships 1.22.0, which it runs on. Upgrade the framework's copy, or add "commons-codec:commons-codec" to play1 { appManagedLibraries(...) } to keep the application's version.
+
+Gradle prints no warnings under @-q@. To fail the build on such a request
+instead, as a CI build may want to, set @failOnNewerLibraryRequests@. The
+property @-PfailOnNewerLibraryRequests=true@ (or @=false@) overrides the
+build script for one build:
+
+bc. play1 {
+    failOnNewerLibraryRequests = true
+}
+
 
 h2. <a name="scanning">Scanning the framework's libraries for vulnerabilities</a>
 
