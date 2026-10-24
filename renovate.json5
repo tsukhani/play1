@@ -74,10 +74,9 @@
   // dependencies.yml lines look like:
   //   - io.swagger.core.v3 -> swagger-models 2.2.39
   //   - org.apache.logging.log4j -> log4j-core 2.25.3
-  // The few legacy short-form deps without a "->" (e.g. "antlr4-runtime
-  // 4.13.0", "commons-beanutils 1.11.0") aren't matched — those use Ivy
-  // shorthand where group=artifact and don't map cleanly to Maven Central
-  // group IDs. Track those manually if they need bumping.
+  // The one short-form dep without a "->", "jregex 1.2_01", isn't matched:
+  // no artifact on Maven Central is that jar (PF-192). Track it manually if it
+  // needs bumping.
   customManagers: [
     {
       customType: "regex",

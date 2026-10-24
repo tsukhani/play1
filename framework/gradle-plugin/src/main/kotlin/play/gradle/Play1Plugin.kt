@@ -4,6 +4,7 @@ import org.gradle.api.DefaultTask
 import org.gradle.api.GradleException
 import org.gradle.api.Plugin
 import org.gradle.api.Project
+import org.gradle.api.artifacts.ExternalModuleDependency
 import org.gradle.api.file.ArchiveOperations
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.DirectoryProperty
@@ -55,8 +56,19 @@ abstract class Play1Extension {
     abstract val frameworkVersion: Property<String>
     abstract val modules: ListProperty<String>
 
+    /**
+     * PF-192: libraries, as "group:artifact", that the application keeps at its own version.
+     * Every other library the fork ships in framework/lib is excluded from the application's
+     * resolved dependencies; for these the fork's jar is left out instead.
+     */
+    abstract val appManagedLibraries: ListProperty<String>
+
     fun modules(vararg names: String) {
         modules.addAll(*names)
+    }
+
+    fun appManagedLibraries(vararg modules: String) {
+        appManagedLibraries.addAll(*modules)
     }
 }
 
@@ -67,6 +79,7 @@ class Play1Plugin : Plugin<Project> {
         val ext = project.extensions.create<Play1Extension>("play1").apply {
             frameworkVersion.convention("1.13.0-SNAPSHOT")
             modules.convention(emptyList())
+            appManagedLibraries.convention(emptyList())
         }
         // play.id and http.port are NOT exposed as DSL properties. Configure them in
         // conf/application.conf (or %prefix.* overrides). Override at task time via
@@ -86,6 +99,8 @@ class Play1Plugin : Plugin<Project> {
         }
 
         configureSourceSets(project, ext)
+        // After the build script, which sets frameworkPath and appManagedLibraries.
+        project.afterEvaluate { alignWithFrameworkLib(project, ext) }
 
         // compileJava/compileTestJava read modules/*/lib/*.jar via the source set
         // compileClasspath we configured above. They need extractPlayModules to have
@@ -226,6 +241,7 @@ class Play1Plugin : Plugin<Project> {
             projectName.set(project.name)
             frameworkPath.set(ext.frameworkPath)
             frameworkVersion.set(ext.frameworkVersion)
+            frameworkLib.from(frameworkLibFor(project, ext))
             playClasspath.from(playClasspathFor(project, ext, includeTestrunner = false))
             val customOutput = project.providers.gradleProperty("output").orNull
             outputFile.set(
@@ -440,9 +456,7 @@ class Play1Plugin : Plugin<Project> {
         javaExt.toolchain.languageVersion.set(JavaLanguageVersion.of(25))
         val frameworkClasspath = project.files(
             ext.frameworkPath.file(ext.frameworkVersion.map { "framework/play-$it.jar" }),
-            project.provider {
-                project.fileTree(ext.frameworkPath.dir("framework/lib").get().asFile) { include("**/*.jar") }
-            },
+            frameworkLibFor(project, ext),
             project.fileTree("lib") { include("**/*.jar") },
             project.fileTree("modules") { include("*/lib/*.jar") }
         )
@@ -457,10 +471,63 @@ class Play1Plugin : Plugin<Project> {
         }
     }
 
+    /** framework/lib's jars, less those of the libraries the application manages (PF-192). */
+    private fun frameworkLibFor(project: Project, ext: Play1Extension): FileCollection = project.files(project.provider {
+        val fwDir = ext.frameworkPath.get().asFile
+        val managed = ext.appManagedLibraries.get().toSet()
+        project.fileTree(File(fwDir, "framework/lib")) {
+            include("**/*.jar")
+            exclude(readLibCoordinates(fwDir).filter { it.module in managed }.map { it.jar })
+        }
+    })
+
+    /**
+     * PF-192: makes framework/lib the only copy of each library the fork ships. A jar there is
+     * a plain file to Gradle, which therefore resolved the application's own copy of the same
+     * library beside it, and with the resolved jars ahead of framework/lib that copy won. Each
+     * library in lib-coordinates.properties is excluded from the configurations framework/lib
+     * joins, except one the application manages, whose jar frameworkLibFor leaves out instead.
+     */
+    private fun alignWithFrameworkLib(project: Project, ext: Play1Extension) {
+        val fwDir = ext.frameworkPath.orNull?.asFile ?: return
+        val shipped = readLibCoordinates(fwDir).groupBy { it.module }
+        val managed = ext.appManagedLibraries.get().toSet()
+        val classpaths = CLASSPATHS_BESIDE_FRAMEWORK_LIB.mapNotNull { project.configurations.findByName(it) }
+        val declared = classpaths.flatMap { it.hierarchy }.distinct().flatMap { cfg ->
+            cfg.dependencies.withType(ExternalModuleDependency::class.java).map { cfg.name to it }
+        }
+
+        for ((module, jars) in shipped) {
+            if (module in managed) continue
+            classpaths.forEach { it.exclude(mapOf("group" to jars.first().group, "module" to jars.first().artifact)) }
+        }
+        for ((cfg, dep) in declared) {
+            val module = "${dep.group}:${dep.name}"
+            val jars = shipped[module] ?: continue
+            if (module in managed) continue
+            project.logger.warn(
+                "~ WARNING: $cfg(\"$module${dep.version?.let { ":$it" }.orEmpty()}\") has no effect: the application " +
+                    "compiles and runs against $module ${jars.first().version} from framework/lib. Remove the " +
+                    "declaration, or add \"$module\" to play1 { appManagedLibraries(...) } to keep the application's version."
+            )
+        }
+        for (module in managed) {
+            val jars = shipped[module]
+            if (jars == null) {
+                project.logger.warn("~ WARNING: play1 { appManagedLibraries } lists $module, which framework/lib does not ship")
+                continue
+            }
+            val versions = declared.filter { (_, dep) -> "${dep.group}:${dep.name}" == module }.mapNotNull { it.second.version }.distinct()
+            val appVersion = versions.joinToString(", ").ifEmpty { "the version the application's dependencies resolve" }
+            project.logger.lifecycle(
+                "~ $module is application-managed: $appVersion in place of the fork's ${jars.first().version} " +
+                    "(${jars.joinToString(", ") { "framework/lib/${it.jar}" }} left off every classpath)"
+            )
+        }
+    }
 
     private fun playClasspathFor(project: Project, ext: Play1Extension, includeTestrunner: Boolean): FileCollection {
         val frameworkJar = ext.frameworkPath.file(ext.frameworkVersion.map { "framework/play-$it.jar" })
-        val frameworkLibDir = ext.frameworkPath.dir("framework/lib")
         val testrunnerLib = project.provider {
             if (includeTestrunner) {
                 project.fileTree(ext.frameworkPath.dir("modules/testrunner/lib").get().asFile) { include("**/*.jar") }
@@ -481,7 +548,7 @@ class Play1Plugin : Plugin<Project> {
             gradleRuntimeClasspath,
             project.fileTree("lib") { include("**/*.jar") },
             project.fileTree("modules") { include("*/lib/*.jar") },
-            project.provider { project.fileTree(frameworkLibDir.get().asFile) { include("**/*.jar") } },
+            frameworkLibFor(project, ext),
             testrunnerLib
         )
     }
@@ -1160,6 +1227,34 @@ private const val JUL_LOG_MANAGER_ARG = "-D$JUL_MANAGER_PROPERTY=$LOG4J_JUL_MANA
 // four places and in the same slot, so an application's own =true still wins.
 private const val LOG4J_SHUTDOWN_HOOK_PROPERTY = "log4j2.shutdownHookEnabled"
 private const val LOG4J_SHUTDOWN_HOOK_ARG = "-D$LOG4J_SHUTDOWN_HOOK_PROPERTY=false"
+
+// PF-192: the configurations whose jars end up beside framework/lib's: main and test
+// compilation, to which configureSourceSets adds it, and main's runtime, from which
+// playClasspathFor builds every Play JVM's classpath. Not testRuntimeClasspath: Gradle's
+// own test task runs without framework/lib, so an exclude there would take a library
+// away and put nothing in its place.
+private val CLASSPATHS_BESIDE_FRAMEWORK_LIB = listOf("compileClasspath", "runtimeClasspath", "testCompileClasspath")
+
+/** A jar of framework/lib with Maven coordinates (PF-192). */
+internal data class LibJar(val jar: String, val group: String, val artifact: String, val version: String) {
+    val module get() = "$group:$artifact"
+}
+
+/**
+ * The jars of framework/lib that have coordinates, from the lib-coordinates.properties that
+ * `ant jar` writes beside play-<version>.jar. A framework built before PF-192 has no such
+ * file, and then nothing is excluded, as before.
+ */
+internal fun readLibCoordinates(frameworkDir: File): List<LibJar> {
+    val file = File(frameworkDir, "framework/lib-coordinates.properties")
+    if (!file.isFile) return emptyList()
+    return file.readLines()
+        .filter { it.isNotBlank() && !it.startsWith("#") }
+        .mapNotNull { line ->
+            val parts = line.substringAfter('=').split(':')
+            if (parts.size < 3) null else LibJar(line.substringBefore('='), parts[0], parts[1], parts[2])
+        }
+}
 
 // PF-185: the JDK's AOT cache for an application started through Gradle, relative
 // to the application directory. playAotGen writes it; playRun, playStart and
@@ -2082,6 +2177,8 @@ abstract class PlayBundleTask : DefaultTask() {
     @get:Internal abstract val projectName: Property<String>
     @get:Internal abstract val frameworkPath: DirectoryProperty
     @get:Internal abstract val frameworkVersion: Property<String>
+    /** framework/lib's jars, less those of the libraries the application manages (PF-192). */
+    @get:Internal abstract val frameworkLib: ConfigurableFileCollection
     @get:Internal abstract val playClasspath: ConfigurableFileCollection
     @get:OutputFile abstract val outputFile: RegularFileProperty
 
@@ -2108,7 +2205,7 @@ abstract class PlayBundleTask : DefaultTask() {
         if (!frameworkJar.isFile) {
             throw GradleException("Framework jar not found at ${frameworkJar.absolutePath}. Did you run `ant jar` in the framework?")
         }
-        val frameworkLibDir = File(fwDir, "framework/lib")
+        val frameworkLibJars = frameworkLib.files.filter { it.isFile }.sortedBy { it.name }
 
         // Same dist-shaped frontend build as playDist: public/spa/ is produced by
         // the shared playFrontendSpa task both packaging tasks depend on.
@@ -2180,10 +2277,8 @@ abstract class PlayBundleTask : DefaultTask() {
         // conf/ on its javaPath. Do not add a directory to this list.
         val classpathEntries = mutableListOf<String>()
         classpathEntries += "framework/play-$fwVersion.jar"
-        if (frameworkLibDir.isDirectory) {
-            frameworkLibDir.listFiles()?.filter { it.isFile && it.name.endsWith(".jar") }?.sortedBy { it.name }?.forEach {
-                classpathEntries += "framework/lib/${it.name}"
-            }
+        frameworkLibJars.forEach {
+            classpathEntries += "framework/lib/${it.name}"
         }
         // By name, not by path below lib/: step 5 below ships these flattened.
         appLibJars.sortedBy { it.name }.forEach { jar ->
@@ -2268,10 +2363,8 @@ abstract class PlayBundleTask : DefaultTask() {
             copyToZipfs(frameworkJar.toPath(), zipfs.getPath("/$appName/framework/play-$fwVersion.jar"))
 
             // 3. Framework lib jars.
-            if (frameworkLibDir.isDirectory) {
-                frameworkLibDir.listFiles()?.filter { it.isFile && it.name.endsWith(".jar") }?.sortedBy { it.name }?.forEach { jar ->
-                    copyToZipfs(jar.toPath(), zipfs.getPath("/$appName/framework/lib/${jar.name}"))
-                }
+            frameworkLibJars.forEach { jar ->
+                copyToZipfs(jar.toPath(), zipfs.getPath("/$appName/framework/lib/${jar.name}"))
             }
 
             // 3b. PF-181: the framework's default messages (validation.*, since.*).

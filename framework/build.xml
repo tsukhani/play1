@@ -56,6 +56,7 @@
         <delete dir="tests-results" />
         <delete dir="tests-tmp" />
         <delete file="src/play/version" />
+        <delete file="lib-coordinates.properties" />
         <delete includeemptydirs="true">
             <fileset dir=".">
                 <include name="play-*.jar" />
@@ -128,7 +129,7 @@
         <antcall target="jar"/>
     </target>
 
-    <target name="jar" depends="clean,version,compile,modules" description="create play.jar">
+    <target name="jar" depends="clean,version,compile,lib-coordinates,modules" description="create play.jar">
         <echo message="${version}" file="src/play/version" />
         <echo message="${version}" file="classes/play/version" />
         <echo message="build-release=${build-release}" />
@@ -166,6 +167,23 @@
             <sysproperty key="play.version" value="${baseversion}"/>
             <sysproperty key="prune" value="${prune}"/>
             <sysproperty key="verbose" value="${verbose}"/>
+        </java>
+    </target>
+
+    <!-- PF-192: write lib-coordinates.properties, the Maven coordinates of every jar in lib/,
+         from dependencies.yml. The gradle-plugin reads it beside play-${version}.jar to keep an
+         application's own copy of these libraries off its classpaths. Fails on a jar in lib/
+         that no entry names and on an entry whose jar lib/ lacks; `ant resolve -Dprune=true`
+         brings the two back in line. -->
+    <target name="lib-coordinates" depends="compile" description="write lib-coordinates.properties from dependencies.yml; fail when lib/ and dependencies.yml disagree">
+        <java classname="play.deps.LibCoordinates" fork="true" failonerror="true">
+            <classpath>
+                <pathelement location="classes"/>
+                <fileset dir="lib">
+                    <include name="*.jar"/>
+                </fileset>
+            </classpath>
+            <sysproperty key="framework.path" value="${basedir}"/>
         </java>
     </target>
 

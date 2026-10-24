@@ -14,6 +14,7 @@ _bmad-output/
 framework/tests-results
 framework/src/play/version
 framework/play-*.jar
+framework/lib-coordinates.properties
 
 bitbucket.log
 .mcp.json

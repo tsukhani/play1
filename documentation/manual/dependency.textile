@@ -9,7 +9,7 @@ h2. <a name="declaring">Declaring application dependencies</a>
 Add dependencies to the @dependencies@ block in @build.gradle.kts@:
 
 bc. dependencies {
-    implementation("org.apache.commons:commons-lang3:3.14.0")
+    implementation("org.apache.commons:commons-csv:1.14.1")
     implementation("com.google.guava:guava:33.0.0-jre")
 }
 
@@ -37,6 +37,37 @@ play1 {
 The plugin extracts each declared module into the application's @modules/@
 directory at build time. Module overlays (the legacy @override(f, t)@
 mechanism) work transparently because modules are real directories on disk.
+
+
+h2. <a name="shipped">Libraries the framework ships</a>
+
+The framework ships its own dependencies in @framework/lib/@: Netty,
+Hibernate, Jackson, OkHttp, Log4j and others. Your application compiles and
+runs against those copies, and the Play 1 plugin keeps Gradle from resolving
+a second copy of any of them. It excludes them from your application's
+dependencies, whether you declare them or another library brings them in. A
+declaration of one of them therefore has no effect, and the build says so:
+
+bc. ~ WARNING: implementation("com.squareup.okhttp3:okhttp-jvm:5.5.0") has no effect: the application compiles and runs against com.squareup.okhttp3:okhttp-jvm 5.5.1 from framework/lib. Remove the declaration, or add "com.squareup.okhttp3:okhttp-jvm" to play1 { appManagedLibraries(...) } to keep the application's version.
+
+A library that reached your application only through one of those leaves
+with it. The framework ships what it uses itself, which is not always
+everything the library would bring in, so if your code needs such a
+library, declare it. Comparing @play classpath@ before and after an upgrade
+shows what left.
+
+To keep your own version of such a library, list it as @group:artifact@ in
+@appManagedLibraries@. The plugin then leaves the framework's jar for it off
+every classpath and out of @play bundle@, and Gradle resolves your version
+like any other dependency:
+
+bc. play1 {
+    appManagedLibraries("com.squareup.okhttp3:okhttp-jvm")
+}
+
+The framework was built and tested against its own version, so take a
+library over only when you need a different one. @play classpath@ shows the
+result.
 
 
 h2. <a name="resolving">Resolving dependencies</a>

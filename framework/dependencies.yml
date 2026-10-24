@@ -18,21 +18,21 @@ require:    &allDependencies
     - com.google.code.gson -> gson 2.14.0
     - com.jamonapi -> jamon 2.82
 
-    - commons-beanutils 1.11.0
-    - commons-codec 1.22.0
+    - commons-beanutils -> commons-beanutils 1.11.0
+    - commons-codec -> commons-codec 1.22.0
     - org.apache.commons -> commons-email2-core 2.0.0-M1
     - org.apache.commons -> commons-email2-jakarta 2.0.0-M1
-    - commons-fileupload 1.6.0
-    - commons-io 2.22.0
+    - commons-fileupload -> commons-fileupload 1.6.0
+    - commons-io -> commons-io 2.22.0
     - org.apache.commons -> commons-lang3 3.21.0
     - org.apache.commons -> commons-text 1.15.0
-    - commons-logging 1.4.0
+    - commons-logging -> commons-logging 1.4.0
     - com.h2database -> h2 2.5.252
     - jakarta.activation -> jakarta.activation-api 2.1.4
     - com.sun.mail -> jakarta.mail 2.0.2
     - jakarta.inject -> jakarta.inject-api 2.0.1
     - jakarta.validation -> jakarta.validation-api 3.1.1
-    - jaxen 2.0.6
+    - jaxen -> jaxen 2.0.6
     # PF-63: javax.cache (JSR-107) API. Used at runtime by hibernate-jcache;
     # transitiveDependencies: false means it must be listed explicitly.
     # Without it, Hibernate's JCacheRegionFactory fails at boot with
@@ -54,6 +54,9 @@ require:    &allDependencies
     - org.junit.platform -> junit-platform-commons 6.1.3
     - org.opentest4j -> opentest4j 1.3.0
     - org.apiguardian -> apiguardian-api 1.1.2
+    # PF-192: deliberately without a group, the one entry that has none. No artifact on
+    # Maven Central is this jar (net.sourceforge.jregex:jregex 1.2_01 has other bytes), so
+    # lib-coordinates.properties lists it as having no coordinates instead of guessing.
     - jregex 1.2_01
     - org.apache.logging.log4j -> log4j-api 2.26.1
     - org.apache.logging.log4j -> log4j-core 2.26.1

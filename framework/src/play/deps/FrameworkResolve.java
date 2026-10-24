@@ -54,9 +54,10 @@ public class FrameworkResolve {
      * coordinates and so can't be declared in dependencies.yml. Each was
      * repackaged with a {@code jj.play.*} prefix to avoid classpath conflicts
      * with apps bringing their own copies of the underlying libraries.
-     * Treated as known-intentional during stray detection (PF-63).
+     * Treated as known-intentional during stray detection (PF-63), and listed as
+     * having no coordinates by {@link LibCoordinates} (PF-192).
      */
-    private static final Set<String> VENDORED_JARS = Set.of(
+    static final Set<String> VENDORED_JARS = Set.of(
         "jj-wikitext.jar",      // Eclipse Mylyn WikiText, used by modules/docviewer
         "jj-textile.jar"        // Eclipse Mylyn Textile dialect, used by modules/docviewer
     );
