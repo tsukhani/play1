@@ -80,40 +80,8 @@
         <cve>CVE-2026-54285</cve>
     </suppress>
 
-    <suppress>
-        <notes><![CDATA[
-            Code not in the jar. htmlunit-websocket-client (HtmlUnit's, for play autotest) shades
-            Jetty's websocket client, relocated to org.htmlunit.jetty: the client, http, io, util
-            and websocket packages and nothing else. CVE-2025-5115 is in Jetty's HTTP/2 server,
-            CVE-2026-10050 in its server-side Digest authentication and CVE-2026-5795 in its
-            JASPIAuthenticator, none of which the jar contains. The path also matches the
-            shaded jetty-client POM inside the jar, which is what dependency-check reports.
-        ]]></notes>
-        <filePath regex="true">.*[/\\]modules[/\\]testrunner[/\\]firephoque[/\\]htmlunit-websocket-client-[^/\\]*\.jar([/\\].*)?$</filePath>
-        <cve>CVE-2025-5115</cve>
-        <cve>CVE-2026-10050</cve>
-        <cve>CVE-2026-5795</cve>
-    </suppress>
-
     <!-- ==================================================================
          SECTION B - TIME-BOXED RISK ACCEPTS (expire and fail the scan again)
          ================================================================== -->
-
-    <suppress until="2027-01-31Z">
-        <notes><![CDATA[
-            Present, not exploitable as used, no fix in this line. CVE-2026-2332 is request
-            smuggling through chunk extensions in Jetty's HTTP/1.1 parser, fixed in 9.4.60.
-            htmlunit-websocket-client 4.14.0 shades Jetty 9.4.57, parser included, and the last
-            HtmlUnit 4.x (4.21.0) still shades 9.4.58. The parser smuggles requests past a server
-            or proxy that parses them. FirePhoque uses it only as a client, against the
-            application under test, on a developer or CI machine. firephoque never reaches an
-            application's runtime classpath or a bundle.
-
-            ACTION ON EXPIRY: PF-196, moving FirePhoque to HtmlUnit 5 (Jetty 12), removes this
-            entry.
-        ]]></notes>
-        <filePath regex="true">.*[/\\]modules[/\\]testrunner[/\\]firephoque[/\\]htmlunit-websocket-client-[^/\\]*\.jar([/\\].*)?$</filePath>
-        <cve>CVE-2026-2332</cve>
-    </suppress>
 
 </suppressions>
