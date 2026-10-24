@@ -15,11 +15,11 @@ require:    &allDependencies
     - org.ow2.asm -> asm-util 9.11.1
     - org.ow2.asm -> asm-tree 9.11.1
     - org.ow2.asm -> asm-analysis 9.11.1
-    - com.google.code.gson -> gson 2.14.0
+    - com.google.code.gson -> gson 2.15.0
     - com.jamonapi -> jamon 2.82
 
     - commons-beanutils -> commons-beanutils 1.11.0
-    - commons-codec -> commons-codec 1.22.0
+    - commons-codec -> commons-codec 1.23.0
     - org.apache.commons -> commons-email2-core 2.0.0-M1
     - org.apache.commons -> commons-email2-jakarta 2.0.0-M1
     - commons-fileupload -> commons-fileupload 1.6.0
