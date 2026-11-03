@@ -108,7 +108,9 @@
       groupName: "Swagger / OpenAPI"
     },
     {
-      matchPackageNames: ["com.fasterxml.jackson**"],
+      // Jackson 3 lives under tools.jackson; jackson-annotations stays under
+      // com.fasterxml.jackson at 2.x (see the pin below).
+      matchPackageNames: ["com.fasterxml.jackson**", "tools.jackson**"],
       groupName: "Jackson"
     },
     {
@@ -181,6 +183,15 @@
       // trailing `i` flag is supported (util/string-match.ts accepts `/i$`).
       matchPackageNames: ["jakarta.inject:**"],
       allowedVersions: "!/\\.MR$/i"
+    },
+    {
+      // Jackson 3 keeps using the 2.x annotations on purpose: its BOM manages
+      // com.fasterxml.jackson.core:jackson-annotations at 2.22, and there is no
+      // tools.jackson annotations artifact. Maven Central's newest version under
+      // the old group is 3.0-rc5, a release candidate that sorts above every 2.x,
+      // so without this pin Renovate would offer it as an upgrade.
+      matchPackageNames: ["com.fasterxml.jackson.core:jackson-annotations"],
+      allowedVersions: "/^2\\./"
     },
     {
       // PF-195: framework/dependency-check pins OWASP dependency-check to the version the
