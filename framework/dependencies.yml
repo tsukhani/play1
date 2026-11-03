@@ -208,7 +208,7 @@ require:    &allDependencies
     - tools.jackson.dataformat -> jackson-dataformat-yaml 3.2.4
     # jackson-dataformat-yaml 3 parses with snakeyaml-engine, not snakeyaml; the
     # version is the one its pom declares.
-    - org.snakeyaml -> snakeyaml-engine 3.0.1
+    - org.snakeyaml -> snakeyaml-engine 3.2
     - com.fasterxml.woodstox -> woodstox-core 7.3.0
     - org.codehaus.woodstox -> stax2-api 4.3.2
     # PF-12: OpenAPI 3 spec generation. swagger-models supplies the OpenAPI
