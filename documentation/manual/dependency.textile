@@ -109,7 +109,7 @@ Gradle resolves the highest version anything asks for, so a BOM also raises
 a family member you declare at a lower version to the framework's. Listing a
 family's main library in @appManagedLibraries@, such as
 @com.squareup.okhttp3:okhttp-jvm@ for OkHttp or
-@com.fasterxml.jackson.core:jackson-databind@ for Jackson, leaves that
+@tools.jackson.core:jackson-databind@ for Jackson, leaves that
 family's BOM out, because the family's version is then yours.
 
 

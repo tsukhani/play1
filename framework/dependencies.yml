@@ -194,15 +194,21 @@ require:    &allDependencies
     - org.yaml -> snakeyaml 2.7
     # PF-26: Jackson XML replaces XStream for renderXml(Object). Jackson 2.12+
     # requires a non-default Stax provider, so woodstox-core + stax2-api are
-    # mandatory companions, not optional. jackson-annotations versions are
-    # pinned at 2.22 by the Jackson 2.22.x BOM (annotations is stable across
-    # point releases).
+    # mandatory companions, not optional.
+    # PF-198 follow-up: Jackson 3 (group tools.jackson), required by swagger 3.
+    # jackson-annotations is the one Jackson 3 artifact that stays on the
+    # com.fasterxml.jackson.core group at a 2.x version (annotation types keep
+    # their package), so annotating classes with @JsonProperty is unchanged.
+    # Jackson 3 folds the java.time module into databind, so there is no
+    # jsr310 jar any more.
     - com.fasterxml.jackson.core -> jackson-annotations 2.22
-    - com.fasterxml.jackson.core -> jackson-core 2.22.4
-    - com.fasterxml.jackson.core -> jackson-databind 2.22.4
-    - com.fasterxml.jackson.dataformat -> jackson-dataformat-xml 2.22.4
-    - com.fasterxml.jackson.dataformat -> jackson-dataformat-yaml 2.22.4
-    - com.fasterxml.jackson.datatype -> jackson-datatype-jsr310 2.22.4
+    - tools.jackson.core -> jackson-core 3.2.4
+    - tools.jackson.core -> jackson-databind 3.2.4
+    - tools.jackson.dataformat -> jackson-dataformat-xml 3.2.4
+    - tools.jackson.dataformat -> jackson-dataformat-yaml 3.2.4
+    # jackson-dataformat-yaml 3 parses with snakeyaml-engine, not snakeyaml; the
+    # version is the one its pom declares.
+    - org.snakeyaml -> snakeyaml-engine 3.0.1
     - com.fasterxml.woodstox -> woodstox-core 7.3.0
     - org.codehaus.woodstox -> stax2-api 4.3.2
     # PF-12: OpenAPI 3 spec generation. swagger-models supplies the OpenAPI
@@ -210,9 +216,8 @@ require:    &allDependencies
     # Jackson with consistent ordering; swagger-annotations is a compile-time
     # peer of swagger-models. Annotation-driven enrichment of controllers is
     # deliberately out of scope for the initial cut — swagger-jaxrs2 et al.
-    # would pull JAX-RS, which Play does not use. jackson-dataformat-yaml +
-    # jackson-datatype-jsr310 are runtime peers of swagger-core's Yaml.mapper()
-    # and ObjectMapper customizations.
+    # would pull JAX-RS, which Play does not use. jackson-dataformat-yaml is a
+    # runtime peer of swagger-core's Yaml.mapper().
     - io.swagger.core.v3 -> swagger-models 3.0.0
     - io.swagger.core.v3 -> swagger-core 3.0.0
     - io.swagger.core.v3 -> swagger-annotations 3.0.0

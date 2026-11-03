@@ -373,12 +373,12 @@ public class OpenApiTestController extends Controller {
 
     /** Jackson tree, via JsonNode (superclass detection). */
     public static class WithJacksonTreeBase {
-        public com.fasterxml.jackson.databind.JsonNode payload;
+        public tools.jackson.databind.JsonNode payload;
     }
 
     /** Jackson tree, via ObjectNode subclass (superclass walk should still hit JsonNode). */
     public static class WithJacksonTreeSubclass {
-        public com.fasterxml.jackson.databind.node.ObjectNode payload;
+        public tools.jackson.databind.node.ObjectNode payload;
     }
 
     public static void postWithGsonTree(WithGsonTree body) { _ignore(body); }

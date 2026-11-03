@@ -698,7 +698,7 @@ public class OpenApiGenerator {
      *   <li>Gson: {@code JsonElement}, {@code JsonObject}, {@code JsonArray},
      *       {@code JsonPrimitive}, {@code JsonNull} (explicit list — Gson has
      *       exactly these four subclasses)</li>
-     *   <li>Jackson: {@code JsonNode} and any subclass (via superclass walk —
+     *   <li>Jackson: {@code JsonNode} (Jackson 3 and 2) and any subclass (via superclass walk —
      *       covers {@code ArrayNode}, {@code ObjectNode}, {@code TextNode}, etc.)</li>
      *   <li>json.org: {@code JSONObject}, {@code JSONArray}</li>
      * </ul>
@@ -716,7 +716,9 @@ public class OpenApiGenerator {
             return true;
         }
         for (Class<?> c = cls; c != null; c = c.getSuperclass()) {
-            if (c.getName().equals("com.fasterxml.jackson.databind.JsonNode")) {
+            String superName = c.getName();
+            if (superName.equals("tools.jackson.databind.JsonNode")
+                    || superName.equals("com.fasterxml.jackson.databind.JsonNode")) {
                 return true;
             }
         }

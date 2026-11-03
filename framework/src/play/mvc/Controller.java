@@ -218,7 +218,7 @@ public class Controller implements PlayController, ControllerSupport, LocalVaria
 
     /**
      * Return a 200 OK text/xml response. The object is serialized via Jackson XML
-     * ({@link com.fasterxml.jackson.dataformat.xml.XmlMapper}); annotate fields with
+     * ({@link tools.jackson.dataformat.xml.XmlMapper}); annotate fields with
      * Jackson's {@code @JacksonXmlProperty}, {@code @JacksonXmlElementWrapper},
      * {@code @JacksonXmlRootElement}, etc. for fine-grained control.
      *

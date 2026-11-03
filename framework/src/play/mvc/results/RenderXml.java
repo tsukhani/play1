@@ -7,8 +7,8 @@ import play.libs.XML;
 import play.mvc.Http.Request;
 import play.mvc.Http.Response;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.dataformat.xml.XmlMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.dataformat.xml.XmlMapper;
 
 /**
  * 200 OK with a text/xml
@@ -32,7 +32,7 @@ public class RenderXml extends Result {
     public RenderXml(Object o) {
         try {
             this.xml = XML_MAPPER.writeValueAsString(o);
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             throw new UnexpectedException(e);
         }
     }

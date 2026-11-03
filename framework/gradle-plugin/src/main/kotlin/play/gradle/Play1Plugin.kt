@@ -1364,12 +1364,12 @@ internal fun readLibCoordinates(frameworkDir: File): List<LibJar> {
 
 // PF-193: the BOM of each library family framework/lib ships, by the module whose version is the
 // family's (an "anchor"): jackson-annotations, for one, is versioned 2.22 beside databind's
-// 2.22.4. Only BOMs that manage their own family alone, which leaves out hibernate-platform and
+// 3.2.4. Only BOMs that manage their own family alone, which leaves out hibernate-platform and
 // jaxb-bom, and each is published with every release of its anchor.
 internal val FRAMEWORK_BOMS = listOf(
     "com.squareup.okhttp3:okhttp-jvm" to "com.squareup.okhttp3:okhttp-bom",
     "com.squareup.okio:okio-jvm" to "com.squareup.okio:okio-bom",
-    "com.fasterxml.jackson.core:jackson-databind" to "com.fasterxml.jackson:jackson-bom",
+    "tools.jackson.core:jackson-databind" to "tools.jackson:jackson-bom",
     "io.netty:netty-common" to "io.netty:netty-bom",
     "io.micrometer:micrometer-core" to "io.micrometer:micrometer-bom",
     "io.prometheus:prometheus-metrics-core" to "io.prometheus:prometheus-metrics-bom",
