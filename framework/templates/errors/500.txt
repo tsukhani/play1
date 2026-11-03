@@ -1,3 +1,4 @@
+#{if play.mode.name() == 'DEV'}
 #{if exception instanceof play.exceptions.PlayException}
 ${exception.errorTitle} 
 ${exception.errorDescription.replace('<strong>', '').replace('</strong>', '')}
@@ -19,4 +20,11 @@ This exception has been logged with id ${exception.id}
 #{/if}
 #{else}
 ${exception.message}
+#{/else}
+#{/if}
+#{else}
+An internal error occurred.
+#{if exception instanceof play.exceptions.PlayException}
+This exception has been logged with id ${exception.id}
+#{/if}
 #{/else}

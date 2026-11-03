@@ -468,7 +468,7 @@ public class GenericModel extends JPABase {
      *            The entity id
      * @param <T>
      *            the type of the entity
-     * @return The entity
+     * @return The entity, or null when no entity has that id or {@code id} is null
      */
     public static <T extends JPABase> T findById(Object id) {
         throw new UnsupportedOperationException("Please annotate your JPA model with @jakarta.persistence.Entity annotation.");

@@ -1,4 +1,15 @@
+#{if play.mode.name() == 'DEV'}
 <error>
-    <type>${exception?.class.name}</type>
+    <type>${exception?.class?.name}</type>
     <message>${exception?.message?.escape()}</message>
 </error>
+#{/if}
+#{else}
+<error>
+    <type>InternalServerError</type>
+    <message>An internal error occurred.</message>#{if exception instanceof play.exceptions.PlayException}
+
+    <id>${exception.id}</id>#{/if}
+
+</error>
+#{/else}

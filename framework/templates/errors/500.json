@@ -1,4 +1,14 @@
+#{if play.mode.name() == 'DEV'}
 {
-    "type":    "${exception?.class.name}",
-    "message": "${exception?.message?.replace("\"", "\\\"")}"
+    "type":    ${new com.google.gson.Gson().toJson(exception?.class?.name).raw()},
+    "message": ${new com.google.gson.Gson().toJson(exception?.message).raw()}
 }
+#{/if}
+#{else}
+{
+    "type":    "InternalServerError",
+    "message": "An internal error occurred."#{if exception instanceof play.exceptions.PlayException},
+    "id":      "${exception.id}"#{/if}
+
+}
+#{/else}

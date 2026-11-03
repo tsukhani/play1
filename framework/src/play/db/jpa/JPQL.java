@@ -70,6 +70,10 @@ public class JPQL {
     }
 
     public JPABase findById(String dbName, String entity, Object id) throws Exception {
+        // PF-198: Hibernate rejects a null id; JPAModelLoader.findById already answers null for it.
+        if (id == null) {
+            return null;
+        }
         return (JPABase) em(dbName).find(Play.classloader.loadClass(entity), id);
     }
 
