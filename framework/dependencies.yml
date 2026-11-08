@@ -201,11 +201,11 @@ require:    &allDependencies
     # their package), so annotating classes with @JsonProperty is unchanged.
     # Jackson 3 folds the java.time module into databind, so there is no
     # jsr310 jar any more.
-    - com.fasterxml.jackson.core -> jackson-annotations 2.22
-    - tools.jackson.core -> jackson-core 3.2.4
-    - tools.jackson.core -> jackson-databind 3.2.4
-    - tools.jackson.dataformat -> jackson-dataformat-xml 3.2.4
-    - tools.jackson.dataformat -> jackson-dataformat-yaml 3.2.4
+    - com.fasterxml.jackson.core -> jackson-annotations 2.23
+    - tools.jackson.core -> jackson-core 3.3.0
+    - tools.jackson.core -> jackson-databind 3.3.0
+    - tools.jackson.dataformat -> jackson-dataformat-xml 3.3.0
+    - tools.jackson.dataformat -> jackson-dataformat-yaml 3.3.0
     # jackson-dataformat-yaml 3 parses with snakeyaml-engine, not snakeyaml; the
     # version is the one its pom declares.
     - org.snakeyaml -> snakeyaml-engine 3.2
