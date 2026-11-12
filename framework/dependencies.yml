@@ -24,7 +24,7 @@ require:    &allDependencies
     - org.apache.commons -> commons-email2-jakarta 2.0.0-M1
     - commons-fileupload -> commons-fileupload 1.6.0
     - commons-io -> commons-io 2.22.0
-    - org.apache.commons -> commons-lang3 3.21.0
+    - org.apache.commons -> commons-lang3 3.22.0
     - org.apache.commons -> commons-text 1.15.0
     - commons-logging -> commons-logging 1.4.0
     - com.h2database -> h2 2.5.252
