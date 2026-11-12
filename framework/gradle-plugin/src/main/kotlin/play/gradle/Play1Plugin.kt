@@ -1871,6 +1871,34 @@ abstract class PlayStartTask : DefaultTask() {
     }
 }
 
+/**
+ * How long playStop and playRestart wait for the JVM after the SIGTERM: past the jobs drain
+ * budget (play.jobs.stop.timeout, default 30s), as bundle-play.sh's stop does (PF-120 / PF-128).
+ */
+internal const val STOP_WAIT_SECONDS = 35L
+
+/**
+ * PF-202: wait for [handle] to exit, for at most [timeoutMillis]; false when it is still alive
+ * then. `ProcessHandle.onExit()` completes at once only for a child of this JVM. For any other
+ * process the JDK checks after 300 ms, then 330 ms, 360 ms and so on, and the Gradle process
+ * that stops the application started it only when it is the daemon that ran playStart. So
+ * `isAlive` is checked every 20 ms as well, as bundle-play.sh checks (PF-199), while `onExit()`
+ * keeps a stop from that daemon as quick as it was.
+ */
+internal fun awaitExit(handle: ProcessHandle, timeoutMillis: Long): Boolean {
+    val exit = handle.onExit()
+    val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis)
+    while (true) {
+        try {
+            exit.get(20, TimeUnit.MILLISECONDS)
+            return true
+        } catch (e: TimeoutException) {
+            if (!handle.isAlive) return true
+            if (System.nanoTime() - deadline >= 0) return false
+        }
+    }
+}
+
 @DisableCachingByDefault(because = "Process lifecycle task (sends SIGTERM); produces no cacheable output")
 abstract class PlayStopTask : DefaultTask() {
     @get:Internal abstract val applicationPath: DirectoryProperty
@@ -1890,13 +1918,11 @@ abstract class PlayStopTask : DefaultTask() {
             logger.lifecycle("~ Play was not running (pid $pid not found); removing stale pid file")
         } else {
             handle.destroy()
-            try {
-                // Wait past the jobs drain budget (play.jobs.stop.timeout, default 30s) so a
-                // clean-but-slow shutdown is observed as a real exit rather than tripping a
-                // wrapper deadline and surfacing as BUILD FAILED on a successful stop (PF-120).
-                handle.onExit().get(35, TimeUnit.SECONDS)
-            } catch (e: TimeoutException) {
-                logger.lifecycle("~ SIGTERM sent; process (pid $pid) still draining after 35s. Leaving it to the OS to reap.")
+            // Wait past the jobs drain budget (play.jobs.stop.timeout, default 30s) so a
+            // clean-but-slow shutdown is observed as a real exit rather than tripping a
+            // wrapper deadline and surfacing as BUILD FAILED on a successful stop (PF-120).
+            if (!awaitExit(handle, TimeUnit.SECONDS.toMillis(STOP_WAIT_SECONDS))) {
+                logger.lifecycle("~ SIGTERM sent; process (pid $pid) still draining after ${STOP_WAIT_SECONDS}s. Leaving it to the OS to reap.")
                 return
             }
         }
@@ -1927,12 +1953,10 @@ abstract class PlayRestartTask : DefaultTask() {
             if (pid != null) {
                 ProcessHandle.of(pid).ifPresent { h ->
                     h.destroy()
-                    try {
-                        // Match playStop: wait past the jobs drain budget (default 30s) so a
-                        // clean-but-slow shutdown is not reported as BUILD FAILED (PF-120).
-                        h.onExit().get(35, TimeUnit.SECONDS)
-                    } catch (e: TimeoutException) {
-                        logger.lifecycle("~ Previous process (pid $pid) still draining after 35s; starting new instance anyway.")
+                    // Match playStop: wait past the jobs drain budget (default 30s) so a
+                    // clean-but-slow shutdown is not reported as BUILD FAILED (PF-120).
+                    if (!awaitExit(h, TimeUnit.SECONDS.toMillis(STOP_WAIT_SECONDS))) {
+                        logger.lifecycle("~ Previous process (pid $pid) still draining after ${STOP_WAIT_SECONDS}s; starting new instance anyway.")
                     }
                 }
             }
