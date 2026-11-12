@@ -1891,7 +1891,7 @@ abstract class PlayStopTask : DefaultTask() {
         } else {
             handle.destroy()
             try {
-                // Wait past the jobs drain budget (play.jobs.stopTimeout, default 30s) so a
+                // Wait past the jobs drain budget (play.jobs.stop.timeout, default 30s) so a
                 // clean-but-slow shutdown is observed as a real exit rather than tripping a
                 // wrapper deadline and surfacing as BUILD FAILED on a successful stop (PF-120).
                 handle.onExit().get(35, TimeUnit.SECONDS)

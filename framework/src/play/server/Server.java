@@ -11,10 +11,12 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
+import io.netty.bootstrap.AbstractBootstrap;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelException;
+import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.EventLoopGroup;
@@ -150,7 +152,7 @@ public class Server {
                         .childHandler(new HttpServerPipelineFactory())
                         .childOption(ChannelOption.TCP_NODELAY, true);
 
-                serverChannels.add(bootstrap.bind(new InetSocketAddress(address, httpPort)).syncUninterruptibly().channel());
+                serverChannels.add(bind(bootstrap, new InetSocketAddress(address, httpPort)));
 
                 if (Play.mode == Mode.DEV) {
                     if (address == null) {
@@ -169,7 +171,7 @@ public class Server {
             }
 
         } catch (ChannelException e) {
-            Logger.error("Could not bind on port " + httpPort, e);
+            Logger.error("Could not bind on port %s: %s", httpPort, e.getMessage());
             fatal();
         }
 
@@ -185,7 +187,7 @@ public class Server {
                         .childOption(ChannelOption.TCP_NODELAY, true);
 
                 if (beforeBind != null) beforeBind.accept("HTTPS");
-                serverChannels.add(bootstrap.bind(new InetSocketAddress(secureAddress, httpsPort)).syncUninterruptibly().channel());
+                serverChannels.add(bind(bootstrap, new InetSocketAddress(secureAddress, httpsPort)));
 
                 if (Play.mode == Mode.DEV) {
                     if (secureAddress == null) {
@@ -204,7 +206,7 @@ public class Server {
             }
 
         } catch (ChannelException e) {
-            Logger.error("Could not bind on port " + httpsPort, e);
+            Logger.error("Could not bind on port %s: %s", httpsPort, e.getMessage());
             fatal();
         }
 
@@ -248,7 +250,7 @@ public class Server {
                             .channel(NioDatagramChannel.class)
                             .handler(quicCodec);
                     if (beforeBind != null) beforeBind.accept("HTTP/3");
-                    serverChannels.add(bootstrap.bind(new InetSocketAddress(secureAddress, httpsPort)).syncUninterruptibly().channel());
+                    serverChannels.add(bind(bootstrap, new InetSocketAddress(secureAddress, httpsPort)));
                     http3BoundOnHttpsPort = true;
                     if (secureAddress == null) {
                         Logger.info("Listening for HTTP/3 on UDP port %s ...", httpsPort);
@@ -275,6 +277,21 @@ public class Server {
            // print this line to STDOUT - not using logger, so auto test runner will not block if logger is misconfigured (see #1222)
            System.out.println("~ Server is up and running");
         }
+    }
+
+    /**
+     * Bind and wait, failing with a {@link ChannelException} the callers catch. A refused bind
+     * fails the future with the OS's {@code java.net.BindException}, which
+     * {@code syncUninterruptibly()} rethrows as it is: a checked exception that no catch here
+     * named, so a port in use left the start through {@code Server.main} ("Failed to start",
+     * exit 1) instead of {@link #fatal()}.
+     */
+    private static Channel bind(AbstractBootstrap<?, ?> bootstrap, InetSocketAddress address) {
+        ChannelFuture bound = bootstrap.bind(address).awaitUninterruptibly();
+        if (!bound.isSuccess()) {
+            throw new ChannelException(String.valueOf(bound.cause()), bound.cause());
+        }
+        return bound.channel();
     }
 
     /**

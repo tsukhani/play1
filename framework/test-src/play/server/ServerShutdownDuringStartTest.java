@@ -159,11 +159,33 @@ public class ServerShutdownDuringStartTest {
         assertThat(console).noneMatch(line -> line.contains(GAVE_UP));
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"HTTP", "HTTPS"})
+    public void aPortInUseEndsTheStartInTheFatalError(String listener, @TempDir File app) throws Exception {
+        // Netty fails the bind with the OS's java.net.BindException, which used to get past the
+        // constructor's catch and end the start in Server.main: "Failed to start", exit 1
+        try (ServerSocket taken = new ServerSocket(0)) {
+            int port = taken.getLocalPort();
+            List<String> console = listener.equals("HTTP")
+                    ? boot(app, 255, port, freePort())
+                    : boot(app, 255, freePort(), port);
+
+            assertThat(console).anyMatch(line -> line.contains("Could not bind on port " + port + ": java.net.BindException"));
+            assertThat(console).noneMatch(line -> line.contains("Failed to start"));
+            assertThat(console).noneMatch(line -> line.contains(GAVE_UP));
+        }
+    }
+
     /**
      * Run {@link Probe} on a scratch application with HTTP and HTTPS, which brings HTTP/3 where
      * the platform has native QUIC, and return its console, stdout and stderr together.
      */
     private static List<String> boot(File app, int exitCode, String... jvmArgs) throws Exception {
+        return boot(app, exitCode, freePort(), freePort(), jvmArgs);
+    }
+
+    private static List<String> boot(File app, int exitCode, int httpPort, int httpsPort, String... jvmArgs)
+            throws Exception {
         write(app, "conf/application.conf", "application.name=shutdown-during-start\napplication.mode=prod\n"
                 + "application.secret=${PLAY_SECRET}\n");
         write(app, "conf/routes", "GET / Application.index\n");
@@ -188,7 +210,7 @@ public class ServerShutdownDuringStartTest {
             "-Dapplication.path=" + app.getAbsolutePath()));
         cmd.addAll(List.of(jvmArgs));
         cmd.addAll(List.of("-cp", System.getProperty("java.class.path"), Probe.class.getName(),
-            "--http.port=" + freePort(), "--https.port=" + freePort()));
+            "--http.port=" + httpPort, "--https.port=" + httpsPort));
 
         File console = new File(app, "console.log");
         Process p = new ProcessBuilder(cmd).redirectErrorStream(true).redirectOutput(console).start();
