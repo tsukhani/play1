@@ -19,6 +19,7 @@ import java.util.regex.Pattern;
 
 import com.google.gson.Gson;
 
+import play.Invoker;
 import play.Logger;
 import play.Play;
 import play.exceptions.UnexpectedException;
@@ -912,10 +913,21 @@ public class Http {
         /**
          * Block the current (virtual) thread until the next event is available and return it.
          * Returns a {@link WebSocketClose} once the socket has closed.
+         *
+         * <p>PF-205: the wait is bracketed like {@code Controller.await(...)} (PF-121), so a
+         * socket idle between frames is not counted as in-flight work and the shutdown drain
+         * does not wait out its timeout for every open WebSocket. Handling an event stays
+         * counted.</p>
          */
         public WebSocketEvent nextEvent() {
             try {
-                WebSocketEvent event = events.take();
+                WebSocketEvent event;
+                Invoker.suspendInflight();
+                try {
+                    event = events.take();
+                } finally {
+                    Invoker.resumeInflight();
+                }
                 // Resume reads once the backlog has drained below half capacity (avoids jitter).
                 if (events.remainingCapacity() > events.size()) {
                     channel.setReadable(true);

@@ -138,8 +138,10 @@ public class Invoker {
      *
      * <p>Counts actively-running invocations only. A request parked in {@code Controller.await(...)}
      * (SSE, long-poll, await-on-future) brackets its wait with {@link #suspendInflight()} /
-     * {@link #resumeInflight()} (PF-121), so it is not counted while suspended; this drains active
-     * work, not open streams — those are closed by the subsequent hard shutdown.</p>
+     * {@link #resumeInflight()} (PF-121), so it is not counted while suspended, and so does a
+     * WebSocket action waiting in {@code Http.Inbound.nextEvent()} for its next frame (PF-205);
+     * this drains active work, not open streams or sockets — those are closed by the subsequent
+     * hard shutdown.</p>
      *
      * @param timeoutMs
      *            maximum time to wait, in milliseconds; {@code <= 0} polls once without waiting
