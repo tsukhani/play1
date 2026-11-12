@@ -555,14 +555,18 @@ case "$CMD" in
         pid=$(cat "$PID_FILE")
         if kill -0 "$pid" 2>/dev/null; then
             kill "$pid"
-            # Wait past the jobs drain budget (play.jobs.stopTimeout, default 30s)
+            # Wait past the jobs drain budget (play.jobs.stop.timeout, default 30s)
             # so a clean-but-slow shutdown finishes instead of being truncated
             # mid job-drain. Mirrors PlayStopTask in Play1Plugin.kt — keep the two
             # copies in sync (PF-120 / PF-128). No SIGKILL: once SIGTERM is sent we
             # leave reaping to the OS rather than hard-killing in-flight work.
-            for _ in $(seq 1 350); do
-                kill -0 "$pid" 2>/dev/null || break
-                sleep 0.1
+            # PF-199: a check every 20 ms notices the exit within about 20 ms, and a
+            # restart's outage includes that wait. The 35 s are elapsed time, not a
+            # number of checks, which would also count the start of every sleep.
+            # SECONDS counts whole seconds, so -le waits 35 to 36 s, never less.
+            deadline=$((SECONDS + 35))
+            while kill -0 "$pid" 2>/dev/null && [ "$SECONDS" -le "$deadline" ]; do
+                sleep 0.02
             done
             if kill -0 "$pid" 2>/dev/null; then
                 # Still draining: leave the pid file so status/pid keep tracking

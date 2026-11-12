@@ -649,6 +649,85 @@ class BundleLauncherTest {
         assertTrue(restart.stderr[1].contains("'--stacktrace'"), "'${restart.stderr[1]}' should name the argument")
     }
 
+    /**
+     * PF-199: a process in place of the JVM `stop` stops, recorded in [bundle]'s pid
+     * file. On SIGTERM it exits [termDelay] seconds later, or with null never does,
+     * as a JVM still draining. It is this test's own child, so the JDK reaps it the
+     * moment it exits, which is when `kill -0` stops finding it.
+     */
+    private fun standInJvm(bundle: File, termDelay: String?): Process {
+        val onTerm = if (termDelay == null) "''" else "'kill \$!; sleep $termDelay; exit 0'"
+        val jvm = ProcessBuilder("/bin/bash", "-c", "trap $onTerm TERM; echo ready; sleep 120 & wait \$!")
+            .redirectError(ProcessBuilder.Redirect.DISCARD)
+            .start()
+        // The trap is set: a SIGTERM sent before it would end the shell at once.
+        assertEquals("ready", jvm.inputStream.bufferedReader().readLine())
+        File(bundle, "server.pid").writeText("${jvm.pid()}")
+        return jvm
+    }
+
+    private fun Process.killTree() {
+        descendants().forEach { it.destroyForcibly() }
+        destroyForcibly().waitFor()
+    }
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS, disabledReason = "the process in place of the JVM is a bash child that traps SIGTERM")
+    fun `stop returns within 30 ms of the JVM's exit`(@TempDir tmp: File) {
+        val bundle = File(tmp, "app").apply { mkdirs() }
+        writeBundle(bundle)
+
+        // Exits at ten points spread over three poll intervals, so that some fall
+        // just after a check: the old 100 ms poll had a median of about 60 ms here.
+        val lags = (0 until 10).map { i ->
+            val jvm = standInJvm(bundle, "0.%03d".format(7 * i))
+            try {
+                var exitedAt = 0L
+                val watcher = Thread { jvm.waitFor(); exitedAt = System.nanoTime() }.apply { start() }
+                val stop = ProcessBuilder(play("stop")).directory(bundle).redirectErrorStream(true).start()
+                var stoppedAt = 0L
+                val out = StringBuilder()
+                stop.inputStream.bufferedReader().forEachLine { line ->
+                    if (stoppedAt == 0L && "is stopped" in line) stoppedAt = System.nanoTime()
+                    out.appendLine(line)
+                }
+                assertEquals(0, stop.waitFor(), "$out")
+                watcher.join(5_000)
+                assertTrue(stoppedAt != 0L && exitedAt != 0L, "stop did not see the exit:\n$out")
+                assertFalse(File(bundle, "server.pid").exists(), "the pid file outlived the process:\n$out")
+                (stoppedAt - exitedAt) / 1_000_000.0
+            } finally {
+                jvm.killTree()
+            }
+        }
+
+        val sorted = lags.sorted()
+        assertTrue(sorted[sorted.size / 2] < 30.0, "ms from the exit to \"is stopped\": $lags")
+    }
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS, disabledReason = "the process in place of the JVM is a bash child that traps SIGTERM")
+    fun `stop leaves a JVM still draining after 35 s running with its pid file`(@TempDir tmp: File) {
+        val bundle = File(tmp, "app").apply { mkdirs() }
+        writeBundle(bundle)
+        val stubs = File(tmp, "bin").apply { writeStubs(this, windows = false) }
+        val jvm = standInJvm(bundle, termDelay = null)
+        try {
+            val started = System.nanoTime()
+            val stop = launch(bundle, stubs, "stop")
+            val seconds = (System.nanoTime() - started) / 1e9
+
+            assertEquals(0, stop.exit, "${stop.stdout}\n${stop.stderr}")
+            assertTrue(stop.stdout.any { "still draining after 35s" in it }, "${stop.stdout}")
+            // The drain budget is elapsed time: at least 35 s, and not 35 s of polls.
+            assertTrue(seconds >= 35.0 && seconds < 38.0, "stop waited $seconds s")
+            assertTrue(jvm.isAlive, "stop must not kill a JVM that is still draining")
+            assertEquals("${jvm.pid()}", File(bundle, "server.pid").readText(), "status and pid keep tracking it")
+        } finally {
+            jvm.killTree()
+        }
+    }
+
     @Test
     fun `host environment beats the dotenv file and the file supplies the rest`(@TempDir tmp: File) {
         // PF-184: the launcher sourced certs/.env with `set -a`, so the file won
