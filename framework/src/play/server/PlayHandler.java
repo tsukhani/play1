@@ -1300,7 +1300,7 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
         // thread drains it below LOW; the hysteresis gap avoids wake/park thrashing at the boundary.
         // 8 MiB / 4 MiB is generous for normal SSE (KB-scale events) yet caps a runaway producer's
         // uncollectable backlog at a bounded figure per stalled stream.
-        private static final long HIGH_WATERMARK_BYTES = 8L * 1024 * 1024;
+        static final long HIGH_WATERMARK_BYTES = 8L * 1024 * 1024;
         private static final long LOW_WATERMARK_BYTES = 4L * 1024 * 1024;
         // Bound the park so a missed notify (or a disconnect noticed only by the next readChunk
         // returning the stream as ended) can never wedge a producer forever; we re-check state on
