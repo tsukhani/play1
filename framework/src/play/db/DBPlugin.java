@@ -19,6 +19,9 @@ public class DBPlugin extends PlayPlugin {
 
     public static String url = "";
    
+    /** PF-201: whether a datasource the last connect set up is an H2 database. */
+    private static boolean h2;
+
     protected DataSourceFactory factory(Configuration dbConfig) {
         String dbFactory = dbConfig.getProperty("db.factory", "play.db.hikaricp.HikariDataSourceFactory");
         try {
@@ -45,6 +48,7 @@ public class DBPlugin extends PlayPlugin {
                 if (!DB.datasources.isEmpty()) {
                     DB.destroyAll();
                 }
+                h2 = false;
 
                 Set<String> dbNames = Configuration.getDbNames();
                 for (String name : dbNames) {
@@ -102,6 +106,7 @@ public class DBPlugin extends PlayPlugin {
                         DB.ExtendedDatasource extDs = new DB.ExtendedDatasource(ds, destroyMethod);
 
                         url = testDataSource(ds);
+                        h2 |= url.startsWith("jdbc:h2:");
                         Logger.info("Connected to %s for %s", url, dbName);
                         DB.datasources.put(dbName, extDs);
                     }
@@ -115,6 +120,11 @@ public class DBPlugin extends PlayPlugin {
                 }
                 throw new DatabaseException("Cannot connected to the database["+ dbName + "], " + e.getMessage(), e);
             }
+        }
+        // PF-201: on every start, not once: H2 puts its shutdown hook back when it reopens a
+        // database. Between starts H2ShutdownOrder's keeper takes it again.
+        if (h2) {
+            H2ShutdownOrder.deferToPlayHook();
         }
     }
 

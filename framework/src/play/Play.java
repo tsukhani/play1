@@ -27,6 +27,7 @@ import org.apache.logging.log4j.LogManager;
 import play.cache.Caches;
 import play.classloading.ApplicationClasses;
 import play.classloading.ApplicationClassloader;
+import play.db.H2ShutdownOrder;
 import play.deps.DependenciesManager;
 import play.exceptions.PlayException;
 import play.exceptions.RestartNeededException;
@@ -864,6 +865,11 @@ public class Play {
      * {@code onApplicationStop()} still logged, so every launcher starts Play with
      * {@code -Dlog4j2.shutdownHookEnabled=false} and logging is stopped here, last, which also
      * flushes the appenders that buffer. Not in {@code stop()}, which a DEV reload runs too.
+     * <p>
+     * PF-201: H2's own hook raced it too, closing the embedded databases under
+     * {@code onApplicationStop()}, so {@code DBPlugin} takes that hook out of the JVM and H2's
+     * databases are closed here, after {@code stop()} and before logging stops: see
+     * {@link H2ShutdownOrder}.
      */
     private static void shutdownHook() {
         Runnable drain = shutdownDrain;
@@ -874,10 +880,15 @@ public class Play {
                 Logger.warn(t, "Server drain during shutdown failed");
             }
         }
+        H2ShutdownOrder.stopBegins();
         try {
             stop();
         } finally {
-            LogManager.shutdown();
+            try {
+                H2ShutdownOrder.closeFromPlayHook();
+            } finally {
+                LogManager.shutdown();
+            }
         }
     }
 
