@@ -132,6 +132,8 @@ Metrics.gauge("queue.depth", workQueue, q -> q.size());
 
 p. Counters, timers, and gauges all support tags via Micrometer's standard fluent API — @Metrics.counter("user.signup", "channel", "web").increment()@.
 
+p. In @DEV@ mode every reload installs a new registry and closes the old one. Code that runs at every start, such as an <code>@OnApplicationStart</code> job, registers its meters on the new one by itself. An object that outlives a reload and registers its meters only once, as the framework's connection pool does, registers them on @Metrics.durableRegistry()@ instead: those reach every registry installed after them. Do not use it for anything a reload discards, such as a cache, whose meter would go on pointing at what was discarded.
+
 h3. <a name="metrics-config">Configuration</a>
 
 bc.. # Master switch (default true). When false, the /@metrics endpoint

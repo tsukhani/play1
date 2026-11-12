@@ -1,6 +1,7 @@
 package play.libs;
 
 import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -69,5 +70,37 @@ public class MetricsTest {
 
         assertThat(Metrics.registry().find("requests").tag("status", "200").counter().count()).isEqualTo(1.0);
         assertThat(Metrics.registry().find("requests").tag("status", "500").counter().count()).isEqualTo(3.0);
+    }
+
+    @Test
+    public void aDurableMeterReachesEveryRegistryInstalledAfterIt() {
+        // PF-203: a pool's tracker registers once, and a DEV reload installs a new registry
+        AtomicInteger connections = new AtomicInteger(3);
+        Gauge pool = Gauge.builder("pool.connections", connections, AtomicInteger::doubleValue)
+                .register(Metrics.durableRegistry());
+        try {
+            assertThat(Metrics.registry().find("pool.connections").gauge().value()).isEqualTo(3.0);
+
+            MeterRegistry reloaded = new SimpleMeterRegistry();
+            Metrics.install(reloaded);
+            connections.set(5);
+
+            assertThat(reloaded.find("pool.connections").gauge()).as("registered on no registry but the durable one").isNotNull();
+            assertThat(reloaded.find("pool.connections").gauge().value()).isEqualTo(5.0);
+            assertThat(Metrics.registry()).as("registry() is still the installed one").isSameAs(reloaded);
+        } finally {
+            Metrics.durableRegistry().remove(pool);
+        }
+    }
+
+    @Test
+    public void aDurableMeterRemovedLeavesTheInstalledRegistry() {
+        // a pool closed when the database configuration changes: its tracker removes its meters
+        Counter timeouts = Counter.builder("pool.timeouts").register(Metrics.durableRegistry());
+        assertThat(Metrics.registry().find("pool.timeouts").counter()).isNotNull();
+
+        Metrics.durableRegistry().remove(timeouts);
+
+        assertThat(Metrics.registry().find("pool.timeouts").counter()).isNull();
     }
 }

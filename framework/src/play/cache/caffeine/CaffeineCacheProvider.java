@@ -7,6 +7,7 @@ import play.Logger;
 import play.cache.Cache;
 import play.cache.CacheConfig;
 import play.cache.CacheProvider;
+import play.libs.Metrics;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -25,11 +26,13 @@ import java.util.concurrent.ConcurrentMap;
  * the same SPI mechanism and select it with {@code cache.provider} in
  * {@code application.conf}.
  *
- * <p>Holds its created caches in a name-keyed map so
- * {@link #bindMetricsToRegistry(MeterRegistry)} can re-attach
- * {@link CaffeineCacheMetrics} after a dev-mode hot-reload installs a fresh
- * Prometheus registry. Same pattern as the HikariCP tracker rebind in
- * {@code HikariDataSourceFactory.rebindAllToRegistry}.
+ * <p>Each cache binds {@link CaffeineCacheMetrics} to the installed registry
+ * when it is made (PF-203: before, only {@link #bindMetricsToRegistry} bound
+ * them, once per start and before any cache made on first use existed, so
+ * those were never measured). The name-keyed map lets
+ * {@link #bindMetricsToRegistry(MeterRegistry)} bind the caches made before a
+ * start installed its registry. None outlives a reload ({@link #stop()} drops
+ * them), so their meters go with the registry they were made on.
  */
 public final class CaffeineCacheProvider implements CacheProvider {
 
@@ -54,6 +57,7 @@ public final class CaffeineCacheProvider implements CacheProvider {
         com.github.benmanes.caffeine.cache.Cache<K, V> nativeCache = builder.build();
         CaffeineCache<K, V> wrapped = new CaffeineCache<>(nativeCache);
         caches.put(cacheName, wrapped);
+        bind(Metrics.registry(), cacheName, wrapped);
         return wrapped;
     }
 
@@ -67,11 +71,15 @@ public final class CaffeineCacheProvider implements CacheProvider {
     @Override
     public void bindMetricsToRegistry(MeterRegistry registry) {
         for (Map.Entry<String, CaffeineCache<?, ?>> e : caches.entrySet()) {
-            try {
-                CaffeineCacheMetrics.monitor(registry, e.getValue().nativeCache(), e.getKey());
-            } catch (Throwable t) {
-                Logger.warn(t, "CaffeineCacheProvider -> failed to bind metrics for cache=%s", e.getKey());
-            }
+            bind(registry, e.getKey(), e.getValue());
+        }
+    }
+
+    private static void bind(MeterRegistry registry, String cacheName, CaffeineCache<?, ?> cache) {
+        try {
+            CaffeineCacheMetrics.monitor(registry, cache.nativeCache(), cacheName);
+        } catch (Throwable t) {
+            Logger.warn(t, "CaffeineCacheProvider -> failed to bind metrics for cache=%s", cacheName);
         }
     }
 

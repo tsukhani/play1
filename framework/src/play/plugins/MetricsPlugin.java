@@ -97,25 +97,8 @@ public class MetricsPlugin extends PlayPlugin {
         Metrics.install(installed);
         bindJvmMetrics(installed);
         bindCacheMetrics(installed);
-        rebindHikariTrackers(installed);
 
         Logger.info("MetricsPlugin enabled at %s", basePath);
-    }
-
-    /**
-     * PF-85 follow-up: re-attach the HikariCP Micrometer tracker on every
-     * existing data source to the freshly installed registry. No-op on cold
-     * start (DB.datasources empty when this slot-30 plugin runs before
-     * DBPlugin at slot 300); fixes the dev-mode hot-reload path where the
-     * pool is reused with a stale tracker pointing at the previous, closed
-     * registry.
-     */
-    private void rebindHikariTrackers(MeterRegistry registry) {
-        try {
-            play.db.hikaricp.HikariDataSourceFactory.rebindAllToRegistry(registry);
-        } catch (Throwable t) {
-            Logger.warn(t, "MetricsPlugin -> failed to rebind Hikari trackers; hikaricp_* may be stale after reload");
-        }
     }
 
     /**
@@ -125,9 +108,11 @@ public class MetricsPlugin extends PlayPlugin {
      * (e.g. {@code CaffeineCacheProvider} attaches Micrometer's
      * {@code CaffeineCacheMetrics} per cache); this plugin just dispatches.
      *
-     * <p>Idempotent / re-entrant: same dev-mode hot-reload story as the
-     * Hikari tracker rebind below — caches created before the registry was
-     * swapped get re-attached to the fresh one here.
+     * <p>PF-203: this reaches the caches made before this start installed its
+     * registry. A cache made after binds itself when it is made, and none
+     * outlives a reload: {@code Caches.stop()} discards them all. The HikariCP
+     * pool, which does outlive one, is never re-bound: its tracker is on
+     * {@link Metrics#durableRegistry()}.
      */
     private void bindCacheMetrics(MeterRegistry registry) {
         try {

@@ -40,12 +40,14 @@ public interface CacheProvider {
      * Re-attach Micrometer metrics for every cache this provider has
      * created against {@code registry}. Called by
      * {@code play.plugins.MetricsPlugin.onApplicationStart} after the
-     * Prometheus registry is installed — same dev-mode hot-reload story as
-     * HikariCP's tracker rebind: caches created before the registry was
+     * Prometheus registry is installed: caches created before the registry was
      * swapped need to be re-attached, otherwise metrics emit to the old
      * (closed) registry.
      *
-     * <p>Providers without per-cache metrics may implement this as a no-op.
+     * <p>A provider with per-cache metrics should also bind each cache to
+     * {@code play.libs.Metrics.registry()} when it creates it (PF-203): caches
+     * are made on first use, mostly after this call, and are otherwise never
+     * measured. Providers without per-cache metrics may implement this as a no-op.
      */
     default void bindMetricsToRegistry(MeterRegistry registry) {}
 

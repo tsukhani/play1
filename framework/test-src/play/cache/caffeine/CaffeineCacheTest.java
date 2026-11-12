@@ -22,6 +22,25 @@ import static org.assertj.core.api.Assertions.assertThat;
 public class CaffeineCacheTest {
 
     @Test
+    public void aCacheIsMeasuredFromTheMomentItIsMade() {
+        // PF-203: caches are made on first use, after MetricsPlugin's bindMetricsToRegistry
+        io.micrometer.core.instrument.MeterRegistry previous = play.libs.Metrics.registry();
+        SimpleMeterRegistry installed = new SimpleMeterRegistry();
+        play.libs.Metrics.install(installed);
+        try {
+            Cache<String, String> cache = new CaffeineCacheProvider()
+                    .create("made.late", CacheConfig.newBuilder().recordStats(true).build());
+            cache.put("k", "v");
+
+            assertThat(installed.find("cache.size").tag("cache", "made.late").gauge())
+                    .as("measured without a bindMetricsToRegistry call").isNotNull();
+            assertThat(installed.find("cache.size").tag("cache", "made.late").gauge().value()).isEqualTo(1.0);
+        } finally {
+            play.libs.Metrics.install(previous);
+        }
+    }
+
+    @Test
     public void putAndGetIfPresentRoundtrip() {
         CaffeineCacheProvider provider = new CaffeineCacheProvider();
         Cache<String, String> cache = provider.create("rt", CacheConfig.newBuilder().build());

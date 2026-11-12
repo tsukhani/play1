@@ -62,11 +62,8 @@ public class MetricsFunctionalTest {
         smoke.getIfPresent("hit");
         smoke.getIfPresent("miss");
 
-        // Re-bind so the just-created cache shows up in the registry. In
-        // production this happens once at MetricsPlugin.onApplicationStart;
-        // here we trigger it explicitly because the cache was created after
-        // boot (the test fixture has no @CacheFor or #{cache} usage).
-        play.cache.Caches.bindMetricsToRegistry(play.libs.Metrics.registry());
+        // PF-203: no re-bind here. The cache is made long after boot, as caches
+        // are, on first use, and binds its metrics itself when it is made.
 
         HttpResponse<String> r = httpsClient()
                 .send(HttpRequest.newBuilder(URI.create(BASE + "/@metrics")).build(),

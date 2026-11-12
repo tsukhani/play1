@@ -3,8 +3,6 @@ package play.db.hikaricp;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import com.zaxxer.hikari.metrics.micrometer.MicrometerMetricsTrackerFactory;
-import io.micrometer.core.instrument.MeterRegistry;
-import play.Logger;
 import play.Play;
 import play.db.Configuration;
 import play.db.DB;
@@ -57,16 +55,20 @@ public class HikariDataSourceFactory implements DataSourceFactory {
     // PF-85: bind HikariCP's Micrometer tracker against the framework's
     // meter registry so /@metrics exposes hikaricp_connections_*. The
     // tracker must be set BEFORE the pool initializes — Hikari snapshots
-    // the factory at first getConnection. By the time DBPlugin (slot 300)
-    // calls this factory, MetricsPlugin (slot 30) has already swapped the
-    // facade to the real PrometheusMeterRegistry, so Metrics.registry()
-    // here returns the live registry, not the SimpleMeterRegistry default.
+    // the factory at first getConnection, and takes it only once.
+    //
+    // PF-203: on the registry that outlives a DEV reload, not on the one installed
+    // now. A reload that leaves the database configuration alone keeps this pool but
+    // installs a new registry, and a pool bound to the current one reported to the
+    // closed one from then on: hikaricp_* vanished from /@metrics after the first
+    // reload. The meters reach every registry installed after them, the first one
+    // included: MetricsPlugin (slot 30) installs it before DBPlugin (slot 300) gets here.
     //
     // setPoolName tags every hikaricp_* meter with pool=<dbName>, so multi-DB
     // setups produce one series per data source instead of indistinguishable
     // HikariPool-1/HikariPool-2 auto-names.
     ds.setPoolName(dbConfig.configName);
-    ds.setMetricsTrackerFactory(new MicrometerMetricsTrackerFactory(Metrics.registry()));
+    ds.setMetricsTrackerFactory(new MicrometerMetricsTrackerFactory(Metrics.durableRegistry()));
 
     if (dbConfig.getProperty("db.testquery") != null) {
       ds.setConnectionTestQuery(dbConfig.getProperty("db.testquery"));
@@ -93,39 +95,6 @@ public class HikariDataSourceFactory implements DataSourceFactory {
   private static String toHikariIsolation(String value) {
     if (value.startsWith("TRANSACTION_")) return value;
     return "TRANSACTION_" + value;
-  }
-
-  /**
-   * PF-85 follow-up: re-attach the Micrometer tracker on every active Hikari
-   * pool to {@code registry}. Called by {@code MetricsPlugin.onApplicationStart}
-   * after it installs a fresh {@link MeterRegistry}.
-   *
-   * <p>The original {@code createDataSource} path captures the registry by
-   * reference into the tracker. On dev-mode hot reload, {@code MetricsPlugin}
-   * stops, closes its old {@link io.micrometer.prometheusmetrics.PrometheusMeterRegistry},
-   * and starts a new one — but {@code DBPlugin.onApplicationStop} is a no-op in
-   * DEV, so the existing {@link HikariDataSource} keeps emitting to the closed
-   * registry. Without this rebind, {@code /@metrics} silently loses
-   * {@code hikaricp_*} after the first reload.
-   *
-   * <p>No-op on cold start: {@code DB.datasources} is empty when this runs from
-   * {@code MetricsPlugin} (slot 30) before {@code DBPlugin} (slot 300) creates
-   * any pool. Iterates via the public {@link DB#getDataSource(String)} API, so
-   * non-Hikari datasource factories silently pass through the {@code instanceof}
-   * check.
-   */
-  public static void rebindAllToRegistry(MeterRegistry registry) {
-    MicrometerMetricsTrackerFactory factory = new MicrometerMetricsTrackerFactory(registry);
-    for (String dbName : Configuration.getDbNames()) {
-      DataSource ds = DB.getDataSource(dbName);
-      if (ds instanceof HikariDataSource hds) {
-        try {
-          hds.setMetricsTrackerFactory(factory);
-        } catch (Throwable t) {
-          Logger.warn(t, "HikariDataSourceFactory -> failed to rebind metrics tracker for db=%s", dbName);
-        }
-      }
-    }
   }
 
   @Override

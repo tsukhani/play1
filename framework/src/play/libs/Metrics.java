@@ -4,6 +4,7 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
+import io.micrometer.core.instrument.composite.CompositeMeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 import java.util.function.ToDoubleFunction;
@@ -23,6 +24,13 @@ public final class Metrics {
 
     private static volatile MeterRegistry registry = new SimpleMeterRegistry();
 
+    /** Holds the installed registry, and only that one: see {@link #durableRegistry()}. */
+    private static final CompositeMeterRegistry durable = new CompositeMeterRegistry();
+
+    static {
+        durable.add(registry);
+    }
+
     private Metrics() {
     }
 
@@ -35,12 +43,31 @@ public final class Metrics {
     }
 
     /**
+     * PF-203: a registry for meters whose owner outlives a DEV reload, such as the connection pool
+     * {@code DBPlugin} keeps when the database configuration has not changed. A reload installs a
+     * new registry (and closes the old one), and an owner that registered its meters on that one
+     * would report to the closed one from then on. A HikariCP pool cannot be moved, either: it
+     * takes its metrics tracker only once. Meters registered here reach whatever registry is
+     * installed: {@link #install} hands each new one to this composite and takes the previous one
+     * out, and Micrometer adds the meters a composite holds to every registry it gains.
+     *
+     * <p>Meters whose owner a reload discards, such as the caches {@code Caches.stop()} throws
+     * away, belong on {@link #registry()} instead, so that they go with the registry they were
+     * made on: one left here would point at what was discarded.
+     */
+    public static MeterRegistry durableRegistry() {
+        return durable;
+    }
+
+    /**
      * Swap the registry. Called by {@code MetricsPlugin} on application
      * start/stop. Public so plugins outside this package can install a
      * registry, but application code should generally not need to.
      */
-    public static void install(MeterRegistry newRegistry) {
+    public static synchronized void install(MeterRegistry newRegistry) {
+        durable.remove(registry);
         registry = newRegistry;
+        durable.add(newRegistry);
     }
 
     /**
