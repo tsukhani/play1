@@ -31,6 +31,12 @@ tasks.named<Test>("test") {
     // input file is missing, even an optional one; a collection records it as missing instead.
     inputs.files(rootProject.layout.projectDirectory.file("framework/lib-coordinates.properties"))
         .withPropertyName("libCoordinates")
+    // PF-206: AutotestVerdictTest compiles the real FirePhoque from the testrunner module and
+    // runs it with that module's htmlunit jars, so a change there has to rerun the suite.
+    inputs.files(
+        rootProject.layout.projectDirectory.dir("modules/testrunner/src"),
+        rootProject.layout.projectDirectory.dir("modules/testrunner/firephoque"),
+    ).withPropertyName("testrunnerSources")
 }
 
 // PF-207: an application's pnpm follows the framework's, which is the skel's packageManager

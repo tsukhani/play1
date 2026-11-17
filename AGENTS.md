@@ -199,7 +199,9 @@ Built-in modules in `modules/`: `testrunner` and `docviewer`. Each has its own `
 - `play test myapp` — backed by the `playTest` Gradle task. Starts the app in test mode (foreground, `play.id=test`). Apps put their tests under `app/` annotated with `@RunWith(PlayJUnitRunner.class)`; visit `http://host:port/@tests` to invoke them via the testrunner module's web UI.
 - `play autotest myapp` — backed by the `playAutotest` Gradle task. Headless: boots the app, runs FirePhoque against `/@tests`, exits with the test result. Used for CI of end-user apps. Auto-synthesizes an ephemeral `${PLAY_SECRET}` for hermetic runs when neither `certs/.env` nor the host env supplies one.
 
-These commands depend on `modules/testrunner/lib/play-testrunner.jar` (built by the testrunner module) — they are NOT exercised by `ant test`.
+These commands depend on `modules/testrunner/lib/play-testrunner.jar` (built by the testrunner module) — `ant test` does not run them against a real application.
+
+`playAutotest`'s verdict (PF-206) needs FirePhoque to exit 0 *and* `test-result/result.passed`. The marker alone is written by whichever server answers `/@tests/end` on the port, and a jclaw run whose worktree shared its port with another (JF-395) printed "All tests passed" beside 13 classes that had gone ERROR. FirePhoque exits 1 when any class FAILED or went ERROR, and, given `-Dapplication.path`, which the task passes, it stops before `/@tests/init` when the results folder that `/@tests.list` names is not that application's `test-result`, so it never deletes another application's results or posts a verdict into its folder. That check is what makes FirePhoque's per-class polling, and with it the exit code, about this application's own result files, so the task keeps no class list of its own. `/@kill` still stops whatever DEV-mode server holds the port, by decision. Guarded by the gradle-plugin's `AutotestVerdictTest`, which compiles the real FirePhoque from `modules/testrunner/src` against its htmlunit jars and runs it through `playAutotest` against a scripted fake server; the plugin's test task declares those two directories as inputs.
 
 ### Tailwind CSS pipeline
 

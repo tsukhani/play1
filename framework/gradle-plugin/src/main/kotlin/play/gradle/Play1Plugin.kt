@@ -1173,6 +1173,9 @@ abstract class PlayAutotestTask : DefaultTask() {
                 add("-classpath")
                 add(fpCp.joinToString(File.pathSeparator))
                 add("-Dapplication.url=http://localhost:$port")
+                // PF-206: FirePhoque refuses a server whose test results go to another
+                // application's folder, before it runs or deletes anything there.
+                add("-Dapplication.path=${appDir.absolutePath}")
                 add("-DheadlessBrowser=$headlessBrowser")
                 add("play.modules.testrunner.FirePhoque")
             }
@@ -1191,17 +1194,28 @@ abstract class PlayAutotestTask : DefaultTask() {
             }
             val fpExit = fpProcess.waitFor()
 
+            // PF-206: a run passes only when FirePhoque, which polls this application's
+            // own result file for every class, exits 0 *and* the marker says passed. The
+            // marker alone is written by whichever server answers /@tests/end on the
+            // port, so a run that shared its port with another one could find a passed
+            // marker beside classes that had gone ERROR.
             val testResultDir = File(appDir, "test-result")
             val passed = File(testResultDir, "result.passed").exists()
             val failed = File(testResultDir, "result.failed").exists()
+            val classesFailed = failed || (passed && fpExit != 0)
 
-            if (passed) logger.lifecycle("~ All tests passed")
-            if (failed) logger.lifecycle("~ Some tests failed. See ${testResultDir.absolutePath} for results")
+            when {
+                classesFailed -> {
+                    logger.lifecycle("~ Some tests failed. See ${testResultDir.absolutePath} for results")
+                    if (!failed) logger.lifecycle("~ test-result/result.passed is ignored: FirePhoque exited $fpExit, and the marker may come from another run on port $port")
+                }
+                passed -> logger.lifecycle("~ All tests passed")
+            }
 
             killExistingInstance(port, timeoutMs = 500)
 
             when {
-                failed -> throw GradleException("Tests failed (FirePhoque exit=$fpExit)")
+                classesFailed -> throw GradleException("Tests failed (FirePhoque exit=$fpExit)")
                 !passed -> throw GradleException("Tests did not successfully complete (FirePhoque exit=$fpExit)")
             }
         } finally {

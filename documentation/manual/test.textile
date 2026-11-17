@@ -187,12 +187,14 @@ This is a useful command if you want to set up a continuous integration system.
 
 After the run, all results are saved to the @/test-result@ directory. Moreover, this directory contains a marker file (either @result.failed@ or @result.passed@) for the test suite’s final result. Finally, this directory contains all the logs, in an @application.log@ file.
 
+The command's exit status is the result to rely on: it is non-zero when any test failed or ended in error, even when @result.passed@ is there. The marker is written by whichever server answers on the test port, so a run that shares its port with another one can find the other run's marker beside its own failures. If the server on the port turns out to be another application's, @play autotest@ stops before it runs or deletes anything and says so. Give each checkout that runs tests at the same time a port of its own, for example with @PLAY_TEST_PORT@ in its @certs/.env@.
+
 So setting up a continuous integration system to test your application could be:
 
 * Checkout the latest version of your application
 * Run @play autotest myapp@
 * Wait for the end of the process
-* Check for the marker file @result.passed@ or @result.failed@ in the @/test-result@ directory
+* Check its exit status: zero only when every test passed
 
 Run these steps in a CRON tab, and you’re done!
 

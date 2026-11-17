@@ -78,6 +78,22 @@ public class FirePhoque {
             closeQuietly(in);
         }
 
+        // PF-206: -Dapplication.path names the application this run is for (playAutotest
+        // passes it). The list's second line is the folder the answering server writes its
+        // results to, which is <its application>/test-result. When that is another
+        // application's folder, a server of another application holds the port: stop before
+        // /@tests/init, which would delete that application's results, and before any verdict
+        // is posted, which would land in its folder.
+        String applicationPath = System.getProperty("application.path");
+        if (applicationPath != null && !applicationPath.isBlank()) {
+            File expected = new File(applicationPath, "test-result").getCanonicalFile();
+            if (!root.getCanonicalFile().equals(expected)) {
+                System.out.println("~ The server at " + app + " is not this application's: it writes its test results to "
+                        + root + ", not " + expected + ". Another application's server holds the port; nothing was run.");
+                System.exit(1);
+            }
+        }
+
         // -DtestClasses=Foo,models.BarTest narrows the run to the named classes
         // (simple name or FQCN, trailing .class optional) instead of the whole
         // suite — this is what `play autotest --tests=...` forwards. We filter the
@@ -85,7 +101,7 @@ public class FirePhoque {
         // and the lane split below stay untouched. Unknown names warn; an all-miss
         // filter exits non-zero WITHOUT writing a result marker, so a typo'd class
         // name fails the run instead of masquerading as a green "all passed" (the
-        // Gradle task reads pass/fail from test-result/result.{passed,failed}).
+        // Gradle task passes a run only on exit 0 and test-result/result.passed).
         String testFilter = System.getProperty("testClasses");
         if (testFilter != null && !testFilter.isBlank()) {
             Set<String> requested = new LinkedHashSet<>();
@@ -206,17 +222,21 @@ public class FirePhoque {
             runSerialTests(firephoque, app, serialTests, root, maxLength, ok);
 
             firephoque.openWindow(new URL(app + "/@tests/end?result=" + (ok.get() ? "passed" : "failed")), "headless");
-            // FirePhoque is a one-shot process whose only job is driving the test run
-            // and writing result-marker files. HtmlUnit's WebClient leaks non-daemon
-            // threads (HTTP connection-pool keep-alive, Rhino's setTimeout scheduler)
-            // that block JVM exit for ~60-120s after main() returns even with close().
-            // autotest.py reads pass/fail from test-result/result.{passed,failed}, not
-            // from this process's exit code, so a hard exit here unblocks the wrapper
-            // immediately. Bypasses the try-with-resources close() since System.exit
-            // does not unwind stack frames — the slow WebClient teardown is skipped
-            // entirely; in-flight keep-alive connections get RST'd, which the Play
-            // server tolerates fine.
-            System.exit(0);
+            // FirePhoque is a one-shot process whose only job is driving the test run.
+            // HtmlUnit's WebClient leaks non-daemon threads (HTTP connection-pool
+            // keep-alive, Rhino's setTimeout scheduler) that block JVM exit for ~60-120s
+            // after main() returns even with close(), so a hard exit here unblocks the
+            // Gradle task immediately. Bypasses the try-with-resources close() since
+            // System.exit does not unwind stack frames — the slow WebClient teardown is
+            // skipped entirely; in-flight keep-alive connections get RST'd, which the
+            // Play server tolerates fine.
+            //
+            // PF-206: the exit code is the verdict, 1 when any class FAILED or went ERROR.
+            // The result.{passed,failed} marker is written by whichever server answers
+            // /@tests/end on the port, so two runs sharing a port could leave a passed
+            // marker in a folder whose own run had failed classes; the Gradle task
+            // therefore passes a run only on exit 0 as well as the marker.
+            System.exit(ok.get() ? 0 : 1);
         }
     }
 
