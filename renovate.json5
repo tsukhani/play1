@@ -220,17 +220,16 @@
       labels: ["dependencies"]
     },
     {
-      // npm deps in nuxt-skel/package.json: Renovate handles end-to-end (no
-      // manual step needed). Auto-merge non-major bumps is acceptable here
-      // because the blast radius is scaffold-only — already-scaffolded apps
-      // pin their own resolved versions in pnpm-lock.yaml and aren't
-      // affected by a skel bump. Worst case is a fresh `playNewApp -Pfrontend`
-      // resolves a regressed Nuxt patch; user fixes in their own app's lockfile.
-      // (CI doesn't run pnpm install on the skel, so no test gates this path.)
+      // npm deps in nuxt-skel/package.json (the pnpm `packageManager` pin
+      // included): never auto-merge. github/main must never be ahead of local
+      // main, which /deploy pushes to both remotes, and an automerged bump
+      // lands on github/main alone (PR #88, pnpm 12.21.0, 2026-11-16). CI
+      // doesn't build the skel either, so a green check gates nothing here:
+      // /renovate merges these locally after a scratch-copy
+      // `pnpm install && pnpm run generate`.
       matchManagers: ["npm"],
       matchUpdateTypes: ["minor", "patch"],
-      automerge: true,
-      automergeType: "branch",
+      automerge: false,
       labels: ["dependencies", "frontend"]
     },
     {

@@ -8,7 +8,7 @@ argument-hint: "[empty | java | wrapper | npm | ci | <branch-substring>]"
 
 **Renovate Merge Workflow**
 
-Incorporate the `renovate/*` dependency-bump branches that Renovate (Mend hosted app) pushes to the **`github` remote** (`tsukhani/play1`) and that never auto-merge — `renovate.json5` sets `automerge: false` for every Java/Ivy update precisely *because* each one needs a local `ant resolve` step the bot cannot run. Merge them into **local `main`**, validate by ecosystem, and stop. Use `/usr/bin/git` for every git invocation (project convention).
+Incorporate the `renovate/*` dependency-bump branches that Renovate (Mend hosted app) pushes to the **`github` remote** (`tsukhani/play1`) and that never auto-merge — `renovate.json5` sets `automerge: false` for every update: for Java/Ivy *because* each one needs a local `ant resolve` step the bot cannot run, and for the skel's npm deps because `github/main` must never be ahead of local `main` (an automerged pnpm bump once was, PR #88). Merge them into **local `main`**, validate by ecosystem, and stop. Use `/usr/bin/git` for every git invocation (project convention).
 
 This works on `main` directly — the bumps must land on main — so there is **no worktree**. Stop at the local merge commits; **never push and never bump the version** — both belong to `/deploy`.
 
