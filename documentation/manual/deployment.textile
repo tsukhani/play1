@@ -438,6 +438,11 @@ bc. NUXT_APP_BASE_URL=/public/spa/ pnpm run generate
 
 and reach it at @/public/spa/@.
 
+The scaffolded frontend is a single-page app (@ssr: false@ in @nuxt.config.ts@): it renders in the browser and fetches its data from Play at runtime, which is what a static build behind the proxy needs. Turning @ssr@ on means one of two things:
+
+* With @nuxt generate@, which @play dist@ and @play bundle@ run, Nuxt prerenders every page at build time. The output is still static files and deploys the same way, which suits pages whose content is known at build time and must arrive as full HTML, for search engines or link previews. Any fetch those pages make runs during the build, though, and its answer is frozen into the page: fetch live data in the browser only (@useFetch(url, { server: false })@), and do not let the build depend on a backend being reachable.
+* Rendering on every request needs Nuxt's own server (@nuxt build@, then @node .output/server/index.mjs@) running beside Play, with the proxy sending pages to it and @/api/@ to Play. @play dist@ and @play bundle@ do not package that server; deploy it as a service of its own.
+
 h3. Heroku and other PaaS
 
 PaaS platforms generally just need the app to honor a @PORT@ environment variable. Read it in @application.conf@:

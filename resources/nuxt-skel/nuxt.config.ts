@@ -33,6 +33,15 @@ const backendPort = process.env.PLAY_BACKEND_PORT || portFromApplicationConf() |
 const backendUrl = `http://localhost:${backendPort}`
 
 export default defineNuxtConfig({
+  // A single-page app, rendered in the browser. play dist and play bundle ship
+  // `nuxt generate`'s static output (public/spa), served at the site root by the
+  // reverse proxy with /api going to Play; no Node server runs per request. With
+  // ssr: true, generate would prerender each page at build time and freeze what
+  // its fetches returned then: /api/status would show whichever backend answered
+  // on the build machine, if any, and never ask the deployed one (PF-208).
+  // Per-request SSR needs Nuxt's own server (`nuxt build`), deployed beside Play.
+  ssr: false,
+
   // Tailwind CSS 4 through its own Vite plugin, not @nuxtjs/tailwindcss: that
   // module's Tailwind 4 support is experimental, and its Tailwind 3 path adds a
   // tailwindcss/nesting plugin that Nuxt 4.6 cannot load (NUXT_B7027, PF-208).
@@ -59,7 +68,9 @@ export default defineNuxtConfig({
     }
   },
 
-  // Proxy API requests in production (SSR mode)
+  // Proxy API requests when Nuxt runs its own server (`nuxt build`, `nuxt
+  // preview`). The static build that play dist and play bundle ship never uses
+  // this: there the reverse proxy sends /api to Play.
   routeRules: {
     '/api/**': { proxy: `${backendUrl}/api/**` }
   },
