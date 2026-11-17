@@ -4,11 +4,13 @@
     <head>
         <title>Not found</title>
         <meta http-equiv="Content-Type" content="text/html; charset=${_response_encoding}"/>    
-        #{if play.mode.name() == 'DEV'}
+        #{if play.mode.name() == 'DEV' && play.getVirtualFile('/public/stylesheets/play-tailwind.css') != null}
         *{ The dev-mode error tags below emit Tailwind-classed markup, which needs the
            bundled stylesheet to mean anything. Scoped to DEV on purpose: play-tailwind.css
            carries Tailwind's preflight, whose h1..h6 font-size:inherit rule would strip the
-           prod branch's plain heading of its styling. }*
+           prod branch's plain heading of its styling. Only when some root has the file
+           (PF-218): the link's reverse route throws when none does, and only the skel ships
+           it, so an application without it got a template error for every DEV 404 and 500. }*
         <link rel="stylesheet" href="@{'/public/stylesheets/play-tailwind.css'}" type="text/css" media="screen" charset="${_response_encoding}">
         #{/if}
     </head>
