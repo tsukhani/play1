@@ -1858,7 +1858,13 @@ private fun buildFrontendAndCopySpa(
         }
         // A public/spa left by an earlier static build would ship beside the server.
         if (spaDest.exists()) spaDest.deleteRecursively()
-        logger.lifecycle("~ Nuxt's server is at ${server.parentFile.parentFile.absolutePath}")
+        // PF-212: how the launchers run it, and the Node it needs, ship with the server.
+        val output = server.parentFile.parentFile
+        PlayFrontendSpaTask::class.java.getResourceAsStream("/play/gradle/play1-server.mjs")!!.use { input ->
+            File(output, "play1-server.mjs").outputStream().use { input.copyTo(it) }
+        }
+        File(output, "play1.json").writeText("{\"node\": ${mode.node?.let { "\"$it\"" } ?: "null"}}\n")
+        logger.lifecycle("~ Nuxt's server is at ${output.absolutePath} (needs Node ${mode.node ?: "of an unknown version"})")
         return true
     }
     if (mode.ssr) {
@@ -1884,7 +1890,7 @@ private fun buildFrontendAndCopySpa(
 // PF-210: whether the frontend renders on Nuxt's server, as Nuxt itself resolves its config.
 // The mode check is nuxt-ssr-mode.mjs in this jar, run with node from the frontend after
 // pnpm install, so it reaches the application's own nuxt.
-internal data class NuxtSsrMode(val ssr: Boolean, val explicit: Boolean)
+internal data class NuxtSsrMode(val ssr: Boolean, val explicit: Boolean, val node: String? = null)
 
 private fun nuxtSsrMode(frontendDir: File, execOps: ExecOperations, node: String, scratchDir: File): NuxtSsrMode {
     val script = File(scratchDir, "nuxt-ssr-mode.mjs")
@@ -1915,7 +1921,8 @@ private fun nuxtSsrMode(frontendDir: File, execOps: ExecOperations, node: String
 internal fun parseNuxtSsrMode(stdout: String): NuxtSsrMode? {
     val line = stdout.lineSequence().map { it.trim() }.lastOrNull { it.startsWith("{") && it.contains("\"ssr\"") } ?: return null
     fun flag(name: String) = Regex("\"$name\"\\s*:\\s*true").containsMatchIn(line)
-    return NuxtSsrMode(ssr = flag("ssr"), explicit = flag("explicit"))
+    val node = Regex("\"node\"\\s*:\\s*\"([^\"]*)\"").find(line)?.groupValues?.get(1)
+    return NuxtSsrMode(ssr = flag("ssr"), explicit = flag("explicit"), node = node)
 }
 
 // PF-210: Nuxt's server entry point after an SSR build. Its presence is what tells packaging,

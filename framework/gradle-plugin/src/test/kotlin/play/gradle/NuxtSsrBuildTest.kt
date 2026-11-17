@@ -76,7 +76,7 @@ class NuxtSsrBuildTest {
     @Test
     @DisabledOnOs(OS.WINDOWS, disabledReason = "runs #!/bin/sh stubs")
     fun `an explicit ssr true builds Nuxt's server and drops a stale public spa`(@TempDir tmp: File) {
-        app(tmp, """{"ssr":true,"explicit":true}""")
+        app(tmp, """{"ssr":true,"explicit":true,"node":"^20.19.0 || >=22.12.0"}""")
         File(tmp, "public/spa").mkdirs()
         File(tmp, "public/spa/index.html").writeText("left by an earlier static build")
         val (runner, log) = withStubs(tmp, "playFrontendSpa")
@@ -88,6 +88,14 @@ class NuxtSsrBuildTest {
         assertTrue(frontendServerEntry(tmp).isFile, "Nuxt's server stays at frontend/.output")
         assertFalse(File(tmp, "public/spa").exists(), "a stale static build must not ship beside the server")
         assertTrue("sets ssr: true: building Nuxt's server" in result.output, result.output)
+        // PF-212: what the launchers run it with, and the Node it needs, ship beside it.
+        val output = File(tmp, "frontend/.output")
+        assertEquals(
+            javaClass.getResource("/play/gradle/play1-server.mjs")!!.readText(),
+            File(output, "play1-server.mjs").readText(),
+        )
+        assertEquals("{\"node\": \"^20.19.0 || >=22.12.0\"}\n", File(output, "play1.json").readText())
+        assertTrue("(needs Node ^20.19.0 || >=22.12.0)" in result.output, result.output)
     }
 
     @Test
@@ -148,6 +156,11 @@ class NuxtSsrBuildTest {
         assertEquals(NuxtSsrMode(ssr = true, explicit = true), parseNuxtSsrMode("[dotenv] loaded .env\n{\"ssr\":true,\"explicit\":true}\n"))
         assertEquals(NuxtSsrMode(ssr = true, explicit = false), parseNuxtSsrMode("{\"ssr\": true, \"explicit\": false}"))
         assertEquals(NuxtSsrMode(ssr = false, explicit = true), parseNuxtSsrMode("{\"ssr\":false,\"explicit\":true}"))
+        assertEquals(
+            NuxtSsrMode(ssr = true, explicit = true, node = "^20.19.0 || >=22.12.0"),
+            parseNuxtSsrMode("{\"ssr\":true,\"explicit\":true,\"node\":\"^20.19.0 || >=22.12.0\"}"),
+        )
+        assertEquals(NuxtSsrMode(ssr = true, explicit = true), parseNuxtSsrMode("{\"ssr\":true,\"explicit\":true,\"node\":null}"))
         assertNull(parseNuxtSsrMode("nothing useful\n"))
     }
 

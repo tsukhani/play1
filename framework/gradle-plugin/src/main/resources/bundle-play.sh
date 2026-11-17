@@ -203,6 +203,172 @@ for arg in "$@"; do
     esac
 done
 
+# PF-212: a bundle whose frontend sets ssr: true carries Nuxt's server at
+# frontend/.output, built by playFrontendSpa (PF-210), and runs it beside Play.
+# run and start start Play, wait until it listens, then start Nuxt's server,
+# whose pages fetch from Play as they render; stop stops Nuxt's server first.
+# It runs as `node frontend/.output/play1-server.mjs`, which checks the Node it
+# runs on against what the build needs (play1.json) and stops gracefully when
+# its stop file appears: a file rather than a signal, because kill ends a
+# native node.exe at once under Git Bash, MSYS2 and Cygwin. Its pid file sits
+# beside Play's (server.pid -> server.frontend.pid), so --pid-file instances
+# keep theirs apart.
+FRONTEND_OUT="frontend/.output"
+FRONTEND_START="$FRONTEND_OUT/play1-server.mjs"
+FRONTEND_PID_FILE="${PID_FILE%.pid}.frontend.pid"
+FRONTEND_STOP_FILE="$FRONTEND_PID_FILE.stop"
+FRONTEND_LOG="logs/frontend.out"
+# The Node to run it with: PLAY_NODE from the environment, else node on PATH.
+NODE_CMD="${PLAY_NODE:-node}"
+
+frontend_bundled() { [ -f "$FRONTEND_OUT/server/index.mjs" ]; }
+
+# Fail before anything starts when Nuxt's server cannot run on this host.
+frontend_preflight() {
+    local required
+    if [ ! -f "$FRONTEND_START" ] || [ ! -f "$FRONTEND_OUT/play1.json" ]; then
+        echo "play: $FRONTEND_OUT holds Nuxt's server but not $FRONTEND_START; build the bundle again with play bundle" >&2
+        exit 1
+    fi
+    if ! command -v "$NODE_CMD" >/dev/null 2>&1; then
+        required=$(sed -n 's/.*"node"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$FRONTEND_OUT/play1.json")
+        if [ -n "$PLAY_NODE" ]; then
+            echo "play: this bundle runs Nuxt's server, which needs Node${required:+ $required}, and PLAY_NODE names '$PLAY_NODE', which is not there" >&2
+        else
+            echo "play: this bundle runs Nuxt's server, which needs Node${required:+ $required}, and there is no node on PATH (or name one with PLAY_NODE)" >&2
+        fi
+        exit 1
+    fi
+    "$NODE_CMD" "$FRONTEND_START" --check || exit 1
+}
+
+# Where Play listens, which is where Nuxt's server is to reach it: --http.port
+# (the last one), else http.port in application.conf, else 9000, on
+# http.address, else 127.0.0.1. Then Nuxt's own address, frontend.port and
+# frontend.host in application.conf (3000 and 127.0.0.1 unless set: behind the
+# reverse proxy), and the environment it gets on top of certs/.env.
+frontend_env() {
+    local arg port host
+    PLAY_PORT=""
+    for arg in "${APP_ARGS[@]}"; do
+        case "$arg" in --http.port=*) PLAY_PORT="${arg#--http.port=}" ;; esac
+    done
+    [ -n "$PLAY_PORT" ] || PLAY_PORT=$(conf_value http.port)
+    [ -n "$PLAY_PORT" ] || PLAY_PORT=9000
+    PLAY_HOST=$(conf_value http.address)
+    [ -n "$PLAY_HOST" ] || PLAY_HOST=127.0.0.1
+    port=$(conf_value frontend.port)
+    [ -n "$port" ] || port=3000
+    host=$(conf_value frontend.host)
+    [ -n "$host" ] || host=127.0.0.1
+    FRONTEND_ADDRESS="$host:$port"
+    FRONTEND_ENV=(
+        "NITRO_PORT=$port"
+        "NITRO_HOST=$host"
+        "NUXT_PLAY_BACKEND_URL=http://$PLAY_HOST:$PLAY_PORT"
+        "PLAY1_STOP_FILE=$FRONTEND_STOP_FILE"
+    )
+}
+
+# Wait until Play ($1 is its pid) listens: the first page Nuxt's server renders
+# fetches from it. Up to PLAY_FRONTEND_WAIT seconds (default 120), after which
+# Nuxt's server starts anyway and its pages show what an unreachable /api gives
+# until Play is up. Fails when Play exits first.
+wait_for_play() {
+    local timeout="${PLAY_FRONTEND_WAIT:-120}" deadline
+    case "$timeout" in
+        ''|*[!0123456789]*)
+            echo "play: PLAY_FRONTEND_WAIT is a number of seconds, not '$timeout'" >&2
+            return 1 ;;
+    esac
+    deadline=$((SECONDS + 10#$timeout))
+    until port_open "$PLAY_HOST" "$PLAY_PORT"; do
+        if ! kill -0 "$1" 2>/dev/null; then
+            echo "play: Play stopped before it was listening on $PLAY_HOST:$PLAY_PORT, so Nuxt's server was not started" >&2
+            return 1
+        fi
+        if [ "$SECONDS" -ge "$deadline" ]; then
+            echo "play: Play was not listening on $PLAY_HOST:$PLAY_PORT after ${timeout}s (PLAY_FRONTEND_WAIT); starting Nuxt's server anyway" >&2
+            return 0
+        fi
+        sleep 0.2
+    done
+}
+
+# Stop Nuxt's server (pid $1) through its stop file and wait for it, as stop
+# waits for Play. After 35 s it gets kill: off Windows the SIGTERM Nitro also
+# handles. Returns 1 when it is still running after that.
+stop_frontend_pid() {
+    local deadline
+    : > "$FRONTEND_STOP_FILE"
+    deadline=$((SECONDS + 35))
+    while kill -0 "$1" 2>/dev/null && [ "$SECONDS" -le "$deadline" ]; do
+        sleep 0.02
+    done
+    if kill -0 "$1" 2>/dev/null; then
+        kill "$1" 2>/dev/null || :
+        deadline=$((SECONDS + 5))
+        while kill -0 "$1" 2>/dev/null && [ "$SECONDS" -le "$deadline" ]; do
+            sleep 0.02
+        done
+    fi
+    rm -f "$FRONTEND_STOP_FILE"
+    ! kill -0 "$1" 2>/dev/null
+}
+
+# stop's first half: Nuxt's server, when its pid file says it was started.
+stop_frontend() {
+    local pid
+    [ -f "$FRONTEND_PID_FILE" ] || return 0
+    pid=$(cat "$FRONTEND_PID_FILE")
+    if ! kill -0 "$pid" 2>/dev/null; then
+        echo "~ Nuxt's server was not running (pid $pid not found); removing stale pid file"
+        rm -f "$FRONTEND_PID_FILE" "$FRONTEND_STOP_FILE"
+    elif stop_frontend_pid "$pid"; then
+        rm -f "$FRONTEND_PID_FILE"
+        echo "~ OK, Nuxt's server is stopped"
+    else
+        echo "~ Nuxt's server (pid $pid) is still running after its stop file and a kill; leaving its pid file"
+    fi
+}
+
+# run, for a bundle with Nuxt's server: the launcher stays in the foreground
+# and supervises both. Ctrl-C and a SIGTERM or SIGHUP for the launcher stop
+# both -- Play with SIGTERM, Nuxt's server through its stop file -- because the
+# two run in the background of a script, which leaves them ignoring SIGINT.
+# The launcher exits with Play's status once both are down.
+run_with_frontend() {
+    local jvm frontend status
+    frontend_preflight
+    frontend_env
+    ( launch "${JVM_ENV[@]}" -- "${JAVA_CMD[@]}" ) &
+    jvm=$!
+    trap 'kill -TERM "$jvm" 2>/dev/null; : > "$FRONTEND_STOP_FILE"' INT TERM HUP
+    echo "~ Waiting for Play on $PLAY_HOST:$PLAY_PORT before starting Nuxt's server"
+    if wait_for_play "$jvm"; then
+        ( launch "${JVM_ENV[@]}" "${FRONTEND_ENV[@]}" -- "$NODE_CMD" "$FRONTEND_START" ) &
+        frontend=$!
+        echo "~ Nuxt's server (pid $frontend) on $FRONTEND_ADDRESS, reaching Play at http://$PLAY_HOST:$PLAY_PORT"
+    fi
+    while :; do
+        wait "$jvm" && status=0 || status=$?
+        kill -0 "$jvm" 2>/dev/null || break
+    done
+    [ -z "$frontend" ] || stop_frontend_pid "$frontend" || :
+    exit "$status"
+}
+
+# start's second half, for a bundle with Nuxt's server: Play ($1) is up.
+start_frontend() {
+    frontend_env
+    echo "~ Waiting for Play on $PLAY_HOST:$PLAY_PORT before starting Nuxt's server"
+    wait_for_play "$1" || return 1
+    ( launch "${JVM_ENV[@]}" "${FRONTEND_ENV[@]}" -- nohup "$NODE_CMD" "$FRONTEND_START" ) >> "$FRONTEND_LOG" 2>&1 &
+    echo $! > "$FRONTEND_PID_FILE"
+    echo "~ OK, Nuxt's server is started (pid: $(cat "$FRONTEND_PID_FILE")) on $FRONTEND_ADDRESS, reaching Play at http://$PLAY_HOST:$PLAY_PORT"
+    echo "~ its output (stdout/stderr) -> $SCRIPT_DIR/$FRONTEND_LOG"
+}
+
 # Build JAVA_CMD lazily inside run/start so config-mutation commands like
 # `secret` don't require the framework jar / classpath to exist yet.
 # $1, when given, is the AOT option to start with -- aot-gen's
@@ -516,6 +682,7 @@ cmd_aot_gen() {
 case "$CMD" in
     run)
         build_java_cmd
+        frontend_bundled && run_with_frontend
         launch "${JVM_ENV[@]}" -- "${JAVA_CMD[@]}"
         ;;
     start)
@@ -527,6 +694,17 @@ case "$CMD" in
             fi
             echo "~ Removing pid file $PID_FILE for not running pid $existing"
             rm -f "$PID_FILE"
+        fi
+        if frontend_bundled; then
+            frontend_preflight
+            if [ -f "$FRONTEND_PID_FILE" ]; then
+                existing=$(cat "$FRONTEND_PID_FILE")
+                if kill -0 "$existing" 2>/dev/null; then
+                    echo "~ Nuxt's server is still running (pid: $existing). Stop it first or delete $FRONTEND_PID_FILE." >&2
+                    exit 1
+                fi
+                rm -f "$FRONTEND_PID_FILE"
+            fi
         fi
         build_java_cmd
         mkdir -p logs
@@ -546,8 +724,12 @@ case "$CMD" in
         else
             echo "~ application logging follows the default log4j2 configuration (application.log.path is unset)"
         fi
+        if frontend_bundled; then
+            start_frontend "$(cat "$PID_FILE")" || exit 1
+        fi
         ;;
     stop)
+        stop_frontend
         if [ ! -f "$PID_FILE" ]; then
             echo "~ $SCRIPT_DIR is already stopped"
             exit 0
@@ -588,22 +770,41 @@ case "$CMD" in
         PLAY_LAUNCHER_REEXEC=1 "$0" start "$@"
         ;;
     status)
+        # PF-212: for a bundle with Nuxt's server, a second line for it, and
+        # exit 0 only when both run.
+        down=0
         if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
             echo "Running (pid: $(cat "$PID_FILE"))"
         else
             echo "Not running"
-            exit 1
+            down=1
         fi
+        if frontend_bundled; then
+            if [ -f "$FRONTEND_PID_FILE" ] && kill -0 "$(cat "$FRONTEND_PID_FILE")" 2>/dev/null; then
+                echo "Nuxt's server running (pid: $(cat "$FRONTEND_PID_FILE"))"
+            else
+                echo "Nuxt's server not running"
+                down=1
+            fi
+        fi
+        exit "$down"
         ;;
     pid)
         if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
             cat "$PID_FILE"
+            # PF-212: Nuxt's server's pid on a second line, when it runs.
+            if [ -f "$FRONTEND_PID_FILE" ] && kill -0 "$(cat "$FRONTEND_PID_FILE")" 2>/dev/null; then
+                cat "$FRONTEND_PID_FILE"
+            fi
         else
             echo "~ The application is not running"
             exit 1
         fi
         ;;
     out)
+        if frontend_bundled && [ -f "$FRONTEND_LOG" ]; then
+            exec tail -f logs/system.out "$FRONTEND_LOG"
+        fi
         exec tail -f logs/system.out
         ;;
     secret)
@@ -660,15 +861,28 @@ build, and again after a JDK update, a JVM option change or a redeploy. A
 cache that no longer fits is ignored with a warning. Not available from Git
 Bash on Windows.
 
+Nuxt's server: a bundle whose frontend sets ssr: true carries it at
+frontend/.output and runs it beside Play. run and start start Play, wait until
+it listens, then start `node frontend/.output/play1-server.mjs` on
+frontend.host:frontend.port from application.conf (default 127.0.0.1:3000),
+pointed at Play by NUXT_PLAY_BACKEND_URL; stop stops it first, through its
+stop file, and status, pid and out cover it. Its pid file is <pid file
+name>.frontend.pid, its output logs/frontend.out. It needs Node on PATH, of the
+version the build named; run and start check that before starting anything.
+
 Environment:
   PLAY_ID                Default play.id (overridden by --%<id>)
   PLAY_PID_FILE          Default pid file path
   PLAY_AOT_TIMEOUT       Seconds aot-gen waits for the application to listen
                          (default: 120)
+  PLAY_FRONTEND_WAIT     Seconds run and start wait for Play to listen before
+                         starting Nuxt's server anyway (default: 120)
+  PLAY_NODE              The Node that runs Nuxt's server (default: node on PATH)
 Variables the environment does not define are taken from certs/.env: one
 KEY=VALUE per line, read as literal text (no shell expansion).
 
-This bundle is self-contained: java 25+ is the only runtime dependency.
+This bundle is self-contained: java 25+ is the only runtime dependency, and
+Node as well for a bundle that carries Nuxt's server.
 EOF
         ;;
     *)

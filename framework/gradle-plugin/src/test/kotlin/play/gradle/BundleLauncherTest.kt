@@ -14,6 +14,8 @@ import org.junit.jupiter.api.condition.OS
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import java.net.ServerSocket
+import java.net.Socket
+import java.util.concurrent.TimeUnit
 import java.util.jar.Attributes
 import java.util.jar.JarEntry
 import java.util.jar.JarOutputStream
@@ -221,7 +223,7 @@ class BundleLauncherTest {
                 // variables the launcher reads itself may leak in from the
                 // developer's shell. Nor UID/EUID: a shell that exports them (the
                 // docker-compose idiom) makes them host-defined rather than readonly.
-                environment().keys.removeAll(probe + listOf("PLAY_ID", "PLAY_PID_FILE", "PLAY_AOT_TIMEOUT", "UID", "EUID"))
+                environment().keys.removeAll(probe + listOf("PLAY_ID", "PLAY_PID_FILE", "PLAY_AOT_TIMEOUT", "PLAY_NODE", "PLAY_FRONTEND_WAIT", "UID", "EUID"))
                 environment()["STUB_PRINT_ENV"] = probe.joinToString(" ")
                 environment().putAll(env)
             }
@@ -1353,6 +1355,191 @@ class BundleLauncherTest {
         assertTrue(run.stdout.any { it.trimEnd('\r') == "STARTED WITH -XX:AOTCache=app.aot" }, "${run.stdout}")
     }
 
+    // ---- PF-212: Nuxt's server beside Play --------------------------------------------
+    //
+    // A bundle whose frontend sets ssr: true carries frontend/.output/server/index.mjs,
+    // and the launcher runs `node frontend/.output/play1-server.mjs` beside Play. Play is
+    // the listening framework jar on the JVM the tests run on; node is a stub that logs
+    // to node-stub.log (relative, so Git Bash needs no path translation) what it got,
+    // whether Play was listening when it started and when it was stopped, and exits only
+    // when its stop file appears: the one way the launcher stops it on every OS.
+
+    private val nodeRange = "^20.19.0 || >=22.12.0"
+
+    private val javaBin get() = listOf(File(System.getProperty("java.home"), "bin"))
+
+    private fun writeStubNode(stubs: File) {
+        File(stubs, "node").apply {
+            writeText(
+                "#!/bin/bash\n" +
+                    "log=node-stub.log\n" +
+                    "if [ \"\$2\" = --check ]; then\n" +
+                    "    echo \"check \$1\" >> \$log\n" +
+                    "    [ -z \"\$STUB_NODE_TOO_OLD\" ] || { echo \"play: Nuxt's server needs Node ^99.0.0; this is Node 1.0.0\" >&2; exit 1; }\n" +
+                    "    exit 0\n" +
+                    "fi\n" +
+                    "play=\"\${NUXT_PLAY_BACKEND_URL#http://}\"\n" +
+                    "listening() { (exec 3<>\"/dev/tcp/\${play%:*}/\${play##*:}\") 2>/dev/null; }\n" +
+                    "if listening; then echo play-listening-at-start >> \$log; else echo play-not-listening-at-start >> \$log; fi\n" +
+                    "for v in NITRO_PORT NITRO_HOST NUXT_PLAY_BACKEND_URL PLAY1_STOP_FILE PF212_FROM_DOTENV; do echo \"ENV:\$v=\${!v}\" >> \$log; done\n" +
+                    "echo \"started \$1\" >> \$log\n" +
+                    "while [ ! -e \"\$PLAY1_STOP_FILE\" ]; do sleep 0.05; done\n" +
+                    "if listening; then echo play-listening-at-stop >> \$log; fi\n" +
+                    "rm -f \"\$PLAY1_STOP_FILE\"\n" +
+                    "echo stopped-by-file >> \$log\n"
+            )
+            setExecutable(true)
+        }
+    }
+
+    /** A bundle carrying Nuxt's server whose framework jar listens like Play, and a stub directory with the stub node. */
+    private fun ssrBundle(tmp: File, conf: String = "application.name=testapp\n"): Pair<File, File> {
+        val bundle = File(tmp, "app").apply { mkdirs() }
+        writeBundle(bundle)
+        listeningFrameworkJar(File(tmp, "fake"), File(bundle, "framework/play-$fwVersion.jar"))
+        File(bundle, ".classpath").writeText("framework/play-$fwVersion.jar\n")
+        File(bundle, "conf").mkdirs()
+        File(bundle, "conf/application.conf").writeText(conf)
+        File(bundle, "frontend/.output/server").mkdirs()
+        File(bundle, "frontend/.output/server/index.mjs").writeText("// Nuxt's server")
+        File(bundle, "frontend/.output/play1-server.mjs").writeText("// started by the stub node, which never reads it")
+        File(bundle, "frontend/.output/play1.json").writeText("{\"node\": \"$nodeRange\"}\n")
+        val stubs = File(tmp, "bin").apply { mkdirs() }
+        writeStubNode(stubs)
+        return bundle to stubs
+    }
+
+    private fun nodeLog(bundle: File): List<String> =
+        File(bundle, "node-stub.log").takeIf { it.isFile }?.readLines()?.map { it.trimEnd('\r') } ?: emptyList()
+
+    /** Wait up to 30 s for the stub node to log a line starting with [line]. */
+    private fun awaitNodeLog(bundle: File, line: String) {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
+        while (nodeLog(bundle).none { it.startsWith(line) } && System.nanoTime() < deadline) Thread.sleep(50)
+        assertTrue(nodeLog(bundle).any { it.startsWith(line) }, "the stub node never logged '$line': ${nodeLog(bundle)}")
+    }
+
+    private fun listening(port: Int) = runCatching { Socket("127.0.0.1", port).close() }.isSuccess
+
+    /** Stop whatever a failed test left running, so no JVM or stub outlives it. */
+    private fun stopLeftovers(bundle: File, stubs: File) {
+        if (File(bundle, "server.pid").exists() || File(bundle, "server.frontend.pid").exists()) launch(bundle, stubs, "stop")
+    }
+
+    @Test
+    fun `start runs Nuxt's server once Play listens, pointed at it, and stop stops it first`(@TempDir tmp: File) {
+        val (bundle, stubs) = ssrBundle(tmp, "application.name=testapp\nfrontend.port=3456\n")
+        File(bundle, "certs").mkdirs()
+        File(bundle, "certs/.env").writeText("PF212_FROM_DOTENV=from certs/.env\n")
+        val port = freePort()
+        try {
+            // Play takes 1.5 s to listen, so Nuxt's server can only find it listening by waiting.
+            val start = launch(bundle, stubs, "start", "--http.port=$port", "-Dpf212.listen.delay=1500", path = javaBin)
+
+            assertEquals(0, start.exit, "${start.stdout}\n${start.stderr}")
+            assertTrue(start.stdout.any { it.startsWith("~ OK, Nuxt's server is started") }, "${start.stdout}")
+            awaitNodeLog(bundle, "started")
+            val log = nodeLog(bundle)
+            assertEquals("check frontend/.output/play1-server.mjs", log.first(), "the Node check comes before anything starts: $log")
+            assertTrue("play-listening-at-start" in log, "Nuxt's server started before Play listened: $log")
+            for (env in listOf(
+                "NITRO_PORT=3456", "NITRO_HOST=127.0.0.1", "NUXT_PLAY_BACKEND_URL=http://127.0.0.1:$port",
+                "PLAY1_STOP_FILE=server.frontend.pid.stop", "PF212_FROM_DOTENV=from certs/.env",
+            )) assertTrue("ENV:$env" in log, "Nuxt's server should get $env: $log")
+
+            val status = launch(bundle, stubs, "status")
+            assertEquals(0, status.exit, "${status.stdout}")
+            assertEquals(listOf("Running (pid: ", "Nuxt's server running (pid: "), status.stdout.map { it.substringBefore("pid: ") + "pid: " })
+            assertEquals(
+                listOf(File(bundle, "server.pid"), File(bundle, "server.frontend.pid")).map { it.readText().trim() },
+                launch(bundle, stubs, "pid").stdout,
+            )
+
+            val stop = launch(bundle, stubs, "stop")
+
+            assertEquals(0, stop.exit, "${stop.stdout}")
+            val nuxtStopped = stop.stdout.indexOf("~ OK, Nuxt's server is stopped")
+            val playStopped = stop.stdout.indexOfFirst { it.startsWith("~ OK, ") && it.endsWith(" is stopped") && "Nuxt" !in it }
+            assertTrue(nuxtStopped in 0 until playStopped, "Nuxt's server stops first, then Play: ${stop.stdout}")
+            assertTrue("play-listening-at-stop" in nodeLog(bundle), "Play went down before Nuxt's server: ${nodeLog(bundle)}")
+            assertTrue("stopped-by-file" in nodeLog(bundle), "${nodeLog(bundle)}")
+            for (left in listOf("server.pid", "server.frontend.pid", "server.frontend.pid.stop")) {
+                assertFalse(File(bundle, left).exists(), "$left should be gone after stop")
+            }
+            val after = launch(bundle, stubs, "status")
+            assertEquals(1, after.exit)
+            assertEquals(listOf("Not running", "Nuxt's server not running"), after.stdout)
+        } finally {
+            stopLeftovers(bundle, stubs)
+        }
+    }
+
+    @Test
+    fun `start refuses before starting anything when Node is missing or too old`(@TempDir tmp: File) {
+        val (bundle, stubs) = ssrBundle(tmp)
+        val port = freePort()
+        try {
+            val missing = launch(bundle, stubs, "start", "--http.port=$port", env = mapOf("PLAY_NODE" to "no-such-node"), path = javaBin)
+            assertEquals(1, missing.exit, "${missing.stdout}")
+            assertTrue(missing.stderr.any { "needs Node $nodeRange" in it && "PLAY_NODE names 'no-such-node'" in it }, "${missing.stderr}")
+            assertFalse(File(bundle, "server.pid").exists(), "Play must not have been started")
+
+            val old = launch(bundle, stubs, "start", "--http.port=$port", env = mapOf("STUB_NODE_TOO_OLD" to "1"), path = javaBin)
+            assertEquals(1, old.exit, "${old.stdout}")
+            assertTrue(old.stderr.any { "needs Node ^99.0.0; this is Node 1.0.0" in it }, "${old.stderr}")
+            assertFalse(File(bundle, "server.pid").exists(), "Play must not have been started")
+            assertEquals(listOf("check frontend/.output/play1-server.mjs"), nodeLog(bundle), "nothing but the check ran")
+            assertFalse(listening(port))
+        } finally {
+            stopLeftovers(bundle, stubs)
+        }
+    }
+
+    @Test
+    fun `a bundle without Nuxt's server starts and reports as before and never runs node`(@TempDir tmp: File) {
+        val (bundle, stubs) = bundleWithConf(tmp, "application.name=testapp\n")
+        writeStubNode(stubs)
+
+        val start = launch(bundle, stubs, "start")
+
+        assertEquals(0, start.exit, "${start.stdout}\n${start.stderr}")
+        assertTrue(start.stdout.none { "Nuxt" in it }, "${start.stdout}")
+        assertFalse(File(bundle, "server.frontend.pid").exists())
+        assertEquals(emptyList<String>(), nodeLog(bundle), "node must not run for a bundle without Nuxt's server")
+        // One line, as before PF-212, whether or not the stub java has exited yet.
+        val status = launch(bundle, stubs, "status").stdout
+        assertEquals(1, status.size, "$status")
+        assertTrue(status.single().startsWith("Running (pid: ") || status.single() == "Not running", "$status")
+    }
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS, disabledReason = "Process.destroy() is TerminateProcess there, which no shell can trap")
+    fun `run supervises both, and a SIGTERM for the launcher stops Nuxt's server and Play`(@TempDir tmp: File) {
+        val (bundle, stubs) = ssrBundle(tmp)
+        val port = freePort()
+        val out = File(tmp, "run.out")
+        val run = ProcessBuilder(play("run", "--http.port=$port", "-Dpf212.listen.delay=1500"))
+            .directory(bundle)
+            .redirectErrorStream(true)
+            .redirectOutput(out)
+            .pathFirst(stubs, *javaBin.toTypedArray())
+            .start()
+        try {
+            awaitNodeLog(bundle, "started")
+            assertTrue("play-listening-at-start" in nodeLog(bundle), "${nodeLog(bundle)}")
+
+            run.destroy() // SIGTERM, for the launcher alone: its children ignore SIGINT and get no signal from here
+
+            assertTrue(run.waitFor(40, TimeUnit.SECONDS), "the launcher did not exit:\n${out.readText()}")
+            assertEquals(143, run.exitValue(), "the launcher exits with Play's status after its SIGTERM:\n${out.readText()}")
+            assertTrue("stopped-by-file" in nodeLog(bundle), "${nodeLog(bundle)}")
+            assertFalse(listening(port), "Play is still listening")
+            assertTrue("SHUTDOWN HOOK" in out.readText(), "Play was not stopped gracefully:\n${out.readText()}")
+        } finally {
+            run.destroyForcibly()
+        }
+    }
+
     /**
      * A framework jar whose play.server.Server listens on --http.port and answers
      * every request with 200 until the JVM is told to stop -- what `aot-gen` needs
@@ -1383,6 +1570,9 @@ class BundleLauncherTest {
                     if (arg.startsWith("--http.port=")) port = Integer.parseInt(arg.substring("--http.port=".length()));
                 }
                 Runtime.getRuntime().addShutdownHook(new Thread(() -> System.out.println("SHUTDOWN HOOK")));
+                // PF-212: slow to listen on request, so a test can tell waiting for Play from
+                // racing it. Off unless set.
+                Thread.sleep(Long.getLong("pf212.listen.delay", 0));
                 try (ServerSocket server = new ServerSocket(port)) {
                     while (true) {
                         try (Socket socket = server.accept()) {
