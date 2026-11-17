@@ -52,13 +52,18 @@ export default defineNuxtConfig({
 
   devtools: { enabled: true },
 
-  // Surfaced to the app so pages can show the port they are actually talking to
-  // instead of a hardcoded guess.
   runtimeConfig: {
+    // Where server/api/[...path].ts forwards /api when Nuxt's own server runs.
+    // A runtime value: NUXT_PLAY_BACKEND_URL overrides it where that server
+    // starts, so a build is not tied to the port Play had on the build machine.
+    playBackendUrl: backendUrl,
+    // Surfaced to the app so pages can show the port they are actually talking
+    // to instead of a hardcoded guess.
     public: { backendPort }
   },
 
-  // Proxy API requests to the Play backend during development
+  // Proxy API requests to the Play backend during development. Under `pnpm dev`
+  // this answers /api before server/api/[...path].ts does, SSE included.
   nitro: {
     devProxy: {
       '/api': {
@@ -66,13 +71,6 @@ export default defineNuxtConfig({
         changeOrigin: true
       }
     }
-  },
-
-  // Proxy API requests when Nuxt runs its own server (`nuxt build`, `nuxt
-  // preview`). The static build that play dist and play bundle ship never uses
-  // this: there the reverse proxy sends /api to Play.
-  routeRules: {
-    '/api/**': { proxy: `${backendUrl}/api/**` }
   },
 
   compatibilityDate: '2025-01-01'
