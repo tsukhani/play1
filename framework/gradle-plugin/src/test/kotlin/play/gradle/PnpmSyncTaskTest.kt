@@ -43,6 +43,13 @@ class PnpmSyncTaskTest {
             writeText(
                 """
                 #!/bin/sh
+                # PF-214: playFrontendSpa's ssr mode check, `pnpm exec node <script> <frontend>`;
+                # this one says a single-page app, so these cases build the static site as before.
+                if [ "${'$'}1 ${'$'}2" = "exec node" ]; then
+                    echo "${'$'}(basename "${'$'}(pwd)") exec node" >> "${log.absolutePath}"
+                    echo '{"ssr":false,"explicit":true}'
+                    exit 0
+                fi
                 echo "${'$'}(basename "${'$'}(pwd)") ${'$'}*" >> "${log.absolutePath}"
                 if [ "${'$'}1" = run ] && [ "${'$'}2" = generate ]; then
                     mkdir -p .output/public && echo ok > .output/public/index.html
@@ -51,15 +58,9 @@ class PnpmSyncTaskTest {
             )
             setExecutable(true)
         }
-        // PF-210: playFrontendSpa also asks node for the frontend's ssr mode; this one says a
-        // single-page app, so these cases build the static site as before.
-        val node = File(dir, "stub-bin/node").apply {
-            writeText("#!/bin/sh\necho '{\"ssr\":false,\"explicit\":true}'\n")
-            setExecutable(true)
-        }
         File(dir, "build.gradle.kts").appendText(
             """
-            tasks.withType<play.gradle.PlayFrontendSpaTask>().configureEach { pnpm.set("${stub.absolutePath}"); node.set("${node.absolutePath}") }
+            tasks.withType<play.gradle.PlayFrontendSpaTask>().configureEach { pnpm.set("${stub.absolutePath}") }
             tasks.withType<play.gradle.PlayPnpmSyncTask>().configureEach { pnpm.set("${stub.absolutePath}") }
             """.trimIndent() + "\n"
         )
@@ -80,7 +81,7 @@ class PnpmSyncTaskTest {
         assertEquals(1, warnings(result.output), result.output)
         assertTrue("frontend/package.json pins \"pnpm@1.0.0\"" in result.output, result.output)
         assertTrue("play pnpm-sync" in result.output, "the warning names the fix\n${result.output}")
-        assertEquals(listOf("frontend --version", "frontend install", "frontend run generate"), log.readLines())
+        assertEquals(listOf("frontend --version", "frontend install", "frontend exec node", "frontend run generate"), log.readLines())
         assertTrue(File(tmp, "public/spa/index.html").isFile, "the build went on to copy the SPA")
     }
 

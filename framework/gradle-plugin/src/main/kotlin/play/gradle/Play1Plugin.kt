@@ -238,7 +238,6 @@ class Play1Plugin : Plugin<Project> {
             description = "Build the Nuxt frontend: pnpm install, then nuxt generate into public/spa, or nuxt build into frontend/.output when nuxt.config sets ssr: true. Skipped when the app has no frontend/ directory."
             projectDir.set(project.layout.projectDirectory)
             pnpm.convention("pnpm")
-            node.convention("node")
             val frontendDir = project.layout.projectDirectory.dir("frontend").asFile
             onlyIf { frontendDir.isDirectory }
             outputs.upToDateWhen { false }
@@ -1705,16 +1704,12 @@ abstract class PlayFrontendSpaTask : DefaultTask() {
     @get:Internal
     abstract val pnpm: Property<String>
 
-    /** The node command, "node" unless set; PF-210 runs the mode check with it. As [pnpm], for tests. */
-    @get:Internal
-    abstract val node: Property<String>
-
     @get:Inject
     abstract val execOps: ExecOperations
 
     @TaskAction
     fun buildSpa() {
-        buildFrontendAndCopySpa(projectDir.get().asFile, execOps, logger, pnpm.get(), node.get(), temporaryDir)
+        buildFrontendAndCopySpa(projectDir.get().asFile, execOps, logger, pnpm.get(), temporaryDir)
     }
 }
 
@@ -1846,7 +1841,6 @@ private fun buildFrontendAndCopySpa(
     execOps: ExecOperations,
     logger: Logger,
     pnpm: String,
-    node: String,
     scratchDir: File,
 ): Boolean {
     val frontendDir = File(projDir, "frontend")
@@ -1879,7 +1873,7 @@ private fun buildFrontendAndCopySpa(
     }
 
     val spaDest = File(projDir, "public/spa")
-    val mode = nuxtSsrMode(frontendDir, execOps, node, scratchDir)
+    val mode = nuxtSsrMode(frontendDir, execOps, pnpm, scratchDir)
     if (mode.ssr && mode.explicit) {
         // PF-210: Nuxt's server, not static files. It stays at frontend/.output, which playDist
         // and playBundle ship, and never goes under public/, which Play serves as static files.
@@ -1924,11 +1918,14 @@ private fun buildFrontendAndCopySpa(
 }
 
 // PF-210: whether the frontend renders on Nuxt's server, as Nuxt itself resolves its config.
-// The mode check is nuxt-ssr-mode.mjs in this jar, run with node from the frontend after
-// pnpm install, so it reaches the application's own nuxt.
+// The mode check is nuxt-ssr-mode.mjs in this jar, run from the frontend after pnpm install, so
+// it reaches the application's own nuxt. Through `pnpm exec node` (PF-214), which finds node as
+// `pnpm run generate` and `pnpm run build` do, on the build's PATH: a bare `node` from here
+// would be looked up on the PATH the Gradle daemon started with, so a daemon started before
+// Node was on PATH failed the check of every frontend, single-page apps included.
 internal data class NuxtSsrMode(val ssr: Boolean, val explicit: Boolean, val node: String? = null)
 
-private fun nuxtSsrMode(frontendDir: File, execOps: ExecOperations, node: String, scratchDir: File): NuxtSsrMode {
+private fun nuxtSsrMode(frontendDir: File, execOps: ExecOperations, pnpm: String, scratchDir: File): NuxtSsrMode {
     val script = File(scratchDir, "nuxt-ssr-mode.mjs")
     PlayFrontendSpaTask::class.java.getResourceAsStream("/play/gradle/nuxt-ssr-mode.mjs")!!.use { input ->
         script.outputStream().use { input.copyTo(it) }
@@ -1936,7 +1933,7 @@ private fun nuxtSsrMode(frontendDir: File, execOps: ExecOperations, node: String
     val out = ByteArrayOutputStream()
     val err = ByteArrayOutputStream()
     val result = execOps.exec {
-        commandLine(node, script.absolutePath, frontendDir.absolutePath)
+        commandLine(pnpm, "exec", "node", script.absolutePath, frontendDir.absolutePath)
         workingDir = frontendDir
         standardOutput = out
         errorOutput = err
@@ -1944,7 +1941,7 @@ private fun nuxtSsrMode(frontendDir: File, execOps: ExecOperations, node: String
     }
     if (result.exitValue != 0) {
         throw GradleException(
-            "Could not read frontend/nuxt.config with Nuxt's config loader (node exited ${result.exitValue}):\n" +
+            "Could not read frontend/nuxt.config with Nuxt's config loader (pnpm exec node exited ${result.exitValue}):\n" +
                 err.toString(Charsets.UTF_8).trim()
         )
     }

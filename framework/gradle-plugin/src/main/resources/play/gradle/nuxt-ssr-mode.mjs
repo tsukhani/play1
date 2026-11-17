@@ -1,6 +1,6 @@
 // PF-210: prints whether the Nuxt frontend in argv[2] renders on a server, as Nuxt
 // itself resolves its config: TypeScript, values computed from the environment, .nuxtrc
-// and layers all count. playFrontendSpa runs it with node after `pnpm install`.
+// and layers all count. playFrontendSpa runs it with `pnpm exec node` after `pnpm install`.
 //
 // One JSON line on stdout: {"ssr": <resolved ssr is true>, "explicit": <some layer of the
 // config sets ssr itself>, "node": <the Node range the built server needs, or null>}. Nuxt

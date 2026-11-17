@@ -17,9 +17,10 @@ import java.io.File
  * frontend whose config sets ssr: true itself, and the static site (`pnpm run generate`, copied
  * to public/spa) otherwise, an absent key included, which Nuxt resolves to true.
  *
- * A stub node stands in for the mode check: it prints the mode line a test leaves in
- * frontend/.stub-ssr-mode. A stub pnpm records each call and leaves what `run build` or
- * `run generate` would. Both are `#!/bin/sh` scripts, hence the OS condition.
+ * A stub pnpm records each call and leaves what `run build` or `run generate` would. For the
+ * mode check, which runs as `pnpm exec node <script> <frontend>` (PF-214), it prints the mode
+ * line a test leaves in frontend/.stub-ssr-mode. It is a `#!/bin/sh` script, hence the OS
+ * condition.
  */
 class NuxtSsrBuildTest {
 
@@ -31,7 +32,7 @@ class NuxtSsrBuildTest {
         return frontend
     }
 
-    /** A runner whose frontend tasks run the stub pnpm and node; returns it with pnpm's call log. */
+    /** A runner whose frontend tasks run the stub pnpm; returns it with pnpm's call log ("exec node" for the mode check). */
     private fun withStubs(dir: File, vararg args: String): Pair<GradleRunner, File> {
         val log = File(dir, "pnpm-calls.log")
         val bin = File(dir, "stub-bin").apply { mkdirs() }
@@ -39,6 +40,13 @@ class NuxtSsrBuildTest {
             writeText(
                 """
                 #!/bin/sh
+                if [ "${'$'}1 ${'$'}2" = "exec node" ]; then
+                    echo "exec node" >> "${log.absolutePath}"
+                    if [ -f "${'$'}4/.stub-node-fail" ]; then echo "Cannot find module 'nuxt/package.json'" >&2; exit 1; fi
+                    echo "a line the config printed"
+                    cat "${'$'}4/.stub-ssr-mode"
+                    exit 0
+                fi
                 echo "${'$'}*" >> "${log.absolutePath}"
                 if [ "${'$'}1 ${'$'}2" = "run build" ]; then
                     mkdir -p .output/public .output/server
@@ -51,22 +59,10 @@ class NuxtSsrBuildTest {
             )
             setExecutable(true)
         }
-        val node = File(bin, "node").apply {
-            writeText(
-                """
-                #!/bin/sh
-                if [ -f "${'$'}2/.stub-node-fail" ]; then echo "Cannot find module 'nuxt/package.json'" >&2; exit 1; fi
-                echo "a line the config printed"
-                cat "${'$'}2/.stub-ssr-mode"
-                """.trimIndent() + "\n"
-            )
-            setExecutable(true)
-        }
         File(dir, "build.gradle.kts").appendText(
             """
             tasks.withType<play.gradle.PlayFrontendSpaTask>().configureEach {
                 pnpm.set("${pnpm.absolutePath}")
-                node.set("${node.absolutePath}")
             }
             """.trimIndent() + "\n"
         )
@@ -84,7 +80,7 @@ class NuxtSsrBuildTest {
         val result = runner.build()
 
         assertEquals(TaskOutcome.SUCCESS, result.task(":playFrontendSpa")?.outcome, result.output)
-        assertEquals(listOf("--version", "install", "run build"), log.readLines())
+        assertEquals(listOf("--version", "install", "exec node", "run build"), log.readLines())
         assertTrue(frontendServerEntry(tmp).isFile, "Nuxt's server stays at frontend/.output")
         assertFalse(File(tmp, "public/spa").exists(), "a stale static build must not ship beside the server")
         assertTrue("sets ssr: true: building Nuxt's server" in result.output, result.output)
@@ -106,7 +102,7 @@ class NuxtSsrBuildTest {
 
         val result = runner.build()
 
-        assertEquals(listOf("--version", "install", "run generate"), log.readLines())
+        assertEquals(listOf("--version", "install", "exec node", "run generate"), log.readLines())
         assertTrue(File(tmp, "public/spa/index.html").isFile)
         assertFalse(frontendServerEntry(tmp).exists())
         assertTrue("does not set ssr, so this builds the static site; set ssr: true" in result.output, result.output)
@@ -120,7 +116,7 @@ class NuxtSsrBuildTest {
 
         val result = runner.build()
 
-        assertEquals(listOf("--version", "install", "run generate"), log.readLines())
+        assertEquals(listOf("--version", "install", "exec node", "run generate"), log.readLines())
         assertTrue(File(tmp, "public/spa/index.html").isFile)
         assertFalse("ssr" in result.output.lineSequence().filter { it.startsWith("~ frontend/nuxt.config") }.joinToString(), result.output)
     }
