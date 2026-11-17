@@ -1,5 +1,11 @@
 <script setup lang="ts">
-const { data: status } = await useFetch('/api/status')
+const { data: status } = await useApi<{
+  status: string
+  application: string
+  applicationVersion: string
+  mode: string
+  version: string
+}>('/status')
 // Resolved in nuxt.config.ts from PLAY_BACKEND_PORT or conf/application.conf, so
 // this shows the port actually being proxied to rather than a hardcoded guess.
 const backendPort = useRuntimeConfig().public.backendPort
