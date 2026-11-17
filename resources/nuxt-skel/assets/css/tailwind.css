@@ -1,0 +1,5 @@
+/* Tailwind CSS 4's entry point. Keep the bare-string form: @tailwindcss/vite
+   only intercepts `@import "tailwindcss"`, so `@import url("tailwindcss")`
+   generates no utilities and the app renders unstyled. Theme settings go here
+   as CSS (`@theme { ... }`); there is no tailwind.config.js. */
+@import "tailwindcss";

@@ -1,6 +1,7 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import tailwindcss from '@tailwindcss/vite'
 
 // Which port the Play backend is on, in precedence order:
 //
@@ -32,7 +33,13 @@ const backendPort = process.env.PLAY_BACKEND_PORT || portFromApplicationConf() |
 const backendUrl = `http://localhost:${backendPort}`
 
 export default defineNuxtConfig({
-  modules: ['@nuxtjs/tailwindcss'],
+  // Tailwind CSS 4 through its own Vite plugin, not @nuxtjs/tailwindcss: that
+  // module's Tailwind 4 support is experimental, and its Tailwind 3 path adds a
+  // tailwindcss/nesting plugin that Nuxt 4.6 cannot load (NUXT_B7027, PF-208).
+  css: ['~/assets/css/tailwind.css'],
+  vite: {
+    plugins: [tailwindcss()]
+  },
 
   devtools: { enabled: true },
 
