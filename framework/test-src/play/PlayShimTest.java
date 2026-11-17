@@ -230,6 +230,20 @@ public class PlayShimTest {
         assertThat(r.exitCode()).isZero();
     }
 
+    @Test
+    public void pnpmSyncRunsThePinTask(@TempDir File tmp) throws Exception {
+        // PF-207: the warning playDist and playBundle print names `play pnpm-sync`, so the shim
+        // has to know it.
+        File cwd = new File(tmp, "gradleproject");
+        cwd.mkdirs();
+        makeGradleBuild(cwd);
+
+        Result r = run(cwd, stubGradleBin(tmp), "pnpm-sync");
+
+        assertThat(r.output()).contains(DELEGATED + " playPnpmSync");
+        assertThat(r.exitCode()).isZero();
+    }
+
     /**
      * PF-197: under CI every Gradle run gets --no-daemon. Jenkins kills the processes a build
      * started when it ends, a Gradle daemon included, and on one CI user that daemon may be

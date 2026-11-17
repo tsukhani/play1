@@ -33,6 +33,16 @@ tasks.named<Test>("test") {
         .withPropertyName("libCoordinates")
 }
 
+// PF-207: an application's pnpm follows the framework's, which is the skel's packageManager
+// pin. The jar carries the skel's package.json so that an application follows the release it
+// builds against, not whatever a working copy of the fork holds at the moment.
+tasks.processResources {
+    from(rootProject.layout.projectDirectory.file("resources/nuxt-skel/package.json")) {
+        into("play/gradle")
+        rename { "nuxt-skel-package.json" }
+    }
+}
+
 gradlePlugin {
     plugins {
         register("play1") {

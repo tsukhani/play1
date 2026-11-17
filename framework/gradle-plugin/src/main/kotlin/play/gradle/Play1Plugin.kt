@@ -231,8 +231,19 @@ class Play1Plugin : Plugin<Project> {
             group = "play1"
             description = "Build the Nuxt frontend (pnpm install + generate) and copy frontend/.output/public into public/spa. Skipped when the app has no frontend/ directory."
             projectDir.set(project.layout.projectDirectory)
+            pnpm.convention("pnpm")
             val frontendDir = project.layout.projectDirectory.dir("frontend").asFile
             onlyIf { frontendDir.isDirectory }
+            outputs.upToDateWhen { false }
+        }
+
+        // PF-207: playFrontendSpa warns when frontend/package.json pins another pnpm than
+        // the framework's; this moves the pin, and pnpm-lock.yaml with it.
+        project.tasks.register<PlayPnpmSyncTask>("playPnpmSync") {
+            group = "play1"
+            description = "Pin frontend/package.json's packageManager to the pnpm this framework release builds frontends with, and refresh pnpm-lock.yaml with pnpm install"
+            projectDir.set(project.layout.projectDirectory)
+            pnpm.convention("pnpm")
             outputs.upToDateWhen { false }
         }
 
@@ -1651,42 +1662,112 @@ abstract class PlayFrontendSpaTask : DefaultTask() {
     @get:Internal
     abstract val projectDir: DirectoryProperty
 
+    /**
+     * The pnpm command, "pnpm" unless set. PnpmSyncTaskTest sets a stub's absolute path: the
+     * JDK looks a bare command up on the PATH its JVM started with, which a TestKit build's
+     * environment cannot change.
+     */
+    @get:Internal
+    abstract val pnpm: Property<String>
+
     @get:Inject
     abstract val execOps: ExecOperations
 
     @TaskAction
     fun buildSpa() {
-        buildFrontendAndCopySpa(projectDir.get().asFile, execOps, logger)
+        buildFrontendAndCopySpa(projectDir.get().asFile, execOps, logger, pnpm.get())
     }
 }
 
-// Build the SPA if a Nuxt frontend is present at the project root. Runs
-// pnpm install + pnpm run generate, then copies frontend/.output/public/ to
-// public/spa/ in the project root. Invoked by the playFrontendSpa task, which
-// playDist and playBundle depend on so the dist-shaped artifacts include the
-// frontend build alongside the precompiled Java classes. Returns true if a
-// frontend was found and built.
-private fun buildFrontendAndCopySpa(
-    projDir: File,
-    execOps: ExecOperations,
-    logger: Logger,
-): Boolean {
-    val frontendDir = File(projDir, "frontend")
-    if (!frontendDir.isDirectory) return false
+// PF-207: pnpm 12 records itself in pnpm-lock.yaml (packageManagerDependencies), so a pin moved
+// by hand fails the next `pnpm install --frozen-lockfile`. The sync therefore always runs
+// pnpm install after writing the pin, and the developer commits the two files together.
+@DisableCachingByDefault(because = "Rewrites frontend/package.json and runs pnpm install")
+abstract class PlayPnpmSyncTask : DefaultTask() {
+    @get:Internal
+    abstract val projectDir: DirectoryProperty
 
-    // Probe for pnpm. Without a pre-flight check the user gets a cryptic
-    // "Cannot run program 'pnpm'" from ProcessBuilder; we'd rather fail
-    // with an actionable message naming the tool and where to install it.
-    //
-    // The message reports the PATH *this process* sees, because the common failure is
-    // not a missing pnpm at all: a Gradle daemon keeps the environment of the client
-    // that started it, so a daemon started before pnpm was added to PATH keeps failing
-    // here while `which pnpm` in the developer's shell answers happily. Saying only
-    // "not found on PATH" sends them looking for an installation problem they do not
-    // have. Printing the PATH makes the mismatch self-evident, and `--stop` is the fix.
+    /** The pnpm command, as on [PlayFrontendSpaTask.pnpm]. */
+    @get:Internal
+    abstract val pnpm: Property<String>
+
+    @get:Inject
+    abstract val execOps: ExecOperations
+
+    @TaskAction
+    fun sync() {
+        val frontendDir = File(projectDir.get().asFile, "frontend")
+        val packageJson = File(frontendDir, "package.json")
+        if (!packageJson.isFile) {
+            throw GradleException(
+                "This application has no ${packageJson.absolutePath}: playPnpmSync pins the pnpm of a Nuxt frontend, and there is none to pin."
+            )
+        }
+        val version = frameworkPnpmVersion()
+        val before = packageJson.readText()
+        val after = withPnpmPin(before, version)
+        if (after == before) {
+            logger.lifecycle("~ ${packageJson.absolutePath} already pins pnpm $version")
+        } else {
+            packageJson.writeText(after)
+            logger.lifecycle("~ Pinned pnpm $version in ${packageJson.absolutePath} (was ${pnpmPin(before) ?: "unpinned"})")
+        }
+        requirePnpm(frontendDir, execOps, pnpm.get())
+        logger.lifecycle("~ Running pnpm install in ${frontendDir.absolutePath}")
+        execOps.exec {
+            commandLine(pnpm.get(), "install")
+            workingDir = frontendDir
+        }
+        logger.lifecycle("~ Commit frontend/package.json and frontend/pnpm-lock.yaml together")
+    }
+}
+
+// PF-207: the pnpm version this framework release builds frontends with, the packageManager pin
+// of resources/nuxt-skel/package.json. The plugin jar carries that file (build.gradle.kts), and
+// Renovate bumps the pin, which /renovate gates with a scratch build of the skel.
+internal fun frameworkPnpmVersion(): String {
+    val skel = PlayPnpmSyncTask::class.java.getResource("/play/gradle/nuxt-skel-package.json")
+        ?: error("the play1 plugin jar carries no play/gradle/nuxt-skel-package.json")
+    return pnpmVersionOf(pnpmPin(skel.readText()))
+        ?: error("the framework's nuxt-skel package.json pins no pnpm version")
+}
+
+private val PACKAGE_MANAGER = Regex("\"packageManager\"\\s*:\\s*\"([^\"]*)\"")
+
+// The packageManager value of a package.json as written ("pnpm@12.21.0", perhaps with a +sha512
+// hash), or null when it has none.
+internal fun pnpmPin(packageJson: String): String? = PACKAGE_MANAGER.find(packageJson)?.groupValues?.get(1)
+
+// The pnpm version a packageManager value names, without its hash; null for another package
+// manager, or no value.
+internal fun pnpmVersionOf(pin: String?): String? =
+    pin?.takeIf { it.startsWith("pnpm@") }?.removePrefix("pnpm@")?.substringBefore('+')
+
+// [packageJson] with its packageManager set to pnpm@[version] and every other byte kept. A
+// missing field goes in as the first property, indented and terminated like the one after it.
+internal fun withPnpmPin(packageJson: String, version: String): String {
+    val pin = "pnpm@$version"
+    PACKAGE_MANAGER.find(packageJson)?.let { return packageJson.replaceRange(it.groups[1]!!.range, pin) }
+    val open = Regex("\\{(\\r?\\n)([ \\t]*)").find(packageJson)
+        ?: throw GradleException("package.json does not start its properties on a line of their own; add \"packageManager\": \"$pin\" to it by hand")
+    val (newline, indent) = open.destructured
+    return packageJson.replaceRange(open.range, "{$newline$indent\"packageManager\": \"$pin\",$newline$indent")
+}
+
+// Probe for pnpm. Without a pre-flight check the user gets a cryptic
+// "Cannot run program 'pnpm'" from ProcessBuilder; we'd rather fail
+// with an actionable message naming the tool and where to install it.
+//
+// The message reports the PATH *this process* sees, because the common failure is
+// not a missing pnpm at all: a Gradle daemon keeps the environment of the client
+// that started it, so a daemon started before pnpm was added to PATH keeps failing
+// here while `which pnpm` in the developer's shell answers happily. Saying only
+// "not found on PATH" sends them looking for an installation problem they do not
+// have. Printing the PATH makes the mismatch self-evident, and `--stop` is the fix.
+private fun requirePnpm(frontendDir: File, execOps: ExecOperations, pnpm: String) {
     try {
         execOps.exec {
-            commandLine("pnpm", "--version")
+            commandLine(pnpm, "--version")
             workingDir = frontendDir
             standardOutput = ByteArrayOutputStream()
             errorOutput = ByteArrayOutputStream()
@@ -1713,19 +1794,52 @@ private fun buildFrontendAndCopySpa(
             e,
         )
     }
+}
+
+// Build the SPA if a Nuxt frontend is present at the project root. Runs
+// pnpm install + pnpm run generate, then copies frontend/.output/public/ to
+// public/spa/ in the project root. Invoked by the playFrontendSpa task, which
+// playDist and playBundle depend on so the dist-shaped artifacts include the
+// frontend build alongside the precompiled Java classes. Returns true if a
+// frontend was found and built.
+private fun buildFrontendAndCopySpa(
+    projDir: File,
+    execOps: ExecOperations,
+    logger: Logger,
+    pnpm: String,
+): Boolean {
+    val frontendDir = File(projDir, "frontend")
+    if (!frontendDir.isDirectory) return false
+
+    // PF-207: the application's pnpm follows the framework's. A warning only: packaging goes on
+    // with the application's own pin, and playPnpmSync moves it together with pnpm-lock.yaml.
+    val packageJson = File(frontendDir, "package.json")
+    if (packageJson.isFile) {
+        val pin = pnpmPin(packageJson.readText())
+        val framework = frameworkPnpmVersion()
+        if (pnpmVersionOf(pin) != framework) {
+            logger.warn(
+                "~ WARNING: frontend/package.json pins ${pin?.let { "\"$it\"" } ?: "no pnpm"}, but this framework " +
+                    "release builds frontends with pnpm $framework. Run `play pnpm-sync` (gradle playPnpmSync) " +
+                    "to move the pin and refresh pnpm-lock.yaml, then commit both."
+            )
+        }
+    }
+
+    requirePnpm(frontendDir, execOps, pnpm)
 
     // Always install. Warm-cache pnpm install is sub-second; skipping when
     // node_modules/ already exists creates a footgun where editing
     // package.json and running play dist ships a stale SPA with no warning.
     logger.lifecycle("~ Running pnpm install in ${frontendDir.absolutePath}")
     execOps.exec {
-        commandLine("pnpm", "install")
+        commandLine(pnpm, "install")
         workingDir = frontendDir
     }
 
     logger.lifecycle("~ Running pnpm run generate in ${frontendDir.absolutePath}")
     execOps.exec {
-        commandLine("pnpm", "run", "generate")
+        commandLine(pnpm, "run", "generate")
         workingDir = frontendDir
     }
 

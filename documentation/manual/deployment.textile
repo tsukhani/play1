@@ -413,6 +413,8 @@ h3. Serving the Nuxt frontend
 
 An application scaffolded with @play new <name> --frontend@ keeps its Nuxt sources in @frontend/@. The @playFrontendSpa@ task — which both @play dist@ and @play bundle@ depend on — runs @pnpm install@ and @pnpm run generate@, then copies @frontend/.output/public@ into @public/spa/@, so the built SPA travels inside the production artifact.
 
+The pnpm the frontend is built with follows the framework: each release of the fork names one pnpm version, and @play dist@ and @play bundle@ warn when @frontend/package.json@ pins another one, or none. @play pnpm-sync@ moves the @packageManager@ pin to the framework's version and runs @pnpm install@, which records the new version in @pnpm-lock.yaml@ as well; commit the two files together, or a @pnpm install --frozen-lockfile@ in CI fails on the mismatch.
+
 Nuxt generates that build for the **site root**: the emitted markup references its assets as @/_nuxt/...@. Serve @public/spa/@ at @/@ and proxy only the API paths through to Play:
 
 bc. location / {

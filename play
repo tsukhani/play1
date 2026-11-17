@@ -72,6 +72,10 @@ Build / test / package:
                        (respects .gitignore and .distignore)
   bundle               Build a self-contained deployment zip
                        (precompiled classes + framework + deps + bin/start.sh)
+  pnpm-sync            Pin frontend/package.json to the pnpm this framework
+                       release builds frontends with, and refresh
+                       pnpm-lock.yaml to match (dist and bundle warn while
+                       the two differ)
 
 Project setup:
   new <name>           Scaffold a new application in <cwd>/<name>
@@ -146,6 +150,7 @@ task_for() {
         javadoc)         echo playJavadoc ;;
         dist)            echo playDist ;;
         bundle)          echo playBundle ;;
+        pnpm-sync)       echo playPnpmSync ;;
         version)         echo playVersion ;;
         *)               return 1 ;;
     esac
