@@ -92,8 +92,7 @@ Eclipse Public License 2.0
     - JAXB Runtime (dual EPL-2.0 / EDL-1.0)
 
 BSD-style licenses
-    - ASM and ASM utilities (BSD-3) — asm, asm-analysis, asm-commons,
-      asm-tree, asm-util
+    - ASM (BSD-3) — asm
     - ANTLR runtime (BSD-3)
     - Hamcrest (BSD-3)
     - Protocol Buffers Java (BSD-3)
