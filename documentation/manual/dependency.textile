@@ -179,6 +179,15 @@ To force a re-resolve (e.g. after editing @build.gradle.kts@):
 bc. ./gradlew --refresh-dependencies <task>
 
 
+h2. <a name="gradle-version">The Gradle version</a>
+
+An application builds with the Gradle its wrapper names: @gradle/wrapper/gradle-wrapper.properties@ holds the distribution (@distributionUrl@) and the checksum the wrapper checks it against when it downloads it (@distributionSha256Sum@). @play new@ copies the framework's wrapper, and the application's Gradle goes on following the framework: each release of the fork names one distribution and its checksum, and every build warns while the application's wrapper names another distribution, or the framework's with another checksum or none. The build goes on with the application's own wrapper.
+
+@play gradle-sync@ moves the wrapper to the framework's distribution and checksum, keeps the wrapper's other properties as they were, and writes the framework's @gradle-wrapper.jar@, @gradlew@ and @gradlew.bat@ beside them. Commit @gradle/wrapper/@ and the two scripts together. Run it when the application moves to another framework release, and in place of a dependency bot's update of the wrapper. The wrapper checks the checksum only when it downloads a distribution, so a bump that moves @distributionUrl@ and keeps the old checksum works on every machine that already has the new version unpacked, and fails only where the Gradle home is empty, a Docker image build for instance. To check a wrapper as such a build will, run @./gradlew --version@ with @GRADLE_USER_HOME@ set to an empty directory.
+
+The pnpm a Nuxt frontend is built with follows the framework in the same way: see "Serving the Nuxt frontend":deployment#nuxt-frontend.
+
+
 h2. <a name="framework">Framework dependencies</a>
 
 The framework's own build (under @framework/@) still uses Apache Ivy with a

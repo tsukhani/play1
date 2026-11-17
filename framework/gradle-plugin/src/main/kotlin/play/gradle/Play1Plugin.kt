@@ -253,6 +253,16 @@ class Play1Plugin : Plugin<Project> {
             outputs.upToDateWhen { false }
         }
 
+        // PF-216: the same rule for the Gradle wrapper. Every build warns while the wrapper names
+        // another distribution or checksum than the framework's; this moves it.
+        warnOnAnotherGradleWrapper(project)
+        project.tasks.register<PlayGradleSyncTask>("playGradleSync") {
+            group = "play1"
+            description = "Move the Gradle wrapper (gradle/wrapper/, gradlew, gradlew.bat) to the distribution and checksum this framework release builds with, keeping the wrapper's other properties"
+            rootDir.set(project.rootProject.layout.projectDirectory)
+            outputs.upToDateWhen { false }
+        }
+
         project.tasks.register<PlayDistTask>("playDist") {
             group = "play1"
             description = "Package the application source + precompiled classes + frontend SPA as <rootProject.name>.zip (respects .gitignore + .distignore). Optional: -Poutput=<path>"
@@ -1800,6 +1810,150 @@ internal fun withPnpmPin(packageJson: String, version: String): String {
         ?: throw GradleException("package.json does not start its properties on a line of their own; add \"packageManager\": \"$pin\" to it by hand")
     val (newline, indent) = open.destructured
     return packageJson.replaceRange(open.range, "{$newline$indent\"packageManager\": \"$pin\",$newline$indent")
+}
+
+// PF-216: an application's Gradle wrapper follows the framework's, the fork's own
+// gradle/wrapper/gradle-wrapper.properties. The plugin jar carries it, with the wrapper jar and the
+// gradlew scripts (build.gradle.kts), so an application follows the release it builds against.
+// The fork keeps its own wrapper current with the right checksum. An application's Renovate runner,
+// which has no framework and so cannot run ./gradlew, moved only distributionUrl, and the wrapper
+// checks the checksum only when it downloads (jclaw's 9.8.2 and 9.9.1 bumps).
+internal const val WRAPPER_PROPERTIES = "gradle/wrapper/gradle-wrapper.properties"
+
+private const val DISTRIBUTION_URL = "distributionUrl"
+private const val DISTRIBUTION_SHA256 = "distributionSha256Sum"
+
+/** The distribution a wrapper names, and the checksum it checks that distribution against when it downloads it. */
+internal data class WrapperDistribution(val url: String?, val sha256: String?)
+
+internal fun wrapperDistributionOf(properties: String): WrapperDistribution =
+    loadProperties(properties).let { WrapperDistribution(it.getProperty(DISTRIBUTION_URL), it.getProperty(DISTRIBUTION_SHA256)) }
+
+private fun loadProperties(text: String) = java.util.Properties().apply { load(java.io.StringReader(text)) }
+
+// One of the wrapper files the plugin jar carries, as bytes.
+private fun frameworkWrapperFile(name: String): ByteArray =
+    (PlayGradleSyncTask::class.java.getResource("/play/gradle/wrapper/$name")
+        ?: error("the play1 plugin jar carries no play/gradle/wrapper/$name")).readBytes()
+
+// ISO 8859-1, the encoding of a properties file, which also keeps every byte as it was.
+internal fun frameworkWrapperProperties(): String = String(frameworkWrapperFile("gradle-wrapper.properties"), Charsets.ISO_8859_1)
+
+internal fun frameworkGradleDistribution(): WrapperDistribution =
+    wrapperDistributionOf(frameworkWrapperProperties()).also {
+        check(it.url != null && it.sha256 != null) { "the framework's gradle-wrapper.properties names no distribution or no checksum" }
+    }
+
+// PF-216: one warning per build while the application's wrapper names another distribution, or
+// the framework's with another checksum or none. A warning only, by decision, as for pnpm: the
+// build goes on with the application's own wrapper. The file is read through the providers API so
+// that the configuration cache records it as an input: a changed wrapper reconfigures, and that
+// build warns, as PF-194's warnings do. An application without a wrapper hears nothing.
+private fun warnOnAnotherGradleWrapper(project: Project) {
+    val file = project.rootProject.layout.projectDirectory.file(WRAPPER_PROPERTIES)
+    val properties = project.providers.fileContents(file).asText.orNull ?: return
+    gradleWrapperWarning(wrapperDistributionOf(properties), frameworkGradleDistribution())?.let { project.logger.warn(it) }
+}
+
+internal fun gradleWrapperWarning(app: WrapperDistribution, framework: WrapperDistribution): String? {
+    if (app == framework) return null
+    return "~ WARNING: $WRAPPER_PROPERTIES names ${distributionText(app)}, but this framework release builds with " +
+        "${distributionText(framework)}. Run `play gradle-sync` (gradle playGradleSync) to move the wrapper, then commit " +
+        "gradle/wrapper/, gradlew and gradlew.bat together."
+}
+
+private fun distributionText(d: WrapperDistribution) =
+    "${d.url ?: "no distributionUrl"} (${d.sha256?.let { "distributionSha256Sum $it" } ?: "no distributionSha256Sum"})"
+
+// [appProperties] with the framework's distributionUrl and distributionSha256Sum lines, as the
+// framework's file writes them, in place of its own, and every other line as it was. A missing
+// checksum goes in just above distributionUrl, where Gradle's wrapper task writes it; a file that
+// names no distribution gets both at its end. The result is read back, so that a layout this
+// cannot rewrite line by line (a value continued onto the next line) fails instead of corrupting it.
+internal fun withFrameworkDistribution(appProperties: String, frameworkProperties: String): String {
+    val newline = if ("\r\n" in appProperties) "\r\n" else "\n"
+    val frameworkLines = frameworkProperties.lines()
+    val urlLine = frameworkLines.single { propertyKey(it) == DISTRIBUTION_URL }
+    val sumLine = frameworkLines.single { propertyKey(it) == DISTRIBUTION_SHA256 }
+
+    val lines = appProperties.split(newline)
+    val hasUrl = lines.any { propertyKey(it) == DISTRIBUTION_URL }
+    val hasSum = lines.any { propertyKey(it) == DISTRIBUTION_SHA256 }
+    val result = mutableListOf<String>()
+    var sumMissing = !hasSum
+    for (line in lines) {
+        when (propertyKey(line)) {
+            DISTRIBUTION_SHA256 -> result += sumLine
+            DISTRIBUTION_URL -> {
+                if (sumMissing) result += sumLine
+                sumMissing = false
+                result += urlLine
+            }
+            else -> result += line
+        }
+    }
+    if (!hasUrl) {
+        val tail = if (hasSum) listOf(urlLine) else listOf(sumLine, urlLine)
+        // Before the empty string a final line terminator leaves, or terminated after the last line.
+        if (result.last() == "") result.addAll(result.size - 1, tail) else result.addAll(tail + "")
+    }
+    val rewritten = result.joinToString(newline)
+
+    fun others(text: String) = loadProperties(text).apply { remove(DISTRIBUTION_URL); remove(DISTRIBUTION_SHA256) }
+    if (wrapperDistributionOf(rewritten) != wrapperDistributionOf(frameworkProperties) || others(rewritten) != others(appProperties)) {
+        throw GradleException(
+            "$WRAPPER_PROPERTIES cannot be rewritten line by line; set these two lines in it by hand:\n$sumLine\n$urlLine"
+        )
+    }
+    return rewritten
+}
+
+// The key of a properties line, or null for a blank line or a comment. Only the two keys above are
+// looked for, and neither holds a character that a properties file would need escaped.
+private fun propertyKey(line: String): String? =
+    Regex("^[ \\t\\f]*([^=:\\s]+)").find(line)?.groupValues?.get(1)?.takeUnless { it.startsWith("#") || it.startsWith("!") }
+
+// PF-216: moves the application's wrapper to the framework's, as Gradle's own wrapper task does with
+// --gradle-version and --gradle-distribution-sha256-sum, with two differences. The jar and scripts
+// are the framework's, the ones playNewApp gives a new application, not those of the Gradle running
+// the task (which is why Gradle has its wrapper task run twice). And the wrapper's other properties
+// stay as they were. A missing wrapper is written whole. The files are written in place, as the
+// wrapper task writes them, since the Gradle that runs this was started from them.
+@DisableCachingByDefault(because = "Rewrites the application's Gradle wrapper")
+abstract class PlayGradleSyncTask : DefaultTask() {
+    /** The root project's directory, which holds gradlew and gradle/wrapper/. */
+    @get:Internal
+    abstract val rootDir: DirectoryProperty
+
+    @TaskAction
+    fun sync() {
+        val root = rootDir.get().asFile
+        val propertiesFile = File(root, WRAPPER_PROPERTIES)
+        val frameworkProperties = frameworkWrapperProperties()
+        val framework = wrapperDistributionOf(frameworkProperties)
+        if (!propertiesFile.isFile) {
+            propertiesFile.parentFile.mkdirs()
+            propertiesFile.writeText(frameworkProperties, Charsets.ISO_8859_1)
+            logger.lifecycle("~ Wrote ${propertiesFile.absolutePath}, naming ${distributionText(framework)}")
+        } else {
+            val before = propertiesFile.readText(Charsets.ISO_8859_1)
+            val after = withFrameworkDistribution(before, frameworkProperties)
+            if (after == before) {
+                logger.lifecycle("~ ${propertiesFile.absolutePath} already names ${distributionText(framework)}")
+            } else {
+                propertiesFile.writeText(after, Charsets.ISO_8859_1)
+                logger.lifecycle("~ Moved ${propertiesFile.absolutePath} to ${distributionText(framework)}; it named ${distributionText(wrapperDistributionOf(before))}")
+            }
+        }
+        listOf(
+            "gradle-wrapper.jar" to "gradle/wrapper/gradle-wrapper.jar",
+            "gradlew" to "gradlew",
+            "gradlew.bat" to "gradlew.bat",
+        ).forEach { (name, target) -> File(root, target).writeBytes(frameworkWrapperFile(name)) }
+        File(root, "gradlew").setExecutable(true)
+        logger.lifecycle("~ Wrote the framework's gradle-wrapper.jar, gradlew and gradlew.bat")
+        logger.lifecycle("~ Commit gradle/wrapper/, gradlew and gradlew.bat together")
+    }
 }
 
 // Probe for pnpm. Without a pre-flight check the user gets a cryptic

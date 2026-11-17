@@ -244,6 +244,20 @@ public class PlayShimTest {
         assertThat(r.exitCode()).isZero();
     }
 
+    @Test
+    public void gradleSyncRunsTheWrapperTask(@TempDir File tmp) throws Exception {
+        // PF-216: the warning every build prints while the wrapper differs from the framework's
+        // names `play gradle-sync`, so the shim has to know it.
+        File cwd = new File(tmp, "gradleproject");
+        cwd.mkdirs();
+        makeGradleBuild(cwd);
+
+        Result r = run(cwd, stubGradleBin(tmp), "gradle-sync");
+
+        assertThat(r.output()).contains(DELEGATED + " playGradleSync");
+        assertThat(r.exitCode()).isZero();
+    }
+
     /**
      * PF-197: under CI every Gradle run gets --no-daemon. Jenkins kills the processes a build
      * started when it ends, a Gradle daemon included, and on one CI user that daemon may be

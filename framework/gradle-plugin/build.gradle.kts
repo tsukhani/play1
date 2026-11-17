@@ -47,6 +47,18 @@ tasks.processResources {
         into("play/gradle")
         rename { "nuxt-skel-package.json" }
     }
+    // PF-216: an application's Gradle wrapper follows the framework's, for the same reason. The
+    // properties name the distribution and its checksum; the jar and the scripts are what
+    // playGradleSync writes beside them, as playNewApp copies all four into a new application.
+    // One file at a time: a from() of the repo root would have Gradle walk the whole checkout.
+    listOf(
+        "gradle/wrapper/gradle-wrapper.properties",
+        "gradle/wrapper/gradle-wrapper.jar",
+        "gradlew",
+        "gradlew.bat",
+    ).forEach { path ->
+        from(rootProject.layout.projectDirectory.file(path)) { into("play/gradle/wrapper") }
+    }
 }
 
 gradlePlugin {
