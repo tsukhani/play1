@@ -141,6 +141,39 @@ class PrecompiledJarPackagingTest {
         }
     }
 
+    @Test
+    fun `an SSR frontend's server ships in both artifacts and a static build's output does not`(@TempDir tmp: File) {
+        // PF-210: a real frontend/.gitignore hides .output, as this one does, so only the forced
+        // build-output roots can put Nuxt's server into the zips. A static build's .output stays
+        // out: public/spa already holds its pages.
+        val app = app(tmp)
+        File(app, ".gitignore").appendText("frontend/.output/\npublic/spa/\n")
+        File(app, "frontend/.output/public").mkdirs()
+        File(app, "frontend/.output/public/index.html").writeText("a static page")
+        File(app, "public/spa").mkdirs()
+        File(app, "public/spa/index.html").writeText("a static page")
+        fun names(artifact: String) = ZipFile(File(app, artifact)).use { zip -> zip.entries().asSequence().map { it.name }.toList() }
+
+        TestProject.runner(app, "playDist", "playBundle", "-x", "playFrontendSpa").build()
+        for (artifact in listOf("dist/testapp.zip", "dist/testapp-bundle.zip")) {
+            val shipped = names(artifact)
+            assertTrue("testapp/public/spa/index.html" in shipped, "$artifact: $shipped")
+            assertEquals(emptyList<String>(), shipped.filter { it.startsWith("testapp/frontend/.output/") }, artifact)
+        }
+
+        File(app, "public/spa").deleteRecursively()
+        File(app, "frontend/.output/server/chunks").mkdirs()
+        File(app, "frontend/.output/server/index.mjs").writeText("// Nuxt's server")
+        File(app, "frontend/.output/server/chunks/page.mjs").writeText("// a chunk of it")
+        TestProject.runner(app, "playDist", "playBundle", "-x", "playFrontendSpa").build()
+        for (artifact in listOf("dist/testapp.zip", "dist/testapp-bundle.zip")) {
+            val shipped = names(artifact)
+            for (file in listOf("server/index.mjs", "server/chunks/page.mjs", "public/index.html")) {
+                assertTrue("testapp/frontend/.output/$file" in shipped, "$artifact must ship frontend/.output/$file: $shipped")
+            }
+        }
+    }
+
     private fun precompiledJarOf(artifact: File): ByteArray =
         ZipFile(artifact).use { zip ->
             val entry = zip.getEntry("testapp/precompiled/classes.jar")

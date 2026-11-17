@@ -229,9 +229,10 @@ class Play1Plugin : Plugin<Project> {
         // would silently ship a stale SPA in a release artifact.
         project.tasks.register<PlayFrontendSpaTask>("playFrontendSpa") {
             group = "play1"
-            description = "Build the Nuxt frontend (pnpm install + generate) and copy frontend/.output/public into public/spa. Skipped when the app has no frontend/ directory."
+            description = "Build the Nuxt frontend: pnpm install, then nuxt generate into public/spa, or nuxt build into frontend/.output when nuxt.config sets ssr: true. Skipped when the app has no frontend/ directory."
             projectDir.set(project.layout.projectDirectory)
             pnpm.convention("pnpm")
+            node.convention("node")
             val frontendDir = project.layout.projectDirectory.dir("frontend").asFile
             onlyIf { frontendDir.isDirectory }
             outputs.upToDateWhen { false }
@@ -960,9 +961,7 @@ abstract class PlayDistTask : DefaultTask() {
         // running playPrecompile + nuxi generate. .distignore (applied below)
         // still gets the final say, so users can exclude specific files
         // within these trees if needed.
-        val forcedRoots = listOf("precompiled", "public/spa")
-            .map { File(projDir, it) }
-            .filter { it.isDirectory }
+        val forcedRoots = forcedBuildOutputRoots(projDir)
         val forcedFiles = forcedRoots.flatMap { root ->
             root.walkTopDown()
                 .filter { it.isFile }
@@ -1670,12 +1669,16 @@ abstract class PlayFrontendSpaTask : DefaultTask() {
     @get:Internal
     abstract val pnpm: Property<String>
 
+    /** The node command, "node" unless set; PF-210 runs the mode check with it. As [pnpm], for tests. */
+    @get:Internal
+    abstract val node: Property<String>
+
     @get:Inject
     abstract val execOps: ExecOperations
 
     @TaskAction
     fun buildSpa() {
-        buildFrontendAndCopySpa(projectDir.get().asFile, execOps, logger, pnpm.get())
+        buildFrontendAndCopySpa(projectDir.get().asFile, execOps, logger, pnpm.get(), node.get(), temporaryDir)
     }
 }
 
@@ -1796,17 +1799,19 @@ private fun requirePnpm(frontendDir: File, execOps: ExecOperations, pnpm: String
     }
 }
 
-// Build the SPA if a Nuxt frontend is present at the project root. Runs
-// pnpm install + pnpm run generate, then copies frontend/.output/public/ to
-// public/spa/ in the project root. Invoked by the playFrontendSpa task, which
-// playDist and playBundle depend on so the dist-shaped artifacts include the
-// frontend build alongside the precompiled Java classes. Returns true if a
-// frontend was found and built.
+// Build the Nuxt frontend if one is present at the project root. Runs pnpm install, then, for
+// a single-page app, pnpm run generate and a copy of frontend/.output/public/ to public/spa/;
+// for a frontend whose config sets ssr: true (PF-210), pnpm run build, which leaves Nuxt's
+// server at frontend/.output. Invoked by the playFrontendSpa task, which playDist and
+// playBundle depend on so the dist-shaped artifacts include the frontend build alongside the
+// precompiled Java classes. Returns true if a frontend was found and built.
 private fun buildFrontendAndCopySpa(
     projDir: File,
     execOps: ExecOperations,
     logger: Logger,
     pnpm: String,
+    node: String,
+    scratchDir: File,
 ): Boolean {
     val frontendDir = File(projDir, "frontend")
     if (!frontendDir.isDirectory) return false
@@ -1837,6 +1842,29 @@ private fun buildFrontendAndCopySpa(
         workingDir = frontendDir
     }
 
+    val spaDest = File(projDir, "public/spa")
+    val mode = nuxtSsrMode(frontendDir, execOps, node, scratchDir)
+    if (mode.ssr && mode.explicit) {
+        // PF-210: Nuxt's server, not static files. It stays at frontend/.output, which playDist
+        // and playBundle ship, and never goes under public/, which Play serves as static files.
+        logger.lifecycle("~ frontend/nuxt.config sets ssr: true: building Nuxt's server (pnpm run build)")
+        execOps.exec {
+            commandLine(pnpm, "run", "build")
+            workingDir = frontendDir
+        }
+        val server = frontendServerEntry(projDir)
+        if (!server.isFile) {
+            throw GradleException("pnpm run build did not produce ${server.absolutePath}: is the frontend's build script `nuxt build`?")
+        }
+        // A public/spa left by an earlier static build would ship beside the server.
+        if (spaDest.exists()) spaDest.deleteRecursively()
+        logger.lifecycle("~ Nuxt's server is at ${server.parentFile.parentFile.absolutePath}")
+        return true
+    }
+    if (mode.ssr) {
+        logger.lifecycle("~ frontend/nuxt.config does not set ssr, so this builds the static site; set ssr: true to ship Nuxt's server")
+    }
+
     logger.lifecycle("~ Running pnpm run generate in ${frontendDir.absolutePath}")
     execOps.exec {
         commandLine(pnpm, "run", "generate")
@@ -1847,11 +1875,62 @@ private fun buildFrontendAndCopySpa(
     if (!spaSource.isDirectory) {
         throw GradleException("nuxi generate did not produce ${spaSource.absolutePath}")
     }
-    val spaDest = File(projDir, "public/spa")
     if (spaDest.exists()) spaDest.deleteRecursively()
     spaSource.copyRecursively(spaDest)
     logger.lifecycle("~ Copied SPA build to ${spaDest.absolutePath}")
     return true
+}
+
+// PF-210: whether the frontend renders on Nuxt's server, as Nuxt itself resolves its config.
+// The mode check is nuxt-ssr-mode.mjs in this jar, run with node from the frontend after
+// pnpm install, so it reaches the application's own nuxt.
+internal data class NuxtSsrMode(val ssr: Boolean, val explicit: Boolean)
+
+private fun nuxtSsrMode(frontendDir: File, execOps: ExecOperations, node: String, scratchDir: File): NuxtSsrMode {
+    val script = File(scratchDir, "nuxt-ssr-mode.mjs")
+    PlayFrontendSpaTask::class.java.getResourceAsStream("/play/gradle/nuxt-ssr-mode.mjs")!!.use { input ->
+        script.outputStream().use { input.copyTo(it) }
+    }
+    val out = ByteArrayOutputStream()
+    val err = ByteArrayOutputStream()
+    val result = execOps.exec {
+        commandLine(node, script.absolutePath, frontendDir.absolutePath)
+        workingDir = frontendDir
+        standardOutput = out
+        errorOutput = err
+        isIgnoreExitValue = true
+    }
+    if (result.exitValue != 0) {
+        throw GradleException(
+            "Could not read frontend/nuxt.config with Nuxt's config loader (node exited ${result.exitValue}):\n" +
+                err.toString(Charsets.UTF_8).trim()
+        )
+    }
+    return parseNuxtSsrMode(out.toString(Charsets.UTF_8))
+        ?: throw GradleException("Nuxt's config loader printed no mode line:\n${out.toString(Charsets.UTF_8).trim()}")
+}
+
+// The mode line nuxt-ssr-mode.mjs prints, which is its last JSON line: a config, a .env or a
+// layer can make the loader print lines of its own first.
+internal fun parseNuxtSsrMode(stdout: String): NuxtSsrMode? {
+    val line = stdout.lineSequence().map { it.trim() }.lastOrNull { it.startsWith("{") && it.contains("\"ssr\"") } ?: return null
+    fun flag(name: String) = Regex("\"$name\"\\s*:\\s*true").containsMatchIn(line)
+    return NuxtSsrMode(ssr = flag("ssr"), explicit = flag("explicit"))
+}
+
+// PF-210: Nuxt's server entry point after an SSR build. Its presence is what tells packaging,
+// the launchers and the Gradle start tasks that the application runs Nuxt's server: a static
+// `nuxt generate` leaves no server/ under .output.
+internal fun frontendServerEntry(projDir: File): File = File(projDir, "frontend/.output/server/index.mjs")
+
+// The build outputs playDist and playBundle force into their zips, which an application's
+// .gitignore normally hides from `git ls-files`: precompiled/, public/spa/, and Nuxt's server
+// at frontend/.output for an SSR frontend (PF-210). A static build's frontend/.output is left
+// out, because public/spa already holds its pages.
+internal fun forcedBuildOutputRoots(projDir: File): List<File> {
+    val roots = mutableListOf(File(projDir, "precompiled"), File(projDir, "public/spa"))
+    if (frontendServerEntry(projDir).isFile) roots += File(projDir, "frontend/.output")
+    return roots.filter { it.isDirectory }
 }
 
 // Copy a file into a ZipFileSystem path, preserving POSIX permissions. Used
@@ -2653,9 +2732,7 @@ abstract class PlayBundleTask : DefaultTask() {
             .filter { it.isNotBlank() }
             .toList()
 
-        val forcedRoots = listOf("precompiled", "public/spa")
-            .map { File(projDir, it) }
-            .filter { it.isDirectory }
+        val forcedRoots = forcedBuildOutputRoots(projDir)
         val forcedFiles = forcedRoots.flatMap { root ->
             root.walkTopDown()
                 .filter { it.isFile }

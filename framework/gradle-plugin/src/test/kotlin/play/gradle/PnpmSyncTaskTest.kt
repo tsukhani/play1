@@ -51,9 +51,15 @@ class PnpmSyncTaskTest {
             )
             setExecutable(true)
         }
+        // PF-210: playFrontendSpa also asks node for the frontend's ssr mode; this one says a
+        // single-page app, so these cases build the static site as before.
+        val node = File(dir, "stub-bin/node").apply {
+            writeText("#!/bin/sh\necho '{\"ssr\":false,\"explicit\":true}'\n")
+            setExecutable(true)
+        }
         File(dir, "build.gradle.kts").appendText(
             """
-            tasks.withType<play.gradle.PlayFrontendSpaTask>().configureEach { pnpm.set("${stub.absolutePath}") }
+            tasks.withType<play.gradle.PlayFrontendSpaTask>().configureEach { pnpm.set("${stub.absolutePath}"); node.set("${node.absolutePath}") }
             tasks.withType<play.gradle.PlayPnpmSyncTask>().configureEach { pnpm.set("${stub.absolutePath}") }
             """.trimIndent() + "\n"
         )
