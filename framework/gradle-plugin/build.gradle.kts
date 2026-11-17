@@ -24,6 +24,13 @@ dependencies {
 
 tasks.named<Test>("test") {
     useJUnitPlatform()
+    // FrameworkBomsTest reads the repo's real lib-coordinates.properties, which `ant jar`
+    // rewrites after every `ant resolve`; undeclared, the suite stayed UP-TO-DATE across a
+    // dependency bump. inputs.files, not inputs.file: a checkout that has never run `ant jar`
+    // has no such file (the test skips itself then), and Gradle fails a task whose declared
+    // input file is missing, even an optional one; a collection records it as missing instead.
+    inputs.files(rootProject.layout.projectDirectory.file("framework/lib-coordinates.properties"))
+        .withPropertyName("libCoordinates")
 }
 
 gradlePlugin {
