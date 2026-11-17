@@ -200,6 +200,11 @@ require:    &allDependencies
     - com.fasterxml.jackson.core -> jackson-annotations 2.23
     - tools.jackson.core -> jackson-core 3.3.0
     - tools.jackson.core -> jackson-databind 3.3.0
+    # PF-215: CBOR, for applications only (jclaw's passkeys: webauthn4j reads
+    # WebAuthn's CBOR-encoded authenticator data with it); the framework never
+    # loads it. Shipped here so that lib-coordinates.properties holds it to
+    # databind's version, which an application's own copy would drift from.
+    - tools.jackson.dataformat -> jackson-dataformat-cbor 3.3.0
     - tools.jackson.dataformat -> jackson-dataformat-xml 3.3.0
     - tools.jackson.dataformat -> jackson-dataformat-yaml 3.3.0
     # jackson-dataformat-yaml 3 parses with snakeyaml-engine, not snakeyaml; the

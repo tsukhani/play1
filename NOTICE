@@ -57,8 +57,8 @@ Apache License 2.0
     - Gson
     - Hibernate ORM (core, jcache, models, validator)
     - HikariCP
-    - Jackson (annotations, core, databind, dataformat-xml,
-      dataformat-yaml, datatype-jsr310)
+    - Jackson (annotations, core, databind, dataformat-cbor,
+      dataformat-xml, dataformat-yaml, datatype-jsr310)
     - JaMon (Java Monitoring API)
     - Jandex
     - JBoss Logging
