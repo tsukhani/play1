@@ -66,9 +66,12 @@
   forkProcessing: "enabled",
 
   // Single dashboard issue summarises every pending update — easier to
-  // review than scrolling the PR list.
-  dependencyDashboard: true,
-  dependencyDashboardTitle: "Renovate dependency dashboard",
+  // review than scrolling the PR list. Renovate finds its issue (#4) by this
+  // title, so changing it opens a new dashboard and abandons the old one.
+  dependencyDashboard: {
+    enabled: true,
+    title: "Renovate dependency dashboard"
+  },
 
   // Custom regex manager for the Play 1 Ivy manifest.
   // dependencies.yml lines look like:
