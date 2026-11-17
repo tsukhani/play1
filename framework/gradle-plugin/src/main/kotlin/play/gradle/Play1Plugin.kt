@@ -21,6 +21,9 @@ import org.gradle.api.plugins.JavaPluginExtension
 import org.gradle.jvm.toolchain.JavaLanguageVersion
 import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.Property
+import org.gradle.api.provider.Provider
+import org.gradle.api.services.BuildService
+import org.gradle.api.services.BuildServiceParameters
 import org.gradle.api.tasks.Delete
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputFile
@@ -41,8 +44,11 @@ import org.gradle.process.ExecOperations
 import org.gradle.work.DisableCachingByDefault
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.IOException
 import java.io.OutputStream
 import java.net.HttpURLConnection
+import java.net.InetSocketAddress
+import java.net.Socket
 import java.net.URI
 import java.nio.file.FileSystems
 import java.nio.file.Files
@@ -374,6 +380,9 @@ class Play1Plugin : Plugin<Project> {
             // -PjvmArgs="..." carries 1.12-style JVM tuning forwarded by the
             // play wrapper from the user's command line.
             extraJvmArgs.set(project.providers.gradleProperty("jvmArgs").orElse(""))
+            // PF-213: Nuxt's server beside Play, same names as the bundle launcher's.
+            node.set(project.providers.environmentVariable("PLAY_NODE").orElse("node"))
+            frontendWait.set(project.providers.environmentVariable("PLAY_FRONTEND_WAIT").orElse("120"))
             playClasspath.from(playClasspathFor(project, ext, includeTestrunner = false))
             outputs.upToDateWhen { false }
         }
@@ -401,6 +410,9 @@ class Play1Plugin : Plugin<Project> {
             httpsPort.set(project.providers.gradleProperty("httpsPort").map { it.toInt() })
             pidFileOverride.set(project.providers.gradleProperty("pid-file").orElse(""))
             extraJvmArgs.set(project.providers.gradleProperty("jvmArgs").orElse(""))
+            // PF-213: Nuxt's server beside Play, same names as the bundle launcher's.
+            node.set(project.providers.environmentVariable("PLAY_NODE").orElse("node"))
+            frontendWait.set(project.providers.environmentVariable("PLAY_FRONTEND_WAIT").orElse("120"))
             playClasspath.from(playClasspathFor(project, ext, includeTestrunner = false))
             outputs.upToDateWhen { false }
         }
@@ -819,6 +831,30 @@ class Play1Plugin : Plugin<Project> {
                         exec.jvmArgs = listOf(aot) + exec.jvmArgs.orEmpty()
                         exec.classpath = exec.classpath.filter { it.isFile }
                     }
+                }
+
+                // PF-213: a PROD run of an application that holds Nuxt's server runs it beside
+                // the foreground Play. Through a build service, which Gradle closes when the
+                // build ends, so that a run ending in a failure or a cancellation stops it too.
+                val runPlayId = effectivePlayId
+                val runHttpPort = project.providers.gradleProperty("httpPort").orNull?.toIntOrNull()
+                val runNode = project.providers.environmentVariable("PLAY_NODE").orElse("node")
+                val runWait = project.providers.environmentVariable("PLAY_FRONTEND_WAIT").orElse("120")
+                val nuxtServer: Provider<NuxtServerService> =
+                    project.gradle.sharedServices.registerIfAbsent("play1NuxtServer", NuxtServerService::class.java) {}
+                usesService(nuxtServer)
+                doFirst {
+                    if (runsFrontendServer(appDir, runPlayId)) {
+                        frontendPreflight(appDir, runNode.get())
+                        val launch = frontendLaunch(appDir, runPlayId, runHttpPort, frontendStopFile(frontendPidFile(File(appDir, "server.pid"))))
+                        logger.lifecycle("~ Nuxt's server starts once Play listens on ${launch.playHost}:${launch.playPort}")
+                        nuxtServer.get().startAfterPlay(appDir, runNode.get(), launch, frontendWaitSeconds(runWait.get()), logger)
+                    } else if (frontendServerEntry(appDir).isFile) {
+                        logger.lifecycle(FRONTEND_DEV_NOTE)
+                    }
+                }
+                doLast {
+                    nuxtServer.get().stop(logger)
                 }
             }
         }
@@ -1940,6 +1976,200 @@ internal fun forcedBuildOutputRoots(projDir: File): List<File> {
     return roots.filter { it.isDirectory }
 }
 
+// ---- PF-213: Nuxt's server beside Play, for the Gradle start tasks ------------------------
+//
+// The rules of bundle-play.sh (PF-212), whose functions these mirror -- frontend_preflight,
+// frontend_env, wait_for_play, stop_frontend_pid: change the two together. One rule is the
+// Gradle side's own: only a PROD start runs Nuxt's server. A working copy that has made an SSR
+// build still develops under `pnpm dev`, which wants port 3000 as well.
+
+internal fun frontendStartScript(appDir: File): File = File(appDir, "frontend/.output/play1-server.mjs")
+
+/** server.pid -> server.frontend.pid, beside Play's, so -Ppid-file instances keep theirs apart. */
+internal fun frontendPidFile(pidFile: File): File = File(pidFile.parentFile, pidFile.name.removeSuffix(".pid") + ".frontend.pid")
+
+internal fun frontendStopFile(frontendPid: File): File = File(frontendPid.parentFile, frontendPid.name + ".stop")
+
+/** Whether a start runs Nuxt's server: the application holds one (an SSR build) and the start is in PROD mode. */
+internal fun runsFrontendServer(appDir: File, playId: String): Boolean {
+    if (!frontendServerEntry(appDir).isFile) return false
+    val config = File(appDir, "conf/application.conf").takeIf { it.isFile }?.readText() ?: ""
+    return confValue(config, "application.mode", playId)?.trim().equals("prod", ignoreCase = true)
+}
+
+internal const val FRONTEND_DEV_NOTE =
+    "~ frontend/.output holds Nuxt's server, but this is a DEV start: run the frontend with `cd frontend && pnpm dev`"
+
+/** Where Play listens and where Nuxt's server is to, and the environment it gets on top of certs/.env. */
+internal data class FrontendLaunch(val playHost: String, val playPort: Int, val address: String, val env: Map<String, String>)
+
+internal fun frontendLaunch(appDir: File, playId: String, httpPort: Int?, stopFile: File): FrontendLaunch {
+    val config = File(appDir, "conf/application.conf").takeIf { it.isFile }?.readText() ?: ""
+    fun conf(key: String) = confValue(config, key, playId)?.trim()?.takeIf { it.isNotEmpty() }
+    val playPort = httpPort ?: conf("http.port")?.toIntOrNull() ?: 9000
+    val playHost = conf("http.address") ?: "127.0.0.1"
+    val port = conf("frontend.port") ?: "3000"
+    val host = conf("frontend.host") ?: "127.0.0.1"
+    return FrontendLaunch(
+        playHost, playPort, "$host:$port",
+        mapOf(
+            "NITRO_PORT" to port,
+            "NITRO_HOST" to host,
+            "NUXT_PLAY_BACKEND_URL" to "http://$playHost:$playPort",
+            "PLAY1_STOP_FILE" to stopFile.absolutePath,
+        ),
+    )
+}
+
+/** Fail before anything starts when Nuxt's server cannot run here: its start script and a Node it accepts. */
+internal fun frontendPreflight(appDir: File, node: String) {
+    val script = frontendStartScript(appDir)
+    val requirement = File(appDir, "frontend/.output/play1.json")
+    if (!script.isFile || !requirement.isFile) {
+        throw GradleException("${appDir.absolutePath}/frontend/.output holds Nuxt's server but not play1-server.mjs; build it again (play dist, or gradle playFrontendSpa)")
+    }
+    val needs = Regex("\"node\"\\s*:\\s*\"([^\"]*)\"").find(requirement.readText())?.groupValues?.get(1)
+    val check = try {
+        ProcessBuilder(node, script.absolutePath, "--check").directory(appDir).redirectErrorStream(true).start()
+    } catch (e: IOException) {
+        throw GradleException(
+            "This application runs Nuxt's server, which needs Node${needs?.let { " $it" } ?: ""}, and '$node' could not be run " +
+                "(${e.message}). Install Node, or name one with PLAY_NODE."
+        )
+    }
+    val out = check.inputStream.bufferedReader().readText().trim()
+    if (check.waitFor() != 0) throw GradleException(out.ifEmpty { "$node ${script.absolutePath} --check failed" })
+}
+
+/**
+ * Wait until Play listens on [host]:[port]: the first page Nuxt's server renders fetches from it.
+ * False when Play exits first ([alive]); after [timeoutSeconds] (PLAY_FRONTEND_WAIT) Nuxt's
+ * server starts anyway, with a warning.
+ */
+internal fun waitForPlay(alive: () -> Boolean, host: String, port: Int, timeoutSeconds: Long, logger: Logger): Boolean {
+    val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(timeoutSeconds)
+    while (true) {
+        if (runCatching { Socket().use { it.connect(InetSocketAddress(host, port), 500) } }.isSuccess) return true
+        if (!alive()) return false
+        if (System.nanoTime() - deadline >= 0) {
+            logger.warn("~ WARNING: Play was not listening on $host:$port after ${timeoutSeconds}s (PLAY_FRONTEND_WAIT); starting Nuxt's server anyway")
+            return true
+        }
+        Thread.sleep(200)
+    }
+}
+
+internal fun frontendWaitSeconds(value: String): Long =
+    value.trim().toLongOrNull()?.takeIf { it >= 0 } ?: throw GradleException("PLAY_FRONTEND_WAIT is a number of seconds, not '$value'")
+
+/** Start Nuxt's server, its output appended to logs/frontend.out. Play's certs/.env entries apply, the host's win. */
+internal fun spawnFrontend(appDir: File, node: String, launch: FrontendLaunch): Process {
+    val output = File(appDir, "logs/frontend.out").apply { parentFile.mkdirs() }
+    val pb = ProcessBuilder(node, frontendStartScript(appDir).absolutePath)
+        .directory(appDir)
+        .redirectOutput(ProcessBuilder.Redirect.appendTo(output))
+        .redirectErrorStream(true)
+    loadDotEnv(File(appDir, "certs/.env")).forEach { (k, v) -> pb.environment().putIfAbsent(k, v) }
+    pb.environment().putAll(launch.env)
+    return pb.start()
+}
+
+/**
+ * The second half of a start: Play ([play]) is up, so wait for it to listen and start Nuxt's
+ * server, recording its pid in [frontendPid].
+ */
+internal fun startFrontend(appDir: File, node: String, playId: String, httpPort: Int?, frontendPid: File, play: ProcessHandle, waitSeconds: Long, logger: Logger) {
+    val launch = frontendLaunch(appDir, playId, httpPort, frontendStopFile(frontendPid))
+    logger.lifecycle("~ Waiting for Play on ${launch.playHost}:${launch.playPort} before starting Nuxt's server")
+    if (!waitForPlay({ play.isAlive }, launch.playHost, launch.playPort, waitSeconds, logger)) {
+        throw GradleException("Play stopped before it was listening on ${launch.playHost}:${launch.playPort}, so Nuxt's server was not started. See logs/system.out")
+    }
+    val frontend = spawnFrontend(appDir, node, launch)
+    frontendPid.writeText(frontend.pid().toString())
+    logger.lifecycle("~ OK, Nuxt's server is started (pid: ${frontend.pid()}) on ${launch.address}, reaching Play at ${launch.env["NUXT_PLAY_BACKEND_URL"]}")
+    logger.lifecycle("~ its output (stdout/stderr) -> ${File(appDir, "logs/frontend.out").absolutePath}")
+}
+
+/**
+ * Stop Nuxt's server through its stop file and wait for it, as playStop waits for Play. After
+ * [STOP_WAIT_SECONDS] it gets destroy(): the SIGTERM Nitro also handles, off Windows. False when
+ * it is still running after that.
+ */
+internal fun stopFrontendProcess(handle: ProcessHandle, stopFile: File): Boolean {
+    stopFile.writeText("")
+    var gone = awaitExit(handle, TimeUnit.SECONDS.toMillis(STOP_WAIT_SECONDS))
+    if (!gone) {
+        handle.destroy()
+        gone = awaitExit(handle, 5_000)
+    }
+    stopFile.delete()
+    return gone
+}
+
+/** The first half of a stop: Nuxt's server, when its pid file says it was started. */
+internal fun stopFrontend(frontendPid: File, logger: Logger) {
+    if (!frontendPid.exists()) return
+    val pid = frontendPid.readText().trim().toLongOrNull()
+    val handle = pid?.let { ProcessHandle.of(it).orElse(null) }?.takeIf { it.isAlive }
+    when {
+        handle == null -> {
+            logger.lifecycle("~ Nuxt's server was not running (pid $pid not found); removing stale pid file")
+            frontendPid.delete()
+            frontendStopFile(frontendPid).delete()
+        }
+        stopFrontendProcess(handle, frontendStopFile(frontendPid)) -> {
+            frontendPid.delete()
+            logger.lifecycle("~ OK, Nuxt's server is stopped")
+        }
+        else -> logger.lifecycle("~ Nuxt's server (pid $pid) is still running after its stop file and a SIGTERM; leaving its pid file")
+    }
+}
+
+/** The pid of the Nuxt's server [frontendPid] records, when that process is alive. */
+internal fun runningFrontendPid(frontendPid: File): Long? =
+    frontendPid.takeIf { it.exists() }?.readText()?.trim()?.toLongOrNull()?.takeIf { ProcessHandle.of(it).map { h -> h.isAlive }.orElse(false) }
+
+/**
+ * Nuxt's server beside a foreground playRun. A build service, so that a run ending in a
+ * failure or a cancellation stops it as well: Gradle closes the service when the build ends.
+ * The run's own Play process is not reachable from here, so the wait for it to listen ends
+ * only by the timeout, or when the service is closed.
+ */
+abstract class NuxtServerService : BuildService<BuildServiceParameters.None>, AutoCloseable {
+    @Volatile private var process: Process? = null
+    @Volatile private var stopFile: File? = null
+    @Volatile private var watcher: Thread? = null
+
+    internal fun startAfterPlay(appDir: File, node: String, launch: FrontendLaunch, waitSeconds: Long, logger: Logger) {
+        stopFile = File(launch.env.getValue("PLAY1_STOP_FILE"))
+        watcher = Thread.ofPlatform().daemon().name("play1-nuxt-server").start {
+            try {
+                if (!waitForPlay({ true }, launch.playHost, launch.playPort, waitSeconds, logger)) return@start
+                val started = spawnFrontend(appDir, node, launch)
+                process = started
+                logger.lifecycle("~ Nuxt's server (pid ${started.pid()}) on ${launch.address}, reaching Play at ${launch.env["NUXT_PLAY_BACKEND_URL"]}; its output -> logs/frontend.out")
+            } catch (e: InterruptedException) {
+                // the run ended before Play listened
+            }
+        }
+    }
+
+    internal fun stop(logger: Logger) {
+        watcher?.let { it.interrupt(); it.join(5_000) }
+        watcher = null
+        val running = process ?: return
+        process = null
+        if (stopFrontendProcess(running.toHandle(), stopFile!!)) logger.lifecycle("~ OK, Nuxt's server is stopped")
+        else logger.lifecycle("~ Nuxt's server (pid ${running.pid()}) is still running after its stop file and a SIGTERM")
+    }
+
+    override fun close() {
+        watcher?.interrupt()
+        process?.let { stopFrontendProcess(it.toHandle(), stopFile!!) }
+        process = null
+    }
+}
+
 // Copy a file into a ZipFileSystem path, preserving POSIX permissions. Used
 // by playDist and playBundle to build zips where the source file's
 // executable bit (e.g. on shell scripts) survives the round-trip. Plain
@@ -2045,6 +2275,9 @@ abstract class PlayStartTask : DefaultTask() {
     @get:Internal abstract val playClasspath: ConfigurableFileCollection
     @get:Internal abstract val pidFileOverride: Property<String>
     @get:Internal abstract val extraJvmArgs: Property<String>
+    /** PF-213: the Node that runs Nuxt's server (PLAY_NODE, else node), and how long to wait for Play (PLAY_FRONTEND_WAIT). */
+    @get:Internal abstract val node: Property<String>
+    @get:Internal abstract val frontendWait: Property<String>
 
     @TaskAction
     fun start() {
@@ -2058,6 +2291,18 @@ abstract class PlayStartTask : DefaultTask() {
             logger.lifecycle("~ Removing pid file ${pidFile.absolutePath} for not running pid $existing")
             pidFile.delete()
         }
+        // PF-213: before anything starts, whether Nuxt's server can run beside Play.
+        val frontendPid = frontendPidFile(pidFile)
+        val frontend = runsFrontendServer(appDir, playId.get())
+        if (frontend) {
+            frontendPreflight(appDir, node.get())
+            runningFrontendPid(frontendPid)?.let {
+                throw GradleException("Nuxt's server is still running (pid:$it). Stop it first or delete ${frontendPid.absolutePath}.")
+            }
+            frontendPid.delete()
+        } else if (frontendServerEntry(appDir).isFile) {
+            logger.lifecycle(FRONTEND_DEV_NOTE)
+        }
 
         val jvmArgsList = extraJvmArgs.orNull
             ?.split(Regex("\\s+"))?.filter { it.isNotEmpty() }
@@ -2068,6 +2313,9 @@ abstract class PlayStartTask : DefaultTask() {
         logger.lifecycle("~ OK, ${appDir.absolutePath} is started")
         outputBanner(appDir, playId.get()).forEach { logger.lifecycle(it) }
         logger.lifecycle("~ pid is ${process.pid()}")
+        if (frontend) {
+            startFrontend(appDir, node.get(), playId.get(), httpPort.orNull, frontendPid, process.toHandle(), frontendWaitSeconds(frontendWait.get()), logger)
+        }
     }
 }
 
@@ -2108,6 +2356,8 @@ abstract class PlayStopTask : DefaultTask() {
     fun stop() {
         val appDir = applicationPath.get().asFile
         val pidFile = resolvePidFile(appDir, pidFileOverride.orNull)
+        // PF-213: Nuxt's server first, while Play still answers what it is rendering.
+        stopFrontend(frontendPidFile(pidFile), logger)
         if (!pidFile.exists()) {
             logger.lifecycle("~ ${appDir.absolutePath} is already stopped")
             return
@@ -2142,11 +2392,20 @@ abstract class PlayRestartTask : DefaultTask() {
     @get:Internal abstract val playClasspath: ConfigurableFileCollection
     @get:Internal abstract val pidFileOverride: Property<String>
     @get:Internal abstract val extraJvmArgs: Property<String>
+    /** PF-213: as on [PlayStartTask]. */
+    @get:Internal abstract val node: Property<String>
+    @get:Internal abstract val frontendWait: Property<String>
 
     @TaskAction
     fun restart() {
         val appDir = applicationPath.get().asFile
         val pidFile = resolvePidFile(appDir, pidFileOverride.orNull)
+        // PF-213: the check before anything is stopped, then Nuxt's server first, as playStop.
+        val frontendPid = frontendPidFile(pidFile)
+        val frontend = runsFrontendServer(appDir, playId.get())
+        if (frontend) frontendPreflight(appDir, node.get())
+        stopFrontend(frontendPid, logger)
+        if (!frontend && frontendServerEntry(appDir).isFile) logger.lifecycle(FRONTEND_DEV_NOTE)
         if (pidFile.exists()) {
             val pid = pidFile.readText().trim().toLongOrNull()
             pidFile.delete()
@@ -2173,6 +2432,9 @@ abstract class PlayRestartTask : DefaultTask() {
         logger.lifecycle("~ OK, ${appDir.absolutePath} is restarted")
         outputBanner(appDir, playId.get()).forEach { logger.lifecycle(it) }
         logger.lifecycle("~ New pid is ${process.pid()}")
+        if (frontend) {
+            startFrontend(appDir, node.get(), playId.get(), httpPort.orNull, frontendPid, process.toHandle(), frontendWaitSeconds(frontendWait.get()), logger)
+        }
     }
 }
 
@@ -2363,6 +2625,8 @@ abstract class PlayPidTask : DefaultTask() {
         }
         val pid = pidFile.readText().trim()
         logger.lifecycle("~ PID of the running application is $pid")
+        // PF-213: and of Nuxt's server, when one runs beside it.
+        runningFrontendPid(frontendPidFile(pidFile))?.let { logger.lifecycle("~ PID of Nuxt's server is $it") }
     }
 }
 
@@ -2401,6 +2665,16 @@ abstract class PlayStatusTask : DefaultTask() {
     fun status() {
         val appDir = applicationPath.get().asFile
         val pidFile = resolvePidFile(appDir, pidFileOverride.orNull)
+        playStatus(appDir, pidFile)
+        // PF-213: Nuxt's server, for an application that has one or a start that ran one.
+        val frontendPid = frontendPidFile(pidFile)
+        if (frontendServerEntry(appDir).isFile || frontendPid.exists()) {
+            val running = runningFrontendPid(frontendPid)
+            logger.lifecycle(if (running != null) "~ Nuxt's server is running (pid $running)" else "~ Nuxt's server is not running")
+        }
+    }
+
+    private fun playStatus(appDir: File, pidFile: File) {
         if (!pidFile.exists()) {
             logger.lifecycle("~ The application is not running")
             return
