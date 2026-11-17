@@ -147,6 +147,7 @@ class PnpmSyncTaskTest {
 
         val result = TestProject.runner(tmp, "playPnpmSync").buildAndFail()
 
-        assertTrue("This application has no" in result.output && "frontend/package.json" in result.output, result.output)
+        // The message names the file by its absolute path, with the platform's separator.
+        assertTrue("This application has no" in result.output && "frontend${File.separator}package.json" in result.output, result.output)
     }
 }
