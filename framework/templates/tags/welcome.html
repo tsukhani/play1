@@ -2,8 +2,14 @@
 
 #{if play.mode.toString() == 'DEV'}
     
+*{ PF-218: each static file this page and welcome_en/_ja reverse-route is linked only when some
+   root has it. The reverse route throws when none does, and the page then fails with a 500: the
+   skel ships the stylesheet and docviewer the playmanual files, and an application can lack
+   either, docviewer by the skel's own invitation to remove it for a slimmer setup. }*
 #{set 'moreStyles'}
+	#{if play.getVirtualFile('/public/stylesheets/play-tailwind.css') != null}
 	<link rel="stylesheet" href="@{'/public/stylesheets/play-tailwind.css'}" type="text/css" media="screen" charset="${_response_encoding}">
+	#{/if}
 	<style>body { background: #F7F7F7; border-top: 4px solid #67A927; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }</style>
 #{/set}
 
@@ -19,7 +25,9 @@
 #{else}
     #{welcome_en /}
 #{/else}
+#{if play.getVirtualFile('/public/playmanual/navigation.js') != null}
 <script type="text/javascript" src="@{'/public/playmanual/navigation.js'}"></script>
+#{/if}
 
 #{/if}
 #{else}

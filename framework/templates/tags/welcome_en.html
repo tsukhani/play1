@@ -3,7 +3,9 @@
     <div class="w-52 shrink-0">
 
         <div class="text-center mb-6">
+            #{if play.getVirtualFile('/public/playmanual/logo.png') != null}
             <img src="@{'/public/playmanual/logo.png'}" class="mx-auto">
+            #{/if}
             <p class="text-xs text-gray-400 mt-1">Play ${play.version}</p>
         </div>
 

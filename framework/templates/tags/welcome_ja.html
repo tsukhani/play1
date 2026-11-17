@@ -4,7 +4,9 @@
     <div id="docSidebar">
 
         <div id="logo">
+            #{if play.getVirtualFile('/public/playmanual/logo.png') != null}
             <img src="@{'/public/playmanual/logo.png'}">
+            #{/if}
             <h2 id="version">Play ${play.version}</h2>
         </div>
 

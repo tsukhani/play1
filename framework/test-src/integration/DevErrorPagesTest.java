@@ -26,6 +26,10 @@ import play.server.Server;
  * application created before the skel had it, or migrated from 1.12, answered every unrouted
  * path with a 500, and an action's exception with the same template error in place of its own.
  *
+ * <p>The DEV welcome page, the {@code welcome} tag the skel's index view renders, resolves the
+ * stylesheet and docviewer's {@code playmanual/navigation.js} and {@code logo.png} the same way, and
+ * failed the same way without them.
+ *
  * <p>The integration testapp cannot show this: it mounts docviewer, whose {@code public/} has a
  * copy, and the lookup searches module roots. Each case starts a scratch DEV application with no
  * module in a child JVM.
@@ -35,6 +39,10 @@ public class DevErrorPagesTest {
     private static final String SECRET = "deverrorpagestestsecret1234567890deverrorpagestestsecret12345";
 
     private static final String LINK = "href=\"/public/stylesheets/play-tailwind.css\"";
+
+    private static final String SCRIPT = "src=\"/public/playmanual/navigation.js\"";
+
+    private static final String LOGO = "src=\"/public/playmanual/logo.png\"";
 
     @Test
     public void withoutTheStylesheetTheDevErrorPagesRenderWithoutIt(@TempDir File app) throws Exception {
@@ -65,6 +73,11 @@ public class DevErrorPagesTest {
             assertThat(failed.body()).as("the DEV 500 page, not the static fallback")
                     .contains("id=\"header\"", "pf218-boom").doesNotContain("Compilation error", "play-tailwind.css");
 
+            HttpResponse<String> welcome = get("/welcome");
+            assertThat(welcome.statusCode()).as("body:%n%s", welcome.body()).isEqualTo(200);
+            assertThat(welcome.body()).contains("Your new application is ready!")
+                    .doesNotContain("play-tailwind.css", "playmanual");
+
             assertThat(read(console(app))).doesNotContain("NoRouteFoundException");
         } finally {
             server.destroyForcibly().waitFor();
@@ -75,6 +88,8 @@ public class DevErrorPagesTest {
     public void withTheStylesheetTheDevErrorPagesLinkIt(@TempDir File app) throws Exception {
         scratchApp(app);
         write(app, "public/stylesheets/play-tailwind.css", "/* stand-in */\n");
+        write(app, "public/playmanual/navigation.js", "// stand-in\n");
+        write(app, "public/playmanual/logo.png", "stand-in\n");
         Process server = server(app);
         try {
             HttpResponse<String> notFound = get("/nowhere");
@@ -84,6 +99,10 @@ public class DevErrorPagesTest {
             HttpResponse<String> failed = get("/boom");
             assertThat(failed.statusCode()).isEqualTo(500);
             assertThat(failed.body()).contains(LINK, "pf218-boom");
+
+            HttpResponse<String> welcome = get("/welcome");
+            assertThat(welcome.statusCode()).as("body:%n%s", welcome.body()).isEqualTo(200);
+            assertThat(welcome.body()).contains(LINK, SCRIPT, LOGO, "Your new application is ready!");
 
             assertThat(get("/public/stylesheets/play-tailwind.css").statusCode()).as("the link resolves").isEqualTo(200);
         } finally {
@@ -95,7 +114,8 @@ public class DevErrorPagesTest {
         write(app, "conf/application.conf",
                 "application.name=dev-error-pages\napplication.mode=dev\napplication.secret=${PLAY_SECRET}\n");
         write(app, "conf/routes",
-                "GET / Application.index\nGET /boom Application.boom\nGET /public/ staticDir:public\n");
+                "GET / Application.index\nGET /boom Application.boom\nGET /welcome Application.welcome\n"
+                + "GET /public/ staticDir:public\n");
         write(app, "app/controllers/Application.java", "package controllers;\n"
                 + "public class Application extends play.mvc.Controller {\n"
                 + "    public static void index() {\n"
@@ -104,7 +124,13 @@ public class DevErrorPagesTest {
                 + "    public static void boom() {\n"
                 + "        throw new IllegalStateException(\"pf218-boom\");\n"
                 + "    }\n"
+                + "    public static void welcome() {\n"
+                + "        render();\n"
+                + "    }\n"
                 + "}\n");
+        // the skel's index view and its layout's #{get 'moreStyles' /}, cut down
+        write(app, "app/views/main.html", "<html><head>#{get 'moreStyles' /}</head><body>#{doLayout /}</body></html>\n");
+        write(app, "app/views/Application/welcome.html", "#{extends 'main.html' /}\n#{welcome /}\n");
     }
 
     private static int port;
