@@ -35,9 +35,38 @@
         <delete dir="tmp" />
     </target>
 
-    <!-- No-op: testrunner has no framework-run JUnit tests. The framework's
-         `module-unittest` target invokes this on every module; modules without
-         tests just stay silent here. -->
-    <target name="unittest" />
+    <!-- PF-217: runs testrunner's JUnit tests; invoked by the framework's `module-unittest`.
+         app/ is compiled at runtime by ApplicationClassloader when the module is mounted, so no
+         sourceset reaches it. The /@tests.list classifier, app/testrunner/, depends on nothing
+         but the framework and ASM, so this target compiles it beside its tests; the controllers
+         stay untested here. The framework alone is the classpath: firephoque/ holds other
+         versions of some of its jars. -->
+    <path id="unittest.classpath">
+        <pathelement path="../../framework/classes"/>
+        <fileset dir="../../framework/lib">
+            <include name="*.jar"/>
+        </fileset>
+    </path>
+
+    <target name="unittest">
+        <mkdir dir="tmp/test-classes" />
+        <javac destdir="tmp/test-classes" debug="true" release="${build-release}" includeantruntime="false">
+            <src path="app" />
+            <src path="test" />
+            <include name="testrunner/**" />
+            <classpath refid="unittest.classpath" />
+        </javac>
+        <junitlauncher haltonfailure="true" printSummary="true">
+            <testclasses>
+                <fileset dir="tmp/test-classes" includes="**/*Test.class" />
+                <fork />
+            </testclasses>
+            <classpath>
+                <pathelement location="tmp/test-classes" />
+                <path refid="unittest.classpath" />
+            </classpath>
+        </junitlauncher>
+        <delete dir="tmp" />
+    </target>
 
 </project>
