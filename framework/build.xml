@@ -397,9 +397,9 @@
     <!-- PF: fail the build on a jar in lib/ that nothing reaches and nobody has
          justified in dependencies-audit.conf. Cheap (seconds) and placed first in
          `test` so a dependency mistake surfaces before the suites run. Depends on
-         modules because a bundled module's jar is one of the analysis roots — asm is
-         reached only from testrunner, and auditing the framework alone would condemn
-         it. -Daudit.strict=false reports without failing, for triage. -->
+         modules because a bundled module's jar is one of the analysis roots — jj-textile
+         and jj-wikitext are reached only from docviewer, and auditing the framework alone
+         would condemn them. -Daudit.strict=false reports without failing, for triage. -->
     <target name="audit-deps" depends="compile,modules" description="fail on unjustified jars in framework/lib (see dependencies-audit.conf)">
         <property name="audit.strict" value="true"/>
         <java classname="play.deps.DependencyAudit" fork="true" failonerror="true">
