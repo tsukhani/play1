@@ -295,13 +295,29 @@ wait_for_play() {
     done
 }
 
+# PF-219: how long stop waits for Play, and for Nuxt's server, before giving up: 35 s, past the
+# jobs drain budget (play.jobs.stop.timeout, default 30s). PLAY_TEST_STOP_WAIT_SECONDS replaces
+# it when it holds a positive whole number. That is a test hook, so that the tests of a stop that
+# gives up do not wait 35 s, and not an operator setting: the H2 shutdown fallback is timed to fit
+# inside the 35 s. stopWaitSeconds in Play1Plugin.kt reads it the same way; keep the two in step.
+stop_wait_seconds() {
+    local seconds="${PLAY_TEST_STOP_WAIT_SECONDS:-}"
+    # Digits only, at most nine of them, so that bash's arithmetic and Kotlin's Long agree.
+    case "$seconds" in
+        ''|*[!0-9]*|??????????*) echo 35; return ;;
+    esac
+    # 10#: a leading zero is not octal.
+    seconds=$((10#$seconds))
+    if [ "$seconds" -gt 0 ]; then echo "$seconds"; else echo 35; fi
+}
+
 # Stop Nuxt's server (pid $1) through its stop file and wait for it, as stop
-# waits for Play. After 35 s it gets kill: off Windows the SIGTERM Nitro also
-# handles. Returns 1 when it is still running after that.
+# waits for Play. After stop_wait_seconds it gets kill: off Windows the SIGTERM
+# Nitro also handles. Returns 1 when it is still running after that.
 stop_frontend_pid() {
     local deadline
     : > "$FRONTEND_STOP_FILE"
-    deadline=$((SECONDS + 35))
+    deadline=$((SECONDS + $(stop_wait_seconds)))
     while kill -0 "$1" 2>/dev/null && [ "$SECONDS" -le "$deadline" ]; do
         sleep 0.02
     done
@@ -746,14 +762,15 @@ case "$CMD" in
             # restart's outage includes that wait. The 35 s are elapsed time, not a
             # number of checks, which would also count the start of every sleep.
             # SECONDS counts whole seconds, so -le waits 35 to 36 s, never less.
-            deadline=$((SECONDS + 35))
+            wait_seconds=$(stop_wait_seconds)
+            deadline=$((SECONDS + wait_seconds))
             while kill -0 "$pid" 2>/dev/null && [ "$SECONDS" -le "$deadline" ]; do
                 sleep 0.02
             done
             if kill -0 "$pid" 2>/dev/null; then
                 # Still draining: leave the pid file so status/pid keep tracking
                 # the live process, mirroring PlayStopTask's timeout return.
-                echo "~ SIGTERM sent; process (pid $pid) still draining after 35s. Leaving it to the OS to reap."
+                echo "~ SIGTERM sent; process (pid $pid) still draining after ${wait_seconds}s. Leaving it to the OS to reap."
             else
                 rm -f "$PID_FILE"
                 echo "~ OK, $SCRIPT_DIR is stopped"

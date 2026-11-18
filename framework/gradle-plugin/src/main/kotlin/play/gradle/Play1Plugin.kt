@@ -2257,12 +2257,12 @@ internal fun startFrontend(appDir: File, node: String, playId: String, httpPort:
 
 /**
  * Stop Nuxt's server through its stop file and wait for it, as playStop waits for Play. After
- * [STOP_WAIT_SECONDS] it gets destroy(): the SIGTERM Nitro also handles, off Windows. False when
+ * [stopWaitSeconds] it gets destroy(): the SIGTERM Nitro also handles, off Windows. False when
  * it is still running after that.
  */
 internal fun stopFrontendProcess(handle: ProcessHandle, stopFile: File): Boolean {
     stopFile.writeText("")
-    var gone = awaitExit(handle, TimeUnit.SECONDS.toMillis(STOP_WAIT_SECONDS))
+    var gone = awaitExit(handle, TimeUnit.SECONDS.toMillis(stopWaitSeconds()))
     if (!gone) {
         handle.destroy()
         gone = awaitExit(handle, 5_000)
@@ -2491,6 +2491,20 @@ abstract class PlayStartTask : DefaultTask() {
 internal const val STOP_WAIT_SECONDS = 35L
 
 /**
+ * PF-219: the stop wait to use, [STOP_WAIT_SECONDS] unless PLAY_TEST_STOP_WAIT_SECONDS holds a
+ * positive whole number of at most nine digits. That is a test hook, so that the tests of a stop
+ * that gives up do not wait 35 s, and not an operator setting: the H2 shutdown fallback is timed
+ * to fit inside the 35 s. stop_wait_seconds in bundle-play.sh reads it the same way; keep the two
+ * in step. Read when a stop runs, never while the build configures.
+ */
+internal fun stopWaitSeconds(env: Map<String, String> = System.getenv()): Long =
+    env["PLAY_TEST_STOP_WAIT_SECONDS"]
+        ?.takeIf { it.length in 1..9 && it.all { c -> c in '0'..'9' } }
+        ?.toLong()
+        ?.takeIf { it > 0 }
+        ?: STOP_WAIT_SECONDS
+
+/**
  * PF-202: wait for [handle] to exit, for at most [timeoutMillis]; false when it is still alive
  * then. `ProcessHandle.onExit()` completes at once only for a child of this JVM. For any other
  * process the JDK checks after 300 ms, then 330 ms, 360 ms and so on, and the Gradle process
@@ -2536,8 +2550,9 @@ abstract class PlayStopTask : DefaultTask() {
             // Wait past the jobs drain budget (play.jobs.stop.timeout, default 30s) so a
             // clean-but-slow shutdown is observed as a real exit rather than tripping a
             // wrapper deadline and surfacing as BUILD FAILED on a successful stop (PF-120).
-            if (!awaitExit(handle, TimeUnit.SECONDS.toMillis(STOP_WAIT_SECONDS))) {
-                logger.lifecycle("~ SIGTERM sent; process (pid $pid) still draining after ${STOP_WAIT_SECONDS}s. Leaving it to the OS to reap.")
+            val waitSeconds = stopWaitSeconds()
+            if (!awaitExit(handle, TimeUnit.SECONDS.toMillis(waitSeconds))) {
+                logger.lifecycle("~ SIGTERM sent; process (pid $pid) still draining after ${waitSeconds}s. Leaving it to the OS to reap.")
                 return
             }
         }
@@ -2579,8 +2594,9 @@ abstract class PlayRestartTask : DefaultTask() {
                     h.destroy()
                     // Match playStop: wait past the jobs drain budget (default 30s) so a
                     // clean-but-slow shutdown is not reported as BUILD FAILED (PF-120).
-                    if (!awaitExit(h, TimeUnit.SECONDS.toMillis(STOP_WAIT_SECONDS))) {
-                        logger.lifecycle("~ Previous process (pid $pid) still draining after ${STOP_WAIT_SECONDS}s; starting new instance anyway.")
+                    val waitSeconds = stopWaitSeconds()
+                    if (!awaitExit(h, TimeUnit.SECONDS.toMillis(waitSeconds))) {
+                        logger.lifecycle("~ Previous process (pid $pid) still draining after ${waitSeconds}s; starting new instance anyway.")
                     }
                 }
             }

@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.condition.DisabledOnOs
 import org.junit.jupiter.api.condition.EnabledOnOs
@@ -223,7 +224,7 @@ class BundleLauncherTest {
                 // variables the launcher reads itself may leak in from the
                 // developer's shell. Nor UID/EUID: a shell that exports them (the
                 // docker-compose idiom) makes them host-defined rather than readonly.
-                environment().keys.removeAll(probe + listOf("PLAY_ID", "PLAY_PID_FILE", "PLAY_AOT_TIMEOUT", "PLAY_NODE", "PLAY_FRONTEND_WAIT", "UID", "EUID"))
+                environment().keys.removeAll(probe + listOf("PLAY_ID", "PLAY_PID_FILE", "PLAY_AOT_TIMEOUT", "PLAY_NODE", "PLAY_FRONTEND_WAIT", "PLAY_TEST_STOP_WAIT_SECONDS", "UID", "EUID"))
                 environment()["STUB_PRINT_ENV"] = probe.joinToString(" ")
                 environment().putAll(env)
             }
@@ -675,6 +676,8 @@ class BundleLauncherTest {
 
     @Test
     @DisabledOnOs(OS.WINDOWS, disabledReason = "the process in place of the JVM is a bash child that traps SIGTERM")
+    // PF-219: a bound of 30 ms, so it runs in the build's serial task, never beside the parallel forks.
+    @Tag("timing")
     fun `stop returns within 30 ms of the JVM's exit`(@TempDir tmp: File) {
         val bundle = File(tmp, "app").apply { mkdirs() }
         writeBundle(bundle)
@@ -709,24 +712,53 @@ class BundleLauncherTest {
 
     @Test
     @DisabledOnOs(OS.WINDOWS, disabledReason = "the process in place of the JVM is a bash child that traps SIGTERM")
-    fun `stop leaves a JVM still draining after 35 s running with its pid file`(@TempDir tmp: File) {
+    fun `stop leaves a JVM still draining after its wait running with its pid file`(@TempDir tmp: File) {
+        // PF-219: the wait is 35 s; the test hook shortens it, and the stop wait's parity case
+        // below pins the 35.
         val bundle = File(tmp, "app").apply { mkdirs() }
         writeBundle(bundle)
         val stubs = File(tmp, "bin").apply { writeStubs(this, windows = false) }
         val jvm = standInJvm(bundle, termDelay = null)
         try {
             val started = System.nanoTime()
-            val stop = launch(bundle, stubs, "stop")
+            val stop = launch(bundle, stubs, "stop", env = mapOf("PLAY_TEST_STOP_WAIT_SECONDS" to "2"))
             val seconds = (System.nanoTime() - started) / 1e9
 
             assertEquals(0, stop.exit, "${stop.stdout}\n${stop.stderr}")
-            assertTrue(stop.stdout.any { "still draining after 35s" in it }, "${stop.stdout}")
-            // The drain budget is elapsed time: at least 35 s, and not 35 s of polls.
-            assertTrue(seconds >= 35.0 && seconds < 38.0, "stop waited $seconds s")
+            assertTrue(stop.stdout.any { "still draining after 2s" in it }, "${stop.stdout}")
+            // The drain budget is elapsed time: at least the wait, and not that many seconds of polls.
+            assertTrue(seconds >= 2.0 && seconds < 5.0, "stop waited $seconds s")
             assertTrue(jvm.isAlive, "stop must not kill a JVM that is still draining")
             assertEquals("${jvm.pid()}", File(bundle, "server.pid").readText(), "status and pid keep tracking it")
         } finally {
             jvm.killTree()
+        }
+    }
+
+    @Test
+    fun `the launcher's stop wait is the Gradle stop wait, 35 s unless the test hook says otherwise`() {
+        // PF-219: stop_wait_seconds in bundle-play.sh and stopWaitSeconds in Play1Plugin.kt are one
+        // rule written twice. The launcher's function is run here as it is in the script, by bash,
+        // over the same values as the Gradle side's own cases.
+        val script = javaClass.classLoader.getResource("bundle-play.sh")!!.readText()
+        val function = Regex("(?ms)^stop_wait_seconds\\(\\) \\{.*?^\\}").find(script)?.value
+            ?: error("no stop_wait_seconds() in bundle-play.sh")
+        val bash = if (onWindows) gitBash!! else "bash"
+        fun launcherWait(value: String?): Long {
+            val proc = ProcessBuilder(bash, "-c", "$function\nstop_wait_seconds")
+                .apply {
+                    environment().remove("PLAY_TEST_STOP_WAIT_SECONDS")
+                    if (value != null) environment()["PLAY_TEST_STOP_WAIT_SECONDS"] = value
+                }
+                .redirectErrorStream(true).start()
+            val out = proc.inputStream.bufferedReader().readText().trim()
+            assertEquals(0, proc.waitFor(), out)
+            return out.toLong()
+        }
+        assertEquals(35L, launcherWait(null))
+        for (value in STOP_WAIT_IGNORED + listOf("2", "08", "999999999")) {
+            val gradleWait = stopWaitSeconds(mapOf("PLAY_TEST_STOP_WAIT_SECONDS" to value))
+            assertEquals(gradleWait, launcherWait(value), "[$value]")
         }
     }
 

@@ -22,8 +22,29 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
+// PF-219: the suite's classes run in parallel forks (maxParallelForks, whose default is 1),
+// except the tests tagged "timing", which assert bounds of a few tens of milliseconds: timingTest
+// runs those first, alone. Gradle's testing guide asks of parallel forks only that tests be
+// isolated from one another; each class here works in its own @TempDir and picks free ports. The
+// forks share TestKit's directory and its Gradle user home, as Gradle processes share one.
+val timingTest = tasks.register<Test>("timingTest") {
+    description = "Runs the plugin tests tagged timing, on their own (PF-219)."
+    group = LifecycleBasePlugin.VERIFICATION_GROUP
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+    useJUnitPlatform { includeTags("timing") }
+}
+
 tasks.named<Test>("test") {
-    useJUnitPlatform()
+    useJUnitPlatform { excludeTags("timing") }
+    // Half the cores, measured on 14 (2026-11-18): 1 fork 3m15s, 2 2m22s, 4 2m06s, 7 1m49s. A class
+    // runs in one fork, so the longest, BundleLauncherTest at about 84 s, bounds the wall time,
+    // and 7 forks reach that; more would only add load, which already slows each class.
+    maxParallelForks = (Runtime.getRuntime().availableProcessors() / 2).coerceAtLeast(1)
+    dependsOn(timingTest)
+}
+
+tasks.withType<Test>().configureEach {
     // FrameworkBomsTest reads the repo's real lib-coordinates.properties, which `ant jar`
     // rewrites after every `ant resolve`; undeclared, the suite stayed UP-TO-DATE across a
     // dependency bump. inputs.files, not inputs.file: a checkout that has never run `ant jar`

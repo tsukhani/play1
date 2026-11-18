@@ -3,6 +3,7 @@ package play.gradle
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.condition.DisabledOnOs
 import org.junit.jupiter.api.condition.OS
@@ -20,7 +21,11 @@ import java.util.concurrent.TimeUnit
  * The process stopped here stands in for the JVM: a bash that traps SIGTERM, started detached
  * (`nohup ... &` from a shell that exits at once), so neither this JVM nor the TestKit daemon is
  * its parent. Its exit is timed by a 1 ms `isAlive` poll from this JVM.
+ *
+ * PF-219: tagged timing, so that the build runs this class on its own and never beside the
+ * parallel forks of the rest of the suite: its bounds are a few tens of milliseconds.
  */
+@Tag("timing")
 @DisabledOnOs(OS.WINDOWS, disabledReason = "the process in place of the JVM is a bash that traps SIGTERM")
 class StopWaitTest {
 
@@ -172,21 +177,40 @@ class StopWaitTest {
     }
 
     @Test
-    fun `playStop leaves a JVM still draining after 35 s running with its pid file`(@TempDir tmp: File) {
+    fun `playStop leaves a JVM still draining after its wait running with its pid file`(@TempDir tmp: File) {
+        // PF-219: the wait is 35 s; the test hook shortens it, and stopWaitSeconds' own cases
+        // below pin the 35.
         TestProject.write(tmp)
         val jvm = detachedJvm(tmp, termDelay = null)
         try {
             File(tmp, "server.pid").writeText("${jvm.pid()}")
             val started = System.nanoTime()
-            val result = TestProject.runner(tmp, "playStop").build()
+            val result = TestProject.runner(tmp, "playStop")
+                .withEnvironment(System.getenv() + ("PLAY_TEST_STOP_WAIT_SECONDS" to "2"))
+                .build()
             val seconds = (System.nanoTime() - started) / 1e9
 
-            assertTrue(result.output.contains("still draining after 35s"), result.output)
-            assertTrue(seconds >= 35.0, "playStop waited $seconds s")
+            assertTrue(result.output.contains("still draining after 2s"), result.output)
+            assertTrue(seconds >= 2.0, "playStop waited $seconds s")
             assertTrue(jvm.isAlive, "playStop must not kill a JVM that is still draining")
             assertEquals("${jvm.pid()}", File(tmp, "server.pid").readText(), "status and pid keep tracking it")
         } finally {
             jvm.killTree()
         }
     }
+
+    @Test
+    fun `the stop wait is 35 s unless the test hook holds a positive whole number`() {
+        // PF-219: the 35 s are a contract (PF-120, and the H2 shutdown fallback fits inside it).
+        assertEquals(35L, STOP_WAIT_SECONDS)
+        assertEquals(35L, stopWaitSeconds(emptyMap()))
+        assertEquals(2L, stopWaitSeconds(mapOf("PLAY_TEST_STOP_WAIT_SECONDS" to "2")))
+        assertEquals(8L, stopWaitSeconds(mapOf("PLAY_TEST_STOP_WAIT_SECONDS" to "08")))
+        for (ignored in STOP_WAIT_IGNORED) {
+            assertEquals(35L, stopWaitSeconds(mapOf("PLAY_TEST_STOP_WAIT_SECONDS" to ignored)), "[$ignored]")
+        }
+    }
 }
+
+/** Values of PLAY_TEST_STOP_WAIT_SECONDS that both copies of the stop wait ignore (PF-219). */
+internal val STOP_WAIT_IGNORED = listOf("", "0", "00", "-3", "+5", "abc", " 7", "1000000000", "99999999999999999999")
