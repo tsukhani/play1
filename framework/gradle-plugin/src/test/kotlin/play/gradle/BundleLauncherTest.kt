@@ -736,16 +736,21 @@ class BundleLauncherTest {
     }
 
     @Test
-    fun `the launcher's stop wait is the Gradle stop wait, 35 s unless the test hook says otherwise`() {
+    fun `the launcher's stop wait is the Gradle stop wait, 35 s unless the test hook says otherwise`(@TempDir tmp: File) {
         // PF-219: stop_wait_seconds in bundle-play.sh and stopWaitSeconds in Play1Plugin.kt are one
         // rule written twice. The launcher's function is run here as it is in the script, by bash,
         // over the same values as the Gradle side's own cases.
         val script = javaClass.classLoader.getResource("bundle-play.sh")!!.readText()
         val function = Regex("(?ms)^stop_wait_seconds\\(\\) \\{.*?^\\}").find(script)?.value
             ?: error("no stop_wait_seconds() in bundle-play.sh")
+        // In a file, as the launcher has it. Passed as a `bash -c` argument, the function gave 35
+        // for the value 2 under Git Bash on Windows CI (v1.13.104); a Windows command line built
+        // from its quotes and globs is the likely cause, and a file avoids it either way.
+        File(tmp, "stop-wait.sh").writeText("$function\nstop_wait_seconds\n")
         val bash = if (onWindows) gitBash!! else "bash"
         fun launcherWait(value: String?): Long {
-            val proc = ProcessBuilder(bash, "-c", "$function\nstop_wait_seconds")
+            val proc = ProcessBuilder(bash, "stop-wait.sh")
+                .directory(tmp)
                 .apply {
                     environment().remove("PLAY_TEST_STOP_WAIT_SECONDS")
                     if (value != null) environment()["PLAY_TEST_STOP_WAIT_SECONDS"] = value
@@ -756,6 +761,8 @@ class BundleLauncherTest {
             return out.toLong()
         }
         assertEquals(35L, launcherWait(null))
+        // Every ignored value gives 35 whether the hook reaches the function or not; this one does not.
+        assertEquals(2L, launcherWait("2"), "PLAY_TEST_STOP_WAIT_SECONDS did not reach the launcher's function")
         for (value in STOP_WAIT_IGNORED + listOf("2", "08", "999999999")) {
             val gradleWait = stopWaitSeconds(mapOf("PLAY_TEST_STOP_WAIT_SECONDS" to value))
             assertEquals(gradleWait, launcherWait(value), "[$value]")
