@@ -23,10 +23,12 @@ dependencies {
 }
 
 // PF-219: the suite's classes run in parallel forks (maxParallelForks, whose default is 1),
-// except the tests tagged "timing", which assert bounds of a few tens of milliseconds: timingTest
-// runs those first, alone. Gradle's testing guide asks of parallel forks only that tests be
-// isolated from one another; each class here works in its own @TempDir and picks free ports. The
-// forks share TestKit's directory and its Gradle user home, as Gradle processes share one.
+// except the tests tagged "timing", which go wrong under the forks' load: bounds of a few tens of
+// milliseconds, and the two configuration-cache cases that a changed file must reconfigure, which
+// the forks' file churn sometimes defeats. timingTest runs those first, alone. Gradle's testing
+// guide asks of parallel forks only that tests be isolated from one another; each class here
+// works in its own @TempDir and picks free ports. The forks share TestKit's directory and its
+// Gradle user home, as Gradle processes share one.
 val timingTest = tasks.register<Test>("timingTest") {
     description = "Runs the plugin tests tagged timing, on their own (PF-219)."
     group = LifecycleBasePlugin.VERIFICATION_GROUP

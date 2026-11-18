@@ -3,6 +3,7 @@ package play.gradle
 import org.gradle.testkit.runner.BuildResult
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
@@ -112,6 +113,11 @@ class NewerLibraryRequestTest {
     }
 
     @Test
+    // PF-219: in the serial task, never beside the parallel forks. Under heavy file churn, which
+    // the forks produce, the second build sometimes reused the configuration cache although the
+    // file had changed, with file system watching on or off: about 3 of 12 parallel suite runs on
+    // 2026-11-18, and none of 11 runs alone.
+    @Tag("timing")
     fun `the warning comes with the build that adds the request, under the configuration cache`(@TempDir tmp: File) {
         val app = app(tmp, dependencies = """implementation("com.example:older:1.0")""")
         val first = TestProject.runner(app, "help", "--configuration-cache").build()
