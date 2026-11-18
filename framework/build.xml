@@ -210,10 +210,18 @@
          pass while the plugin shipped untested — which is how a Windows defect in
          a plugin *resource* (bundle-play.sh) reached a user. Wired into `test`
          rather than `unittest` so the fast inner loop stays fast. Mirrors
-         module-unittest: a sibling build's tests, run after the framework's own. -->
+         module-unittest: a sibling build's tests, run after the framework's own.
+         Both test tasks always rerun: Gradle skips a test task whose inputs it sees
+         unchanged, and the suite reads things Gradle does not track, such as the
+         Node and pnpm on the PATH, so an up-to-date skip could pass `ant test`
+         without running it. The rerun option applies to the task it follows, hence
+         twice (timingTest is PF-219's serial task, which test depends on). -->
     <target name="gradle-plugin-test" description="run the gradle-plugin's TestKit suite">
         <exec executable="${gradlew.executable}" dir="${basedir}/.." failonerror="true">
+            <arg value=":gradle-plugin:timingTest" />
+            <arg value="--rerun" />
             <arg value=":gradle-plugin:test" />
+            <arg value="--rerun" />
             <arg value="--console=plain" />
         </exec>
     </target>
