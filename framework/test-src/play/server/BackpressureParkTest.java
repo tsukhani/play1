@@ -32,8 +32,8 @@ import static org.mockito.Mockito.when;
  *
  * <p>An interrupt has to throw out of that park. {@code PlayHandler.writeChunk} rethrows it,
  * {@code SseStream} closes on any failed write, and that is the only way an application can
- * give up on a client that has stopped reading: JClaw's event bus interrupts a listener still
- * writing at its deadline (JF-347). A park that swallowed the interrupt, by catching it and
+ * give up on a client that has stopped reading: an event bus interrupts a listener still
+ * writing at its deadline, for one. A park that swallowed the interrupt, by catching it and
  * waiting again or by moving to {@code LockSupport.parkNanos}, which returns without
  * throwing, would leave that stream open with nothing left to close it.
  */

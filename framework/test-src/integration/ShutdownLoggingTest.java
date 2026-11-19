@@ -197,7 +197,7 @@ public class ShutdownLoggingTest {
 
     /**
      * A precompiled application whose log4j2 configuration is not a name log4j looks for on its
-     * own, and which, as JClaw's does, asks for its appenders to outlive log4j's shutdown hook.
+     * own, and which, as a production application's does, asks for its appenders to outlive log4j's shutdown hook.
      */
     private static void scratchApp(File app) throws Exception {
         write(app, "conf/application.conf", "application.name=shutdown-logging\napplication.mode=prod\n"

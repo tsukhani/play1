@@ -76,7 +76,7 @@ public class DatabaseUseClassifierTest {
     /**
      * PF-217: every test's walk used to read each class it reached again, and to look up the
      * implementors of an interface at each call made on it, java.util.List's as much as an
-     * application interface's. On JClaw that was 4 to 5 minutes per autotest start.
+     * application interface's. On one application that was 4 to 5 minutes per autotest start.
      */
     @Test
     public void oneListReadsEachClassOnceAndLooksUpEachInterfaceOnce() {

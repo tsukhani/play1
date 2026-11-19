@@ -35,8 +35,8 @@ dependencyCheck {
     // XML for the Jenkins Dependency-Check publisher of the nightly job.
     formats = listOf("HTML", "JSON", "XML")
 
-    // The applications' database: on the Jenkins host the nightly Dependency_Check_NVD_Update
-    // job keeps it current, so the day-old check below finds nothing to do there. Elsewhere
+    // The applications' database: on the CI host a nightly job keeps it current, so the
+    // day-old check below finds nothing to do there. Elsewhere
     // nothing else refreshes it, hence an update by default; -PnvdUpdate=false
     // (ant -Dnvd.update=false) scans whatever it holds, for when NVD is unreachable.
     data.directory = "${System.getProperty("user.home")}/.gradle/dependency-check-data"

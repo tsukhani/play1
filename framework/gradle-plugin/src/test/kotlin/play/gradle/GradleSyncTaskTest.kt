@@ -45,7 +45,7 @@ class GradleSyncTaskTest {
 
     @Test
     fun `the framework's distribution with another checksum or none gets one warning`(@TempDir tmp: File) {
-        // jclaw's case: a Renovate bump moved distributionUrl and kept the old checksum.
+        // An application's case: a Renovate bump moved distributionUrl and kept the old checksum.
         for ((name, sum) in listOf("stale" to "distributionSha256Sum=old-sum\n", "none" to "")) {
             val app = File(tmp, name).apply { mkdirs() }
             TestProject.write(app)

@@ -118,7 +118,7 @@ public class SseStreamTest {
 
     @Test
     void sendRaw_passesBytesUnchanged() {
-        // jclaw's bus payloads are already pre-framed `data: <json>\n\n`.
+        // An application's bus payloads are already pre-framed `data: <json>\n\n`.
         // sendRaw must not double-frame.
         String preformatted = "data: {\"type\":\"skill.promoted\"}\n\n";
         newStream().sendRaw(preformatted);

@@ -478,7 +478,7 @@
              need to compile the plugin from source at the user's first run.
              That source-compile path (the old pluginManagement.includeBuild
              model) requires writing into $frameworkPath, which fails on
-             read-only installs (e.g. /opt/play1 owned by root). -->
+             read-only installs (e.g. one owned by root). -->
         <delete dir="${basedir}/gradle-plugin-repo" />
         <exec executable="${basedir}/../gradlew" dir="${basedir}/.." failonerror="true">
             <arg value=":gradle-plugin:publishAllPublicationsToFrameworkLocalRepository" />

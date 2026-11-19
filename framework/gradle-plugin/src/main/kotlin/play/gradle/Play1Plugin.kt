@@ -907,7 +907,7 @@ abstract class ExtractPlayModulesTask : DefaultTask() {
     // Manual extraction (java.io.File / java.util.zip) instead of
     // fileSystemOps.copy + archiveOps.zipTree. Gradle's CopySpec preserves
     // source file permissions, so when the source is a read-only install
-    // (e.g. modules/docviewer under root-owned /opt/play1) the extracted
+    // (e.g. modules/docviewer under a root-owned install) the extracted
     // files land with the read-only mode, and subsequent overwrites/cleanups
     // fail with "Permission denied". java.io.File.copyTo + ZipFile.getInputStream
     // create destination files under the user's umask regardless of source
@@ -1817,7 +1817,7 @@ internal fun withPnpmPin(packageJson: String, version: String): String {
 // gradlew scripts (build.gradle.kts), so an application follows the release it builds against.
 // The fork keeps its own wrapper current with the right checksum. An application's Renovate runner,
 // which has no framework and so cannot run ./gradlew, moved only distributionUrl, and the wrapper
-// checks the checksum only when it downloads (jclaw's 9.8.2 and 9.9.1 bumps).
+// checks the checksum only when it downloads (an application's 9.8.2 and 9.9.1 bumps).
 internal const val WRAPPER_PROPERTIES = "gradle/wrapper/gradle-wrapper.properties"
 
 private const val DISTRIBUTION_URL = "distributionUrl"

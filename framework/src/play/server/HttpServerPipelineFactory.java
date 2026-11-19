@@ -177,7 +177,7 @@ public class HttpServerPipelineFactory extends ChannelInitializer<Channel> {
      * pipeline construction. That is once per accepted connection, forever: {@code ZstdOptions}'s
      * static initializer fails when zstd-jni is absent, the JVM marks the class erroneous, and
      * every later touch re-throws a fresh {@code NoClassDefFoundError} — stack capture included —
-     * rather than the cost tapering off after warm-up. JFR on a JClaw run counted the throws
+     * rather than the cost tapering off after warm-up. JFR on an application's run counted the throws
      * tracking connections, not requests, which is exactly what a per-pipeline probe predicts.
      *
      * <p>Held in a nested class rather than a static field of the factory so resolution stays

@@ -38,7 +38,7 @@ import play.classloading.ApplicationClasses.ApplicationClass;
  * references of each class once, and the implementors of each interface once. Before, every
  * test's walk read again each class it reached, and each interface call it passed, on
  * {@code java.util.List} as much as on an application interface, ran
- * {@code getAssignableClasses}, which loads and tests every application class. On JClaw (882
+ * {@code getAssignableClasses}, which loads and tests every application class. On one application (882
  * unit tests, about 1,000 classes) that took 4 to 5 minutes at every autotest start, whatever the
  * run selected. Every test gets the lane it got before. Not thread-safe.
  *

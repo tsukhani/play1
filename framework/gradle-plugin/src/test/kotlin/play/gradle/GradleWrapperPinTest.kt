@@ -64,7 +64,7 @@ class GradleWrapperPinTest {
 
     @Test
     fun `the framework's distribution with another checksum or none is warned about`() {
-        // jclaw's case: Renovate moved distributionUrl and left the old checksum.
+        // An application's case: Renovate moved distributionUrl and left the old checksum.
         assertNotNull(gradleWrapperWarning(WrapperDistribution(framework.url, "old-sum"), framework))
         val none = gradleWrapperWarning(WrapperDistribution(framework.url, null), framework)!!
         assertTrue("(no distributionSha256Sum)" in none, none)

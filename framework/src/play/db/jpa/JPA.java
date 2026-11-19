@@ -263,7 +263,7 @@ public class JPA {
         JPAContext jpaContext = get(name);
         // PF-109 (regression fix on top of PF-106): treat an unmaterialized placeholder as
         // "inside a transaction" for the purpose of this query. Callers like nesting-aware
-        // tx helpers (see services.Tx.run in jclaw) use isInsideTransaction to decide whether
+        // tx helpers in applications use isInsideTransaction to decide whether
         // to start a fresh withTransaction or run inline. If we report `false` for a placeholder
         // they'll start a nested withTransaction, and that inner wrapper's cleanup path
         // (JPA.clearContext) wipes the outer placeholder out of the per-thread map — so the

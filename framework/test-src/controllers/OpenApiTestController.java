@@ -360,7 +360,7 @@ public class OpenApiTestController extends Controller {
 
     // -- PF-102 opaque JSON-tree fixtures -----------------------------------
 
-    /** Mirrors JClaw's ChannelView pattern: a bean with a JsonElement field. */
+    /** Mirrors an application's pattern: a bean with a JsonElement field. */
     public static class WithGsonTree {
         public String label;
         public com.google.gson.JsonElement config;

@@ -11,7 +11,7 @@ import play.db.hikaricp.HikariDataSourceFactory;
 
 /**
  * PF-174 fixture: a {@link DataSourceFactory} that lives in the fixture app's own {@code app/}
- * tree rather than in a jar, mirroring the JCLAW-1164 case (a factory under
+ * tree rather than in a jar, mirroring an application's case (a factory under
  * {@code app/services/telemetry} that decorates the Hikari pool).
  *
  * <p>Because {@code ant compile-tests} globs {@code test-src/**}{@code /*.java}, this class is

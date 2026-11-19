@@ -400,7 +400,7 @@ case "$CMD" in
             /*) ;;
             *)  DEST="$ORIG_CWD/$DEST" ;;
         esac
-        # PLAY_HOME may be a read-only system install (e.g. /opt/play1 owned by
+        # PLAY_HOME may be a read-only system install (e.g. one owned by
         # root) where the invoking user can't write. Gradle 9 refuses to run
         # against a read-only project directory regardless of --project-cache-dir,
         # so we stage a scratch project that *symlinks* the framework's build

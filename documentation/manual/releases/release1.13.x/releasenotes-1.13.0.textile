@@ -28,7 +28,7 @@ plugins {
 }
 
 play1 {
-    frameworkPath.set(file("/opt/play1"))
+    frameworkPath.set(file("/path/to/play1"))
     modules("docviewer")   // third-party / extra modules declared here
 }
 

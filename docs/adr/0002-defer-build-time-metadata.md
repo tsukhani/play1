@@ -30,9 +30,9 @@ application's start that goes to class definition, and stop if it is under
 ### Measurement
 
 PF-178 added the "Started in" line, which splits every start by phase. The
-figures below are that line for the bundle of jclaw, the largest application on
+figures below are that line for the bundle of the largest application on
 the fork: 2,022 precompiled classes, a large JPA model and about fifty start-up
-jobs. The bundle was built from jclaw's source against the framework at
+jobs. The bundle was built from its source against the framework at
 `17751054a` and run from a scratch copy on an empty H2 database with the JVM
 options of its production instance (ZGC, the incubator vector module, a 2 GB
 heap). JDK 25.0.2, macOS arm64, median of five starts, milliseconds.
@@ -74,7 +74,7 @@ cannot remove in any case.)
 **Deferred.** The fork does not generate build-time metadata. Runtime scanning
 stays the only mechanism, with no flag and no fallback path to maintain.
 
-- Class definition is 4.9% of jclaw's start, and 5.3% with the AOT cache:
+- Class definition is 4.9% of that application's start, and 5.3% with the AOT cache:
   under the 10 percent gate either way.
 - The work metadata could actually take away, the two scans, is about 4 ms.
 - The time is elsewhere. Building the Hibernate entity manager factory is 35%
@@ -96,7 +96,7 @@ Nothing ships from PF-178 except the "Started in" line.
 - Startup tuning starts from the "Started in" line (the production chapter of
   the manual), and the first lever is `./play aot-gen` (the deployment
   chapter).
-- What a cache does not shorten is the application's own work: on jclaw,
+- What a cache does not shorten is the application's own work: on that application,
   `onApplicationStart` and `afterApplicationStart` are 1,293 ms of a 1,926 ms
   cached start.
 
@@ -106,7 +106,7 @@ The question stays closed unless one of these changes.
 
 1. **Class definition exceeds 10 percent of a real application's start**, as
    its "Started in" line reports it. An application an order of magnitude
-   larger than jclaw could get there.
+   larger than that one could get there.
 2. **The passes over all classes become measurable.** They are two today and
    cost milliseconds; plugins that each add a scan of every class would change
    that.

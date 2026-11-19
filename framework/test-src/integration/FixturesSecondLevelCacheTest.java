@@ -25,7 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>{@code deleteDatabase()} deletes with plain SQL, which Hibernate never sees, and then calls
  * {@code afterFixtureLoad()}, where {@code JPAPlugin} used to clear only each entity manager. The
  * shared cache kept the rows, so finding a remembered id returned an entity whose row was gone
- * (JClaw's JF-24, where the insert that referenced it then failed on the foreign key). The plugin
+ * (in an application, where the insert that referenced it then failed on the foreign key). The plugin
  * now calls Hibernate's {@code evictAllRegions()}. JPA's {@code Cache.evictAll()} is not enough:
  * Hibernate's evicts entity data alone, and the collection and query cases below fail with it.
  *

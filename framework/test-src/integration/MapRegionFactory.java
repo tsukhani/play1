@@ -15,7 +15,7 @@ import org.hibernate.engine.spi.SharedSessionContractImplementor;
 /**
  * PF-190: an in-memory second-level cache for the integration fixture app, named by its
  * {@code hibernate.cache.region.factory_class}. The framework ships {@code hibernate-jcache}
- * but no JCache provider (applications bring their own, as JClaw brings Caffeine's), and the
+ * but no JCache provider (applications bring their own, Caffeine's for one), and the
  * eviction under test is Hibernate's, so each region is a plain map.
  */
 public class MapRegionFactory extends RegionFactoryTemplate {

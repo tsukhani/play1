@@ -276,7 +276,7 @@ class SslHttpServerPipelineFactoryResetTest {
                         + "Http2ConnectionHandler re-fires anything without an embedded Http2Exception, "
                         + "so reaching the proxy means the same exception would have reached "
                         + "DefaultChannelPipeline.tail and triggered the \"reached at the tail of the "
-                        + "pipeline\" WARN reported from JClaw.");
+                        + "pipeline\" WARN an application reported.");
     }
 
     /**

@@ -33,7 +33,7 @@ import play.server.Server;
 /**
  * PF-205: a WebSocket action waiting in {@code Http.Inbound.nextEvent()} counted as in-flight
  * work, so every stop with a socket open waited the whole {@code play.shutdown.drain.timeout}
- * (JClaw's restarts went from about 3 s to 33 s while its Chrome extension stayed connected).
+ * (an application's restarts went from about 3 s to 33 s while a browser extension stayed connected).
  *
  * <p>Each case starts a scratch application in a child JVM with a 20 s drain timeout, opens a
  * WebSocket to it and sends SIGTERM: an idle socket must not hold the drain, and one handling a

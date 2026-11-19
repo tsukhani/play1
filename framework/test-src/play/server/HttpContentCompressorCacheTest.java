@@ -31,7 +31,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
  * classpath, {@code ZstdOptions}'s static initializer fails, the JVM marks the class erroneous,
  * and every subsequent call re-throws a fresh {@code NoClassDefFoundError} with a full stack
  * capture. Because a pipeline is built per accepted connection, that cost tracked connection
- * churn and never tapered off. JFR on a JClaw 0.18.32 run caught 58 throws across 500 requests
+ * churn and never tapered off. JFR on an application's run caught 58 throws across 500 requests
  * on a connection-churning load test vs. 4 on a slower run that reused connections.
  *
  * <p>The bug is invisible to a functional assertion — compression still falls back to

@@ -113,7 +113,7 @@ abstract class PlayNewAppTask : DefaultTask() {
         // used pluginManagement.includeBuild("$fwPath"), which builds the plugin
         // from source — that requires writing into $fwPath/.gradle/ and
         // $fwPath/framework/gradle-plugin/build/, which fails on read-only
-        // installs (e.g. /opt/play1 owned by root). Resolving from a flat
+        // installs (e.g. one owned by root). Resolving from a flat
         // Maven repo only reads from $fwPath, so the framework can stay
         // read-only.
         File(dest, "settings.gradle.kts").writeText("""
@@ -217,7 +217,7 @@ abstract class PlayNewAppTask : DefaultTask() {
 
         // Manual walk-and-copy (same reasoning as the gradle-wrapper copy
         // above): fileSystemOps.copy preserves source-file permissions, so
-        // copying from a read-only install (e.g. root-owned /opt/play1) lands
+        // copying from a read-only install (e.g. one owned by root) lands
         // read-only files in dest, then chokes on its own subsequent writes
         // into dest subdirectories. java.io.File.copyTo creates dest files
         // under the user's umask regardless of source perms.
