@@ -7,6 +7,12 @@ tags: [deploy, release]
 
 Run the full Play Framework release deployment:
 
+0. **Tell every session that depends on the fork, before anything is built**
+
+   Step 1's `ant test` deletes `framework/play-<current>.jar` and builds it again, and step 3 replaces it with `play-{VERSION}.jar`. A JVM that is already running keeps the jar it has open, but one that starts in between, such as a JClaw `play autotest` or restart, fails on a framework class (`NoClassDefFoundError: play/mvc/Scope` broke a JClaw autotest that way on 2026-11-19).
+
+   Run `ListAgents` and send one message to each session that builds or runs against `/opt/play1`: today the `jclaw-*` sessions, and any for payments or api. Tell every such session, not only those that have asked. Say that a deploy is starting, which jar it replaces and with what version, and that new runs against `/opt/play1` should wait. If a session answers that a suite or start is under way, wait for it to finish before step 1.
+
 1. **Run the full test suite and the vulnerability scan (before any version bump)**
 
    Run from `framework/`:
@@ -189,3 +195,6 @@ Run the full Play Framework release deployment:
    - Tag SHA confirmed on local + origin + github
    - GitHub release URL
    - Number of old releases trimmed (if any)
+   - Which dependent sessions were told, before and after
+
+   Then send the sessions from step 0 a second message: the version and release URL, that `play-<previous>.jar` is gone and `play-{VERSION}.jar` replaces it, what the release carries, that JClaw's `.play-version` must move to `{VERSION}` before its configure works against `/opt/play1` again, and whether any further rebuild there is coming.
