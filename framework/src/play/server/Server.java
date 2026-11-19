@@ -420,6 +420,7 @@ public class Server {
         }
     }
 
+    /** The first argument with this prefix wins. Play.extractHttpPort reads --http.port alike (PF-224): change the two together. */
     private String getOpt(String[] args, String arg, String defaultValue) {
         String s = "--" + arg + "=";
         for (String a : args) {

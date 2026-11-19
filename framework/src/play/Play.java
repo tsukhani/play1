@@ -407,11 +407,26 @@ public class Play {
         pluginCollection.onConfigurationRead();
     }
 
+    /**
+     * Copy the HTTP port given on the command line into {@code http.port}, read as
+     * {@code Server.getOpt} reads it: the first program argument that starts with
+     * {@code --http.port=}, wherever it stands (PF-224). The pattern this replaced matched only
+     * when that argument was the last word of the command, so with {@code --https.port} after it
+     * the server bound one port while {@code http.port} kept the one in application.conf. Runs on
+     * every {@link #readConfiguration()}, so a DEV reload copies it again.
+     */
     private static void extractHttpPort() {
-        String javaCommand = System.getProperty("sun.java.command", "");
-        jregex.Matcher m = new jregex.Pattern(".* --http.port=({port}\\d+)").matcher(javaCommand);
-        if (m.matches()) {
-            configuration.setProperty("http.port", m.group("port"));
+        String prefix = "--http.port=";
+        // the first word is the main class
+        String[] words = System.getProperty("sun.java.command", "").trim().split("\\s+");
+        for (int i = 1; i < words.length; i++) {
+            if (words[i].startsWith(prefix)) {
+                String port = words[i].substring(prefix.length());
+                if (port.matches("\\d+")) {
+                    configuration.setProperty("http.port", port);
+                }
+                return;
+            }
         }
     }
 
