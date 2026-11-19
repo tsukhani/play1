@@ -6,6 +6,7 @@ framework/out
 .DS_Store
 .claude/worktrees/
 .claude/*.lock
+.claude/*.local.*
 
 # bmad: installer-managed personal configs and generated outputs
 _bmad/config.user.toml
