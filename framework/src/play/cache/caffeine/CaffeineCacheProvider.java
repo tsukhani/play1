@@ -1,6 +1,7 @@
 package play.cache.caffeine;
 
 import com.github.benmanes.caffeine.cache.Caffeine;
+import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.binder.cache.CaffeineCacheMetrics;
 import play.Logger;
@@ -26,13 +27,20 @@ import java.util.concurrent.ConcurrentMap;
  * the same SPI mechanism and select it with {@code cache.provider} in
  * {@code application.conf}.
  *
- * <p>Each cache binds {@link CaffeineCacheMetrics} to the installed registry
- * when it is made (PF-203: before, only {@link #bindMetricsToRegistry} bound
- * them, once per start and before any cache made on first use existed, so
- * those were never measured). The name-keyed map lets
+ * <p>Each cache binds its meters to the installed registry when it is made
+ * (PF-203: before, only {@link #bindMetricsToRegistry} bound them, once per
+ * start and before any cache made on first use existed, so those were never
+ * measured). The name-keyed map lets
  * {@link #bindMetricsToRegistry(MeterRegistry)} bind the caches made before a
  * start installed its registry. None outlives a reload ({@link #stop()} drops
  * them), so their meters go with the registry they were made on.
+ *
+ * <p>A cache that records statistics gets {@link CaffeineCacheMetrics}' full
+ * set. One that does not gets only the {@code cache.size} gauge, registered
+ * here as {@link CaffeineCacheMetrics} registers it (PF-223): for such a cache
+ * that binder registers nothing else and logs a WARN, once per cache at every
+ * start. Recording statistics for every cache would also silence it, but would
+ * add the stats counters to every lookup of a cache that did not ask for them.
  */
 public final class CaffeineCacheProvider implements CacheProvider {
 
@@ -62,7 +70,7 @@ public final class CaffeineCacheProvider implements CacheProvider {
     }
 
     /**
-     * Re-attach {@link CaffeineCacheMetrics} for every created cache against
+     * Re-attach the meters of every created cache against
      * {@code registry}. Each cache surfaces under the {@code cache} tag with
      * its registered name so dashboards can drill in by feature
      * ({@code cache="play.actions"}, {@code cache="play.fragments"},
@@ -77,7 +85,15 @@ public final class CaffeineCacheProvider implements CacheProvider {
 
     private static void bind(MeterRegistry registry, String cacheName, CaffeineCache<?, ?> cache) {
         try {
-            CaffeineCacheMetrics.monitor(registry, cache.nativeCache(), cacheName);
+            com.github.benmanes.caffeine.cache.Cache<?, ?> nativeCache = cache.nativeCache();
+            if (nativeCache.policy().isRecordingStats()) {
+                CaffeineCacheMetrics.monitor(registry, nativeCache, cacheName);
+            } else {
+                Gauge.builder("cache.size", nativeCache, com.github.benmanes.caffeine.cache.Cache::estimatedSize)
+                        .tag("cache", cacheName)
+                        .description("The number of entries in this cache. This may be an approximation, depending on the type of cache.")
+                        .register(registry);
+            }
         } catch (Throwable t) {
             Logger.warn(t, "CaffeineCacheProvider -> failed to bind metrics for cache=%s", cacheName);
         }

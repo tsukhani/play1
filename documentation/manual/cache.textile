@@ -56,6 +56,8 @@ bc. CacheConfig config = CacheConfig.newBuilder()
 
 All fields are optional. The default is an unbounded cache with no expiration and no stats — fine for short-lived process state, dangerous for unbounded inputs. *Set @maximumSize@ for any cache keyed by user-derived data.*
 
+On @/@metrics@ every cache reports @cache_size@, tagged with its name. Only a cache built with @recordStats(true)@ adds the meters drawn from its statistics, among them @cache_gets_total@ (@result="hit"@ or @"miss"@), @cache_puts_total@ and @cache_evictions_total@.
+
 h2. <a name="cacheFor">@@CacheFor for actions</a>
 
 The @@CacheFor@ annotation caches a controller action's @Result@ for a configurable TTL:
