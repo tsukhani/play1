@@ -4,6 +4,7 @@ framework/classes
 framework/test-classes
 framework/out
 .DS_Store
+.kotlin/
 .claude/worktrees/
 .claude/*.lock
 .claude/*.local.*
