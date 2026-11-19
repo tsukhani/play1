@@ -660,7 +660,7 @@ class BundleLauncherTest {
      */
     private fun standInJvm(bundle: File, termDelay: String?): Process {
         val onTerm = if (termDelay == null) "''" else "'kill \$!; sleep $termDelay; exit 0'"
-        val jvm = ProcessBuilder("/bin/bash", "-c", "trap $onTerm TERM; echo ready; sleep 120 & wait \$!")
+        val jvm = ProcessBuilder("/bin/bash", "-c", "trap $onTerm TERM; echo ready; $STAND_IN_WAIT")
             .redirectError(ProcessBuilder.Redirect.DISCARD)
             .start()
         // The trap is set: a SIGTERM sent before it would end the shell at once.

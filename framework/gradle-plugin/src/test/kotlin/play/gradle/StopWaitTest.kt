@@ -13,6 +13,15 @@ import java.io.Writer
 import java.util.concurrent.TimeUnit
 
 /**
+ * PF-225: how a bash in place of the JVM waits for its SIGTERM. A trapped signal interrupts `wait`
+ * at once, except that macOS's bash 3.2 runs the trap of one that lands just before it blocks in
+ * `wait` only when the waited child exits. On one `sleep 120` that left the stand-in alive for two
+ * minutes after its SIGTERM, about once in a thousand stops under load; on a 0.1 s child the trap
+ * runs within 0.1 s. The tests that use it time from the exit, not from the SIGTERM.
+ */
+internal const val STAND_IN_WAIT = "while :; do sleep 0.1 & wait \$!; done"
+
+/**
  * PF-202: playStop and playRestart waited for the JVM with `ProcessHandle.onExit()`, which
  * completes at once only for a child of the JVM that waits. For any other process the JDK checks
  * after 300 ms, then 330 ms and so on, and the Gradle process that stops the application started
@@ -38,7 +47,7 @@ class StopWaitTest {
         val id = System.nanoTime()
         val ready = File(dir, "ready-$id")
         val script = File(dir, "jvm-$id.sh").apply {
-            writeText("trap $onTerm TERM\necho ready > '${ready.absolutePath}'\nsleep 120 &\nwait \$!\n")
+            writeText("trap $onTerm TERM\necho ready > '${ready.absolutePath}'\n$STAND_IN_WAIT\n")
         }
         val sh = ProcessBuilder("/bin/sh", "-c", "nohup /bin/bash \"\$0\" >/dev/null 2>&1 & echo \$!", script.absolutePath)
             .redirectErrorStream(true)
@@ -57,7 +66,7 @@ class StopWaitTest {
     private fun childJvm(dir: File, termDelay: String): Pair<Process, ProcessHandle> {
         val ready = File(dir, "ready-${System.nanoTime()}")
         val p = ProcessBuilder("/bin/bash", "-c",
-            "trap 'kill \$!; sleep $termDelay; exit 0' TERM; echo ready > '${ready.absolutePath}'; sleep 120 & wait \$!")
+            "trap 'kill \$!; sleep $termDelay; exit 0' TERM; echo ready > '${ready.absolutePath}'; $STAND_IN_WAIT")
             .start()
         while (!ready.exists()) Thread.sleep(5)
         return p to p.toHandle()
