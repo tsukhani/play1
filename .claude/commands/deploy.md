@@ -7,6 +7,8 @@ tags: [deploy, release]
 
 Run the full Play Framework release deployment:
 
+**Before step 0: nothing that identifies the local environment goes public.** Run `/public-check` with no argument. It scans every commit since the last release tag and the uncommitted changes that step 4 commits. If it reports a finding, or says that `.claude/public-terms.local.txt` is missing, stop here: no session is told, and nothing is built, bumped, committed or pushed. Report what it found. The user fixes it (`/public-check`'s step 5) and runs `/deploy` again. Step 4's commit message and step 7's release notes are written after the check, so they keep to the same rule, AGENTS.md's "Public Repository" section.
+
 0. **Tell every session that depends on the fork, before anything is built**
 
    Step 1's `ant test` deletes `framework/play-<current>.jar` and builds it again, and step 3 replaces it with `play-{VERSION}.jar`. A JVM that is already running keeps the jar it has open, but one that starts in between, such as an application's `play autotest` or restart, fails on a framework class (`NoClassDefFoundError: play/mvc/Scope` broke an autotest that way on 2026-11-19).
@@ -190,6 +192,7 @@ Run the full Play Framework release deployment:
 
    Summarise:
    - Version deployed
+   - The `/public-check` result: its starting point, commits scanned, no findings
    - Whether a commit was made (and its hash)
    - Both push results
    - Tag SHA confirmed on local + origin + github
