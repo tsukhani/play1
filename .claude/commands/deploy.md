@@ -64,6 +64,8 @@ Run the full Play Framework release deployment:
 
    After the build, sanity-check that `framework/src/play/version` now matches `VERSION` and that `framework/dist/play-{VERSION}.zip` exists.
 
+   Then run `/public-check zip framework/dist/play-{VERSION}.zip`. The gate before step 0 read the commits, and this reads what no commit shows: the files and jar entries the build generated into the zip (javadoc, the jars, the Gradle plugin repository), about 6 s. A finding stops the release here, before anything is committed, pushed or uploaded. Report it; `framework/build.xml` still carries the uncommitted bump.
+
 4. **Commit any uncommitted changes**
 
    - Run `git status` and `git diff --stat` to see what changed.
@@ -192,7 +194,7 @@ Run the full Play Framework release deployment:
 
    Summarise:
    - Version deployed
-   - The `/public-check` result: its starting point, commits scanned, no findings
+   - The `/public-check` results: the gate's starting point and commits scanned, and the zip scan's counts, both without findings
    - Whether a commit was made (and its hash)
    - Both push results
    - Tag SHA confirmed on local + origin + github
