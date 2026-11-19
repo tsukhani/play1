@@ -59,15 +59,16 @@ Reject anything else with a clear message; do not guess. If no matching renovate
 8. Confirm the tree is on `main` with a **clean working tree** (`/usr/bin/git status -sb`). If dirty, stop and tell the user — don't merge onto uncommitted work.
 9. Confirm `main` is not behind: `/usr/bin/git fetch origin && /usr/bin/git status -sb`. If `origin/main` or `github/main` is ahead, stop — the user has unpushed/unpulled release work in flight and `/deploy` should settle it first.
 10. `ant test`'s integration leg binds **port 19443** (HTTPS). If something holds it (`lsof -nP -iTCP:19443 -sTCP:LISTEN`), report it — a stray Play instance or a concurrent `/deploy` will otherwise surface as a confusing generic test failure rather than "port in use".
+11. **When the batch has a JAVA or WRAPPER branch, tell every session that depends on the fork.** Step 14's `ant resolve -Dprune=true` deletes superseded jars from `framework/lib`, and its `ant test` deletes `framework/play-<version>.jar` and builds it again under the same name. A JVM that is already running keeps what it has open, but one that starts in between, such as a JClaw `play autotest` or restart, fails on a framework class: on 2026-11-19 this command's `ant test` broke a JClaw autotest with `NoClassDefFoundError: play/mvc/Scope`. Run `ListAgents` and message each session that builds or runs against `/opt/play1` (today the `jclaw-*` sessions, and any for payments or api), not only those that have asked: say that a rebuild is coming, of which jars, and that new runs against `/opt/play1` should wait. If a session answers that a suite or start is under way, wait for it to finish before step 14. A batch of CI, CONFIG and NPM-SKEL branches alone builds nothing in `/opt/play1` and needs no message.
 
 **Phase 3 — Merge & validate, cheapest ecosystem first**
 
 Batch-merge per ecosystem and run **one** gate per ecosystem. Dependency bumps within an ecosystem rarely interact, and `ant test` is the expensive step (clean → jar → unittest → integration-test → gradle-plugin-test) — one run for the whole Java batch is the cost/confidence sweet spot. Order matters: everything that *can't* affect `ant test` lands first, so the single `ant test` run at the end validates the whole merged state.
 
-11. **CI + CONFIG — merge, no local gate.**
+12. **CI + CONFIG — merge, no local gate.**
     `/usr/bin/git merge --no-edit github/renovate/<b>` for each. There is no way to validate a workflow-file change locally; GitHub Actions validates it on the push that `/deploy` performs. For a digest pin, confirm the trailing `# vN` comment still matches the version Renovate named in the PR title — a digest with a stale comment is the one review signal a human has here.
 
-12. **NPM-SKEL — merge, then build a scratch copy.**
+13. **NPM-SKEL — merge, then build a scratch copy.**
     `resources/nuxt-skel/` is the scaffold shipped by `playNewApp -Pfrontend`. It has **no lockfile and no CI job** — nothing in this repo ever builds it — so a broken bump ships silently to whoever scaffolds next. Validate by building a throwaway copy (never `pnpm install` in-tree; that would drop an untracked `node_modules/` and a `pnpm-lock.yaml` into the repo):
     ```bash
     SKEL=$(mktemp -d) && cp -R resources/nuxt-skel/. "$SKEL"/ \
@@ -79,9 +80,9 @@ Batch-merge per ecosystem and run **one** gate per ecosystem. Dependency bumps w
 
     **On a failure, run the control before blaming the bump.** Rebuild an identical scratch copy with `packageManager` pinned back to the *previous* version and repeat `pnpm install && pnpm run generate`. If the control is green, the bump caused it and you can name the mechanism; if the control fails too, you have found a pre-existing skel defect and the bump is innocent. This is the difference between a report the user can act on and one they have to re-investigate — the pnpm 10→11 finding (`dc80c8cb1`) was only trustworthy because the control isolated the single variable.
 
-    **When testing a fix, force a real reinstall.** A change to `pnpm-workspace.yaml` (or any pnpm setting) will not take effect on a tree that already has `node_modules/` — pnpm's surface-hash check reports `Already up to date` and skips re-resolution, so a working fix looks broken. `rm -rf node_modules .nuxt pnpm-lock.yaml` first. This is the same false-green shape as the vendored-jar trap in step 13: a tool reporting success while ignoring the change you just made.
+    **When testing a fix, force a real reinstall.** A change to `pnpm-workspace.yaml` (or any pnpm setting) will not take effect on a tree that already has `node_modules/` — pnpm's surface-hash check reports `Already up to date` and skips re-resolution, so a working fix looks broken. `rm -rf node_modules .nuxt pnpm-lock.yaml` first. This is the same false-green shape as the vendored-jar trap in step 14: a tool reporting success while ignoring the change you just made.
 
-13. **WRAPPER + JAVA — merge all, resolve, verify, commit, then one `ant test`.**
+14. **WRAPPER + JAVA — merge all, resolve, verify, commit, then one `ant test`.**
     - Merge each in sequence: `/usr/bin/git merge --no-edit github/renovate/<b>`. On a `dependencies.yml` version-pin conflict, resolve toward the renovate bump (take the higher/incoming version) and note it; on a non-trivial conflict, stop and surface it.
     - **Then run the resolve — this is mandatory and is the whole point of the command:**
       ```bash
@@ -113,9 +114,9 @@ Batch-merge per ecosystem and run **one** gate per ecosystem. Dependency bumps w
 
 **Phase 4 — Report & hand off**
 
-14. Summarize in a table: PR # · branch · ecosystem · dependency bumped (from → to) · merged/skipped · gate result. State how far `main` is now ahead of `origin/main` and `github/main` — these merge commits are **local and unpushed**.
-15. **Stop here.** Hand off to the user for `/deploy`, which owns the push to both remotes, the version bump in `framework/build.xml`, the signed tag, and the GitHub release. Do not push, do not touch `baseversion`, do not run `/deploy` yourself.
-16. **Cleanup is mostly automatic — don't pre-empt it.** Once `/deploy` lands these commits on `github/main`, GitHub closes each PR as merged and Renovate deletes its own branch on the next run. Only if the user explicitly asks should you close a PR early (`gh pr close <n> --repo tsukhani/play1 --comment "<why>"`) — which is the right move for a bump *rejected* in Phase 1.5, where the durable fix is an `allowedVersions` pin in `renovate.json5` and the branch should never be merged at all.
+15. Summarize in a table: PR # · branch · ecosystem · dependency bumped (from → to) · merged/skipped · gate result. State how far `main` is now ahead of `origin/main` and `github/main` — these merge commits are **local and unpushed**. Then tell the sessions from step 11 that `/opt/play1` is final: which jars in `framework/lib` changed (a JVM picks them up at its next start), that `play-<version>.jar` was rebuilt under the same name, and that JClaw's `.play-version` does not move until `/deploy`.
+16. **Stop here.** Hand off to the user for `/deploy`, which owns the push to both remotes, the version bump in `framework/build.xml`, the signed tag, and the GitHub release. Do not push, do not touch `baseversion`, do not run `/deploy` yourself.
+17. **Cleanup is mostly automatic — don't pre-empt it.** Once `/deploy` lands these commits on `github/main`, GitHub closes each PR as merged and Renovate deletes its own branch on the next run. Only if the user explicitly asks should you close a PR early (`gh pr close <n> --repo tsukhani/play1 --comment "<why>"`) — which is the right move for a bump *rejected* in Phase 1.5, where the durable fix is an `allowedVersions` pin in `renovate.json5` and the branch should never be merged at all.
 
 ---
 
@@ -123,6 +124,7 @@ Batch-merge per ecosystem and run **one** gate per ecosystem. Dependency bumps w
 - Merge onto `main` directly — never a worktree (the bumps must land on main).
 - **Never `git push`, never edit `framework/build.xml`'s `baseversion`, never run `/deploy`** as part of this command. Stop at the local commits.
 - Never `--no-verify`, `--force`, or any hook/signing bypass.
+- Before a JAVA or WRAPPER batch rebuilds anything in `/opt/play1`, tell every session that depends on the fork (step 11), and tell them again when it is final.
 - **`ant resolve -Dprune=true` after the Java merge cascade is mandatory.** A green CI check on a Renovate Java PR proves nothing — it built against the stale vendored jars. The only `ant test` that counts is the one run *after* the resolve, with the jar churn verified in `git status framework/lib`.
 - Validate by ecosystem: JAVA/WRAPPER → `ant resolve -Dprune=true` + `ant test` + `ant dependency-check`; NPM-SKEL → scratch-copy `pnpm install && pnpm run generate`; CI/CONFIG → no local gate (Actions validates on `/deploy`'s push). A multi-ecosystem branch runs every matching gate.
 - Never `pnpm install` inside `resources/nuxt-skel/` — build a copy under `mktemp -d`.
