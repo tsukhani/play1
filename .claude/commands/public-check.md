@@ -6,7 +6,7 @@ tags: [release, privacy, audit]
 argument-hint: "[empty | <tag or commit to start from> | zip <release zip>]"
 ---
 
-Everything `/deploy` pushes is public: `github` is a public mirror, and so are the release zip and its notes. This command searches only what the next `/deploy` will add, never the whole repository: the lines each commit since the last release tag adds (for a merge, the lines it adds itself), the uncommitted changes to tracked files, and the commit messages. It reads every commit on its own, not the difference between the tag and today, because `/deploy` pushes each of those commits: a line that one commit adds and a later one removes is still published. With `zip <path>` it reads the release zip instead, for what no commit shows: the files and jar entries the build generated on this machine. `/deploy` runs that after its build. AGENTS.md's "Public Repository" section is the rule it checks. It reports and changes nothing until the user agrees. Use `/usr/bin/git` for every git invocation.
+Everything `/deploy` pushes is public: `github` is a public mirror, and so are the release zip and its notes. This command searches only what the next `/deploy` will add, never the whole repository: the lines each commit since the last release tag adds (for a merge, the lines it adds itself), the uncommitted changes to tracked files, and the commit messages. It reads every commit on its own, not the difference between the tag and today, because `/deploy` pushes each of those commits: a line that one commit adds and a later one removes is still published. With `zip <path>` it reads the release zip instead, for what no commit shows: the files and jar entries the build generated on this machine. `/deploy` runs that after its build. AGENTS.md's "Public Repository" section is the rule it checks. It reports and changes nothing until the user agrees. Use `/usr/bin/git` for every git invocation. Never write a dollar sign followed by a digit anywhere in this file, not even in Perl or awk: Claude Code replaces each such token with a word of the argument before the code is read, which turned `zip <path>` into broken Perl.
 
 **1. Pick what to scan.** `zip <path>` names a release zip, relative to the top of the checkout. Any other argument names a tag or commit to start from. Without one, start from the last release tag:
 
@@ -29,7 +29,7 @@ Say which starting point it is and how many commits follow it, or which zip.
 - generic patterns: private IPv4 ranges, LAN-style hostnames, `ssh`/`scp` targets, home directories, VPN names.
 
 ```bash
-MAIN="$(/usr/bin/git worktree list --porcelain | awk 'NR==1{print $2}')"
+MAIN="$(/usr/bin/git worktree list --porcelain | sed -n '1s/^worktree //p')"
 TERMS="$(mktemp)"
 {
   cat <<'EOF'
@@ -42,8 +42,8 @@ EOF
   {
     echo "$MAIN"; echo "$HOME"; hostname -s; hostname
     scutil --get LocalHostName 2>/dev/null; scutil --get ComputerName 2>/dev/null
-    ifconfig 2>/dev/null | awk '/inet /{print $2}' | /usr/bin/grep -v '^127\.'
-    /usr/bin/git remote -v | awk '{print $2}' | sed -E 's#^[a-z+]+://##; s#^[^@/]*@##; s#[:/].*$##' \
+    ifconfig 2>/dev/null | sed -n 's/^[[:space:]]*inet \([0-9.]*\).*/\1/p' | /usr/bin/grep -v '^127\.'
+    /usr/bin/git remote -v | cut -f2 | cut -d' ' -f1 | sed -E 's#^[a-z+]+://##; s#^[^@/]*@##; s#[:/].*$##' \
       | sort -u | /usr/bin/grep -vx 'github.com' | awk -F. '{print} NF>2{print $(NF-1)"."$NF}'
   } | /usr/bin/grep -v '^$' | sort -u | perl -ne 'chomp; print quotemeta($_), "\n"'
   [ -f "$MAIN/.claude/public-terms.local.txt" ] && /usr/bin/grep -vE '^[[:space:]]*(#|$)' "$MAIN/.claude/public-terms.local.txt"
@@ -68,21 +68,21 @@ if [ -z "$ZIP" ]; then
   open my $t, "<", $ARGV[0] or die "$ARGV[0]: $!"; chomp(my @p = <$t>);
   my $re = join "|", map "(?:$_)", grep { length } @p; my ($c, $f, $n, $k);
   while (<STDIN>) {
-    if (/^\x01(\S+)/) { ($c, $k) = ($1, undef); next }
-    if (m{^\+\+\+ (?:b/(.*)|/dev/null)}) { $f = $1; next }
-    if (/^(@@+) (?:-\S+ )+\+(\d+)/) { ($k, $n) = (length($1) - 1, $2); next }
+    if (my ($h) = /^\x01(\S+)/) { ($c, $k) = ($h, undef); next }
+    if (/^\+\+\+ /) { ($f) = m{^\+\+\+ b/(.*)}; next }
+    if (my ($at, $start) = /^(@@+) (?:-\S+ )+\+(\d+)/) { ($k, $n) = (length($at) - 1, $start); next }
     next unless defined $k && length($_) > $k && substr($_, 0, $k) !~ /[^ +]/;
     my $s = substr($_, $k);
     print "$c $f:$n: [$&] ", substr($s, 0, 200) =~ s/\s+$//r, "\n" if substr($_, 0, $k) eq "+" x $k && $s =~ /$re/i;
     $n++;
-  }' "$TERMS"
+  }' "$TERMS" || echo "public-check: the scan did not run (exit $?)"
 
 # Commit messages since $BASE, as commit <sha>: [<match>] <line>
 /usr/bin/git log --format='%x00%h%n%B' "$BASE"..HEAD | perl -e '
   open my $t, "<", $ARGV[0] or die "$ARGV[0]: $!"; chomp(my @p = <$t>);
   my $re = join "|", map "(?:$_)", grep { length } @p; local $/ = "\0";
   while (<STDIN>) { chomp; next unless length; my ($h, $b) = split /\n/, $_, 2;
-    for (split /\n/, $b // "") { print "commit $h: [$&] ", substr($_, 0, 200), "\n" if /$re/i } }' "$TERMS"
+    for (split /\n/, $b // "") { print "commit $h: [$&] ", substr($_, 0, 200), "\n" if /$re/i } }' "$TERMS" || echo "public-check: the scan did not run (exit $?)"
 fi
 ```
 
@@ -90,8 +90,8 @@ With `zip`, what the build generated: every file in the zip, and every entry of 
 
 ```bash
 if [ -n "$ZIP" ]; then
-W="$(mktemp -d)"; unzip -q "$ZIP" -d "$W/zip"
-/usr/bin/git ls-files -s | awk '{print $2}' > "$W/tracked"
+W="$(mktemp -d)"; unzip -q "$ZIP" -d "$W/zip" || echo "public-check: cannot unpack $ZIP"
+/usr/bin/git ls-files -s | cut -d' ' -f2 > "$W/tracked"
 perl -MDigest::SHA=sha1_hex -MFile::Find -e '
   my ($terms, $tracked, $root, $w) = @ARGV;
   open my $t, "<", $terms or die "$terms: $!"; chomp(my @p = <$t>);
@@ -101,7 +101,7 @@ perl -MDigest::SHA=sha1_hex -MFile::Find -e '
   sub tracked { my $d = shift; $git{sha1_hex("blob " . length($d) . "\0" . $d)} }
   sub scan { my ($label, $d) = @_;
     if ($d !~ /\0/) { my $n = 0; for (split /\n/, $d) { $n++; print "$label:$n: [$&] ", substr($_, 0, 160), "\n" if /$re/i } }
-    else { while ($d =~ /([\x20-\x7e]{4,})/g) { my $s = $1; print "$label: [$&] ", substr($s, 0, 160), "\n" if $s =~ /$re/i } } }
+    else { for my $s ($d =~ /[\x20-\x7e]{4,}/g) { print "$label: [$&] ", substr($s, 0, 160), "\n" if $s =~ /$re/i } } }
   my (@jars, $files, $entries);
   find({ no_chdir => 1, wanted => sub { return unless -f; my $d = slurp($File::Find::name);
     return if !defined $d || tracked($d); (my $rel = $File::Find::name) =~ s{^\Q$root\E/[^/]+/}{}; $files++;
@@ -110,13 +110,13 @@ perl -MDigest::SHA=sha1_hex -MFile::Find -e '
     system("unzip", "-qq", "-o", $f, "-d", $x) == 0 or warn "cannot open $rel\n";
     find({ no_chdir => 1, wanted => sub { return unless -f; my $c = slurp($File::Find::name);
       return if !defined $c || tracked($c); (my $e = $File::Find::name) =~ s{^\Q$x\E/}{}; $entries++; scan("$rel!$e", $c) } }, $x) if -d $x; }
-  printf STDERR "generated: %d files, %d jars, %d jar entries scanned\n", $files, scalar @jars, $entries;' "$TERMS" "$W/tracked" "$W/zip" "$W"
+  printf STDERR "generated: %d files, %d jars, %d jar entries scanned\n", $files, scalar @jars, $entries;' "$TERMS" "$W/tracked" "$W/zip" "$W" || echo "public-check: the scan did not run (exit $?)"
 rm -rf "$W"
 fi
 rm -f "$TERMS"
 ```
 
-**4. Judge and report.** Look at each hit before calling it a finding. A reserved example (`localhost`, `example.com`, `192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`), a Java package (`org.eclipse.jdt.internal.compiler`), a code path (`chrome.storage.local.get`) or upstream test data is not one: list what was dismissed, and why, in one line each. The security contact address in `SECURITY.md` and `CODE_OF_CONDUCT.md` is deliberate. A hit in a commit stays a finding even when a later commit has reworded the line, because the earlier commit is published as it is. Report the findings as a table, *where* (commit and `file:line`, `uncommitted` and `file:line`, or a commit's message) · *what* · *already public?* · *suggested wording*. A commit is already public when `/usr/bin/git merge-base --is-ancestor <sha> github/main` succeeds. With `zip`, *where* is the file in the zip, with its line when it is text, or `<jar>!<entry>`, and nothing there is public yet: `/deploy` uploads the zip only after this passes. No findings: say so, with the starting point and the number of commits scanned, or with the counts the zip scan printed.
+**4. Judge and report.** A line starting `public-check:`, or any Perl error, means a scan did not run: that is never a pass, so report it and stop, whatever else was printed. Look at each hit before calling it a finding. A reserved example (`localhost`, `example.com`, `192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`), a Java package (`org.eclipse.jdt.internal.compiler`), a code path (`chrome.storage.local.get`) or upstream test data is not one: list what was dismissed, and why, in one line each. The security contact address in `SECURITY.md` and `CODE_OF_CONDUCT.md` is deliberate. A hit in a commit stays a finding even when a later commit has reworded the line, because the earlier commit is published as it is. Report the findings as a table, *where* (commit and `file:line`, `uncommitted` and `file:line`, or a commit's message) · *what* · *already public?* · *suggested wording*. A commit is already public when `/usr/bin/git merge-base --is-ancestor <sha> github/main` succeeds. With `zip`, *where* is the file in the zip, with its line when it is text, or `<jar>!<entry>`, and nothing there is public yet: `/deploy` uploads the zip only after this passes. No findings: say so, with the starting point and the number of commits scanned, or with the counts the zip scan printed.
 
 **5. Fix, with the user's OK.** Suggest neutral wording ("an application", "this checkout", "the CI host", "a nightly job", "an install owned by root").
 - An uncommitted line: reword it, then run this command again.
