@@ -1,12 +1,12 @@
 ---
 name: public-check
-description: Search what the next /deploy will publish (lines added since the last release tag, and the commit messages since it) for anything that identifies the local environment. Reports; changes nothing without the user's OK.
+description: Search what the next /deploy will publish (every commit since the last release tag, its added lines and its message, and the uncommitted changes) for anything that identifies the local environment. Reports; changes nothing without the user's OK.
 category: Maintenance
 tags: [release, privacy, audit]
 argument-hint: "[empty | <tag or commit to start from>]"
 ---
 
-Everything `/deploy` pushes is public: `github` is a public mirror, and so are the release zip and its notes. This command searches only what the next `/deploy` will add, never the whole repository: the lines added since the last release tag, uncommitted changes to tracked files included, and the messages of the commits since that tag. AGENTS.md's "Public Repository" section is the rule it checks. It reports and changes nothing until the user agrees. Use `/usr/bin/git` for every git invocation.
+Everything `/deploy` pushes is public: `github` is a public mirror, and so are the release zip and its notes. This command searches only what the next `/deploy` will add, never the whole repository: the lines each commit since the last release tag adds (for a merge, the lines it adds itself), the uncommitted changes to tracked files, and the commit messages. It reads every commit on its own, not the difference between the tag and today, because `/deploy` pushes each of those commits: a line that one commit adds and a later one removes is still published. AGENTS.md's "Public Repository" section is the rule it checks. It reports and changes nothing until the user agrees. Use `/usr/bin/git` for every git invocation.
 
 **1. Pick the starting point.** The argument, when given, names a tag or commit. Otherwise take the last release tag:
 
@@ -49,18 +49,25 @@ EOF
 
 Never print the term list or the machine's values into the conversation beyond the hits themselves.
 
-**3. Scan.** Perl does the matching because macOS's `/usr/bin/grep` has no `-P`, and `git grep -E` there reads `\b` as nothing, so a pattern using it matches no line and the scan passes silently.
+**3. Scan.** Perl does the matching because macOS's `/usr/bin/grep` has no `-P`, and `git grep -E` there reads `\b` as nothing, so a pattern using it matches no line and the scan passes silently. The log takes no pathspec, because one turns on history simplification, which can leave out the commits of a merged branch; the vendored jars cost nothing, since `-p` prints a binary file without its content.
 
 ```bash
-# Lines added since $BASE, as <file>:<line>: [<match>] <text>
-/usr/bin/git diff -U0 --no-color --no-ext-diff "$BASE" -- . ':!framework/lib' | perl -e '
+# Lines each commit since $BASE adds, then the uncommitted ones, as <sha>|uncommitted <file>:<line>: [<match>] <text>.
+# A merge (--cc) shows one prefix column per parent; only a line added against every parent is its own.
+{
+  /usr/bin/git log -p --cc -U0 --no-color --no-ext-diff --format='%x01%h' "$BASE"..HEAD
+  printf '\001uncommitted\n'
+  /usr/bin/git diff -U0 --no-color --no-ext-diff HEAD
+} | perl -e '
   open my $t, "<", $ARGV[0] or die "$ARGV[0]: $!"; chomp(my @p = <$t>);
-  my $re = join "|", map "(?:$_)", grep { length } @p; my ($f, $n);
+  my $re = join "|", map "(?:$_)", grep { length } @p; my ($c, $f, $n, $k);
   while (<STDIN>) {
+    if (/^\x01(\S+)/) { ($c, $k) = ($1, undef); next }
     if (m{^\+\+\+ (?:b/(.*)|/dev/null)}) { $f = $1; next }
-    if (/^@@ -\S+ \+(\d+)/) { $n = $1; next }
-    next unless /^\+/;
-    print "$f:$n: [$&] ", substr($_, 1, 200) =~ s/\s+$//r, "\n" if /$re/i;
+    if (/^(@@+) (?:-\S+ )+\+(\d+)/) { ($k, $n) = (length($1) - 1, $2); next }
+    next unless defined $k && length($_) > $k && substr($_, 0, $k) !~ /[^ +]/;
+    my $s = substr($_, $k);
+    print "$c $f:$n: [$&] ", substr($s, 0, 200) =~ s/\s+$//r, "\n" if substr($_, 0, $k) eq "+" x $k && $s =~ /$re/i;
     $n++;
   }' "$TERMS"
 
@@ -73,9 +80,12 @@ Never print the term list or the machine's values into the conversation beyond t
 rm -f "$TERMS"
 ```
 
-**4. Judge and report.** Look at each hit before calling it a finding. A reserved example (`localhost`, `example.com`, `192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`), a Java package (`org.eclipse.jdt.internal.compiler`), a code path (`chrome.storage.local.get`) or upstream test data is not one: list what was dismissed, and why, in one line each. The security contact address in `SECURITY.md` and `CODE_OF_CONDUCT.md` is deliberate. Report the findings as a table, *where* (`file:line` or commit) · *what* · *already public?* · *suggested wording*. A commit is already public when `/usr/bin/git merge-base --is-ancestor <sha> github/main` succeeds. No findings: say so, with the starting point and the counts of lines and commits scanned.
+**4. Judge and report.** Look at each hit before calling it a finding. A reserved example (`localhost`, `example.com`, `192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`), a Java package (`org.eclipse.jdt.internal.compiler`), a code path (`chrome.storage.local.get`) or upstream test data is not one: list what was dismissed, and why, in one line each. The security contact address in `SECURITY.md` and `CODE_OF_CONDUCT.md` is deliberate. A hit in a commit stays a finding even when a later commit has reworded the line, because the earlier commit is published as it is. Report the findings as a table, *where* (commit and `file:line`, `uncommitted` and `file:line`, or a commit's message) · *what* · *already public?* · *suggested wording*. A commit is already public when `/usr/bin/git merge-base --is-ancestor <sha> github/main` succeeds. No findings: say so, with the starting point and the number of commits scanned.
 
-**5. Fix, with the user's OK.**
-- A line in a file: reword it neutrally ("an application", "this checkout", "the CI host", "a nightly job", "an install owned by root"), in a worktree like any other change, then run this command again.
-- A commit message not yet on `github/main`: it can still be reworded before `/deploy` pushes it. Rewording rewrites local history, so ask first, keep every commit signed, and never touch a commit that is already public.
+**5. Fix, with the user's OK.** Suggest neutral wording ("an application", "this checkout", "the CI host", "a nightly job", "an install owned by root").
+- An uncommitted line: reword it, then run this command again.
+- A line or a message in a commit not yet on `github/main`: rewording it in a new commit is not enough, because `/deploy` pushes the earlier commit too, and this check keeps reporting it. That commit itself has to change before the push. This rewrites local history, so ask first, and never touch a commit already on `github/main`.
+  - The message of `HEAD`: `/usr/bin/git commit --amend`.
+  - A line of an older commit that is still there at `HEAD`: reword it, `/usr/bin/git commit --fixup=<sha>`, then `/usr/bin/git rebase --autosquash --rebase-merges github/main`. Git 2.44 and later act on `--autosquash` without `-i`, and `commit.gpgsign` signs every commit the rebase writes. If the rebase stops on a conflict, `/usr/bin/git rebase --abort` and ask. The fixup was already at `HEAD`, so the tree must come out the same: `/usr/bin/git diff --quiet ORIG_HEAD HEAD`. If it differs, the rebase re-created a merge without a change of its own (`--rebase-merges` keeps neither a merge's conflict resolution nor its amendments): put the branch back with `/usr/bin/git reset --hard ORIG_HEAD` and ask.
+  - Anything else (a line a later commit already reworded, the message of an older commit): say which commits carry it and ask the user how to rewrite them.
 - A commit already on `github/main`: only a history rewrite removes it, and that is not done. Report it and leave it.
