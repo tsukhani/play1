@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Self-contained Play 1 bundle launcher (written by `play bundle`).
 #
 # Mirrors the dev-time `play` shim's CLI surface for runtime commands —

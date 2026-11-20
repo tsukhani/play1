@@ -270,6 +270,35 @@ class BundleLauncherTest {
         argv.single { it.startsWith("-D$prop=") }.substringAfter('=')
 
     @Test
+    fun `the launcher asks env for bash rather than naming a path to it`(@TempDir tmp: File) {
+        // PF-226: NixOS keeps only /bin/sh and /usr/bin/env at fixed paths, and a
+        // #!/bin/bash launcher died there as a bad interpreter before the JVM ran.
+        val bundle = File(tmp, "app").apply { mkdirs() }
+        writeBundle(bundle)
+
+        assertEquals("#!/usr/bin/env bash", File(bundle, "play").useLines { it.first() })
+    }
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS, disabledReason = "nothing on Windows reads a #! line: a bundle starts there through Git Bash")
+    fun `the launcher runs under the first bash on PATH`(@TempDir tmp: File) {
+        val bundle = File(tmp, "app").apply { mkdirs() }
+        writeBundle(bundle)
+        val stubs = File(tmp, "bin")
+        writeStubs(stubs, windows = false)
+        // Looked up before the stubs go first on PATH, so the stand-in cannot exec itself.
+        val hostBash = ProcessBuilder(shell("command -v bash")).start().inputStream.bufferedReader().readText().trim()
+        File(stubs, "bash").apply {
+            writeText("#!/bin/sh\nprintf '%s\\n' \"\$@\" > bash.args\nexec '$hostBash' \"\$@\"\n")
+            setExecutable(true)
+        }
+
+        launcherArgv(bundle, stubs)
+
+        assertEquals(listOf("./play", "run"), File(bundle, "bash.args").takeIf { it.isFile }?.readLines())
+    }
+
+    @Test
     @DisabledOnOs(OS.WINDOWS, disabledReason = "asserts the branch the launcher takes off Windows")
     fun `launcher uses POSIX separator and untranslated paths off Windows`(@TempDir tmp: File) {
         val bundle = File(tmp, "app").apply { mkdirs() }
