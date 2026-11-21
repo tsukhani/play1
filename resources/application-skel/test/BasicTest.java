@@ -1,7 +1,6 @@
 import org.junit.jupiter.api.*;
 import java.util.*;
 import play.test.*;
-import models.*;
 
 public class BasicTest extends UnitTest {
 
