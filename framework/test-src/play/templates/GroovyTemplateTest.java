@@ -125,4 +125,21 @@ public class GroovyTemplateTest {
         new GroovyTemplateCompiler().compile(groovyTemplate);
         assertEquals("123", groovyTemplate.render());
     }
+
+    /**
+     * PF-239: {@code String.if} is registered from Java now, not by a compiled script. It keeps
+     * Groovy's truth for the condition and gives the empty string when the condition is false.
+     */
+    @Test
+    public void stringIfKeepsGroovyTruth() {
+        String source = "${'a'.if(true)}${'b'.if(false)}${'c'.if(null)}${'d'.if(1)}${'e'.if(0)}"
+                + "${'f'.if('x')}${'g'.if('')}${'h'.if([1])}${'i'.if([])}${'j'.if(flag)}|${'k'.if(flag).length()}";
+        GroovyTemplate t = new GroovyTemplate("String_if", source);
+        new GroovyTemplateCompiler().compile(t);
+        Map<String, Object> args = new HashMap<>();
+        args.put("flag", Boolean.FALSE);
+        assertEquals("adfh|0", t.render(args));
+        args.put("flag", Boolean.TRUE);
+        assertEquals("adfhj|1", t.render(args));
+    }
 }

@@ -24,7 +24,10 @@ import org.codehaus.groovy.control.messages.ExceptionMessage;
 import org.codehaus.groovy.control.messages.Message;
 import org.codehaus.groovy.control.messages.SimpleMessage;
 import org.codehaus.groovy.control.messages.SyntaxErrorMessage;
+import org.codehaus.groovy.runtime.DefaultGroovyMethods;
+import org.codehaus.groovy.runtime.GeneratedClosure;
 import org.codehaus.groovy.runtime.InvokerHelper;
+import org.codehaus.groovy.runtime.typehandling.DefaultTypeTransformation;
 import org.codehaus.groovy.syntax.SyntaxException;
 import org.codehaus.groovy.tools.GroovyClass;
 
@@ -34,8 +37,8 @@ import com.jamonapi.MonitorFactory;
 import groovy.lang.Binding;
 import groovy.lang.Closure;
 import groovy.lang.GroovyClassLoader;
+import groovy.lang.GroovyObject;
 import groovy.lang.GroovyObjectSupport;
-import groovy.lang.GroovyShell;
 import groovy.lang.MissingPropertyException;
 import groovy.lang.Script;
 import play.Logger;
@@ -82,7 +85,26 @@ public class GroovyTemplate extends BaseTemplate {
     }
 
     static {
-        new GroovyShell().evaluate("java.lang.String.metaClass.if = { condition -> if(condition) delegate; else '' }");
+        // String.metaClass.if = { condition -> if (condition) delegate; else '' }, through the same
+        // runtime calls the script made, but without compiling the script: that compile loaded Groovy's
+        // parser and class generator at every start, for one closure (PF-239).
+        ((GroovyObject) DefaultGroovyMethods.getMetaClass(String.class)).setProperty("if", new IfClosure());
+    }
+
+    /**
+     * {@code 'selected'.if(condition)} in a template: the string when the condition is true in
+     * Groovy's sense, else the empty string. The method's receiver is the closure's delegate.
+     * A {@link GeneratedClosure}, as a closure Groovy compiles is, so the metaclass binds its
+     * {@code doCall} the same way.
+     */
+    public static final class IfClosure extends Closure<Object> implements GeneratedClosure {
+        IfClosure() {
+            super(null);
+        }
+
+        public Object doCall(Object condition) {
+            return DefaultTypeTransformation.castToBoolean(condition) ? getDelegate() : "";
+        }
     }
 
     public GroovyTemplate(String name, String source) {
