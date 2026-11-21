@@ -11,9 +11,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
 
-import com.jamonapi.Monitor;
-import com.jamonapi.MonitorFactory;
-
 import play.Play.Mode;
 import play.classloading.ApplicationClassloader;
 import play.classloading.enhancers.LocalvariablesNamesEnhancer.LocalVariablesNamesTracer;
@@ -77,7 +74,6 @@ public class Invoker {
      */
     public static Future<?> invoke(Invocation invocation) {
         ensureExecutor();
-        invocation.waitInQueue = MonitorFactory.start("Waiting for execution");
         return submitTracked(invocation);
     }
 
@@ -286,11 +282,6 @@ public class Invoker {
     public abstract static class Invocation implements Runnable {
 
         /**
-         * If set, monitor the time the invocation waited in the queue
-         */
-        Monitor waitInQueue;
-
-        /**
          * Override this method
          * 
          * @throws java.lang.Exception
@@ -401,9 +392,6 @@ public class Invoker {
          */
         @Override
         public void run() {
-            if (waitInQueue != null) {
-                waitInQueue.stop();
-            }
             try {
                 preInit();
                 if (init()) {

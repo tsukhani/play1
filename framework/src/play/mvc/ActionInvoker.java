@@ -1,7 +1,5 @@
 package play.mvc;
 
-import com.jamonapi.Monitor;
-import com.jamonapi.MonitorFactory;
 import io.micrometer.core.instrument.Tags;
 import io.micrometer.core.instrument.Timer;
 import org.apache.logging.log4j.ThreadContext;
@@ -113,7 +111,6 @@ public class ActionInvoker {
     }
 
     public static void invoke(Http.Request request, Http.Response response) {
-        Monitor monitor = null;
         // PF-13: stamp request start so the finally block can record
         // http_server_requests duration into the active Micrometer registry.
         long metricsStartNanos = System.nanoTime();
@@ -160,9 +157,6 @@ public class ActionInvoker {
             ControllerInstrumentation.stopActionCall();
             Play.pluginCollection.beforeActionInvocation(actionMethod);
 
-            // Monitoring
-            monitor = MonitorFactory.start(request.action + "()");
-
             String cacheKey = null;
             Result actionResult = null;
 
@@ -208,9 +202,6 @@ public class ActionInvoker {
             // @After
             handleAfters(request);
 
-            monitor.stop();
-            monitor = null;
-
             // OK, re-throw the original action result
             if (actionResult != null) {
                 throw actionResult;
@@ -245,9 +236,6 @@ public class ActionInvoker {
         } finally {
             Play.pluginCollection.onActionInvocationFinally();
 
-            if (monitor != null) {
-                monitor.stop();
-            }
             // PF-13: record request count + duration into the active
             // Micrometer registry. Tags use request.action when known
             // (post-routing) and fall back to request.path so unrouted

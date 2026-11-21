@@ -1,5 +1,6 @@
 package integration;
 
+import com.jamonapi.MonitorFactory;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import play.mvc.Scope;
@@ -14,6 +15,7 @@ import java.util.List;
 import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -23,6 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <li>the Date header and the deletions of the session, flash and errors cookies, formatted and
  * encoded once per second, and the response headers no longer copied: each header once, with the
  * value it had;</li>
+ * <li>JAMon monitors, which nothing read since /@status stopped printing them: none is recorded;</li>
  * </ul>
  */
 public class RequestPathFunctionalTest {
@@ -67,6 +70,13 @@ public class RequestPathFunctionalTest {
             assertEquals(1, cookies.stream().filter(c -> deletion.matcher(c).matches()).count(),
                     () -> scope + " deletion not sent once in " + cookies);
         }
+    }
+
+    @Test
+    void aRequestRecordsNoJamonMonitor() throws Exception {
+        assertEquals(200, get("/json").statusCode());
+        assertFalse(MonitorFactory.exists("TestController.json()", "ms."), "the action's monitor was recorded");
+        assertFalse(MonitorFactory.exists("Waiting for execution", "ms."), "the queue's monitor was recorded");
     }
 
     private static HttpResponse<String> get(String path) throws Exception {
