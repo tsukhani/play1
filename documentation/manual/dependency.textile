@@ -50,6 +50,16 @@ declaration of one of them therefore has no effect, and the build says so:
 
 bc. ~ WARNING: implementation("com.squareup.okhttp3:okhttp-jvm:5.5.0") has no effect: the application compiles and runs against com.squareup.okhttp3:okhttp-jvm 5.5.1 from framework/lib. Remove the declaration, or add "com.squareup.okhttp3:okhttp-jvm" to play1 { appManagedLibraries(...) } to keep the application's version.
 
+The tests' classpath is no exception, since Gradle's @test@ task runs them
+on the framework's classpath ("Running the tests with Gradle":test#gradle).
+If your build locks its dependencies, rewrite the lock once after upgrading
+to a framework that does so, because the libraries it lists for
+@testRuntimeClasspath@ no longer resolve there. Until then @./gradlew test@
+and an IDE's Gradle sync fail with "Did not resolve '...' which is part of
+the dependency lock state":
+
+bc. ./gradlew dependencies --write-locks
+
 A library that reached your application only through one of those leaves
 with it. The framework ships what it uses itself, which is not always
 everything the library would bring in, so if your code needs such a

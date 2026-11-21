@@ -735,7 +735,9 @@ Default: @/@
 
 h3(#http.port). http.port
 
-The port that the HTTP server listens on. With @0@, given here or as @--http.port=0@, the server listens on a port the system picks, and @http.port@ then holds that port. The JVMs of Gradle's @test@ task start their servers that way, whatever this key says; see "Running the tests with Gradle":test#gradle.
+The port that the HTTP server listens on. With @0@, given here or as @--http.port=0@, the server listens on a port the system picks, and @http.port@ then holds that port, for the application's own code to read. The JVMs of Gradle's @test@ task start their servers that way, whatever this key says; see "Running the tests with Gradle":test#gradle.
+
+@0@ is for the server alone. The tools that connect to the port read it from this file, before the server has picked one, and need a fixed port: @play autotest@, which sends the test runner there, @aot-gen@ in a bundle, which waits for the port, and the Nuxt server beside Play, which forwards @/api@ to it.
 
 Default: @9000@
 
@@ -809,7 +811,7 @@ Enables an HTTPS connector, listening on the specified port. For example:
 
 bc. https.port=9443
 
-With @0@ the server listens on a port the system picks, and @https.port@ then holds that port, as for "http.port":#http.port.
+With @0@ the server listens on a port the system picks, and @https.port@ then holds that port, as for "http.port":#http.port, and only the server can use it.
 
 Default: none - no HTTPS configuration.
 
