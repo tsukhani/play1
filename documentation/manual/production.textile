@@ -255,7 +255,7 @@ After the total come @name=milliseconds@ pairs separated by single spaces. The p
 | @plugins@ | Loading every plugin named in a @play.plugins@ file and calling its @onLoad@. |
 | @classes@ | Defining the application's classes. For a precompiled application that is reading each class out of @precompiled/classes.jar@ (a bundle or dist) or @precompiled/java@ (a working copy) and defining it; otherwise it is compiling and enhancing the Java sources. |
 | @templates@ | Compiling every template. Only a prod start that is not precompiled does this. |
-| @routes@ | Parsing the @routes@ files. A precompiled application reads them as precompiled templates, so this is also where the template engine is first used. |
+| @routes@ | Parsing the @routes@ files. A precompiled application parses a routes file as it is unless the file uses template syntax (@${...}@, @#{...}@, @%{...}%@, a @*{ comment }*@ and the like). One that does is rendered from its precompiled template, and this is then also where the template engine is first used. |
 | @onApplicationStart@ | The @onApplicationStart@ of all plugins: opening the database pool, building the JPA entity manager factory, and so on. |
 | @onApplicationStart.play.db.jpa.JPAPlugin@ | One plugin's share of @onApplicationStart@, under its class name. There is one such pair for each plugin whose time does not round to zero, in the order the plugins were called. |
 | @afterApplicationStart@ | The @afterApplicationStart@ of all plugins. This is where the application's @OnApplicationStart@ jobs run, unless they are marked @async@. |
