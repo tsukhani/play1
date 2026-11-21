@@ -1164,6 +1164,14 @@ Default: @-1@ (unlimited).
 p(note). *Semantic change in 1.12.0:* this property was previously a per-chunk size cap inside @HttpChunkAggregator@ (Netty 3). Under Netty 4 it is now a hard request-body cap enforced by @StreamChunkAggregator@. If you previously set this to e.g. @1048576@ thinking of it as "8 KB chunks aggregated up to 1 MB", review whether that limit is still appropriate as an absolute body cap.
 
 
+h3(#play.netty.maxThreads). play.netty.maxThreads
+
+The number of event loop threads that serve the HTTP connections, and again the HTTPS ones. They decode requests, encode responses and write them; every action runs on a virtual thread of its own.
+
+bc. play.netty.maxThreads=8
+
+Default: a quarter of the cores, rounded up (4 on 14 cores). Netty's own default, which this setting used to fall back to, is twice the cores: on 14 cores its 28 loops served about 10% fewer requests per second than 4 did, at a higher 99th percentile, and held more memory under load. Netty's @-Dio.netty.eventLoopThreads@ is honoured when this setting is absent.
+
 h3(#play.netty.spoolThresholdBytes). play.netty.spoolThresholdBytes
 
 Threshold above which an incoming request body is spooled to a temp file under @play.tmp@ instead of accumulating in memory. Bodies smaller than this stay in memory.

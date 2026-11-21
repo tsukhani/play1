@@ -144,8 +144,8 @@ public class Server {
         try {
             if (httpPort != -1) {
                 // Boss only accepts; one thread per bound port suffices. Worker count honours
-                // play.netty.maxThreads if set (legacy Netty 3 toggle), otherwise Netty's default
-                // (2 × cores). 0 / unset / unparseable → default.
+                // play.netty.maxThreads if set (legacy Netty 3 toggle), otherwise a quarter of the
+                // cores (PF-240, see workerThreads). 0 / unset / unparseable → default.
                 EventLoopGroup bossGroup = new NioEventLoopGroup(1);
                 EventLoopGroup workerGroup = new NioEventLoopGroup(workerThreads());
                 registerForShutdown(bossGroup, workerGroup);
@@ -332,18 +332,37 @@ public class Server {
     /**
      * Resolve worker EventLoop thread count from {@code play.netty.maxThreads}. The legacy
      * Netty 3 path honoured this property; the Netty 4 migration accidentally dropped it.
-     * 0 / unset / unparseable values fall back to Netty's default (2 × cores).
+     * 0 / unset / unparseable values fall back to {@link #defaultWorkerThreads(int)}.
      */
     private static int workerThreads() {
-        String raw = Play.configuration.getProperty("play.netty.maxThreads");
-        if (raw == null || raw.isBlank()) return 0;
+        return workerThreads(Play.configuration.getProperty("play.netty.maxThreads"),
+                Runtime.getRuntime().availableProcessors());
+    }
+
+    static int workerThreads(String raw, int cores) {
+        if (raw == null || raw.isBlank()) return defaultWorkerThreads(cores);
         try {
             int n = Integer.parseInt(raw.trim());
-            return n < 0 ? 0 : n;
+            return n <= 0 ? defaultWorkerThreads(cores) : n;
         } catch (NumberFormatException nfe) {
-            Logger.warn("Invalid play.netty.maxThreads='%s'; using Netty default", raw);
-            return 0;
+            Logger.warn("Invalid play.netty.maxThreads='%s'; using the default", raw);
+            return defaultWorkerThreads(cores);
         }
+    }
+
+    /**
+     * PF-240: a quarter of the cores, rounded up, where Netty's own default is twice the cores.
+     * The event loops only decode, encode and write: every action runs on a virtual thread of its
+     * own. Each loop is a platform thread with its own stack and its own magazines in Netty's
+     * adaptive allocator, every one of them holding direct chunks of at least 128 KiB that are
+     * malloc'd outside the JVM's native memory tracking. On 14 cores the 28 loops held 17 to 26 MB
+     * more than 4 did and served fewer requests, since a loop with two connections is woken for
+     * nearly every write. {@code -Dio.netty.eventLoopThreads}, Netty's own setting, still wins
+     * when it is given: 0 hands the choice to Netty, which reads it.
+     */
+    static int defaultWorkerThreads(int cores) {
+        if (System.getProperty("io.netty.eventLoopThreads") != null) return 0;
+        return Math.max(1, (cores + 3) / 4);
     }
 
     private static synchronized void registerForShutdown(EventLoopGroup... groups) {
