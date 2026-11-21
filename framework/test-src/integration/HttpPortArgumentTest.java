@@ -79,6 +79,50 @@ public class HttpPortArgumentTest {
         }
     }
 
+    @Test
+    public void portZeroBindsAPortTheSystemPicksAndHttpPortHoldsIt(@TempDir File app) throws Exception {
+        // PF-230: how the JUnit Platform runner starts the server of each test JVM, whatever the
+        // configuration names, so that the JVMs of one run never share a port
+        scratchApp(app, "http.port=" + CONF_PORT + "\nhttps.port=" + CONF_PORT + "\n");
+        List<String> cmd = new ArrayList<>(List.of(java(), "--enable-native-access=ALL-UNNAMED",
+                "-DPLAY_SECRET=" + SECRET, "-Dapplication.path=" + app.getAbsolutePath(),
+                "-Dlog4j2.shutdownHookEnabled=false",
+                "-cp", System.getProperty("java.class.path"), Server.class.getName(), "--http.port=0", "--https.port=0"));
+        Process server = new ProcessBuilder(cmd).directory(app).redirectErrorStream(true).redirectOutput(console(app)).start();
+        try {
+            int http = listening(server, app, "HTTP");
+            int https = listening(server, app, "HTTPS");
+            assertThat(http).isNotIn(0, Integer.parseInt(CONF_PORT));
+            assertThat(https).isNotIn(0, Integer.parseInt(CONF_PORT), http);
+
+            assertThat(get(http)).as("http.port and Server.httpPort; console:%n%s", read(console(app)))
+                    .isEqualTo(http + " " + http);
+            try (java.net.Socket tls = new java.net.Socket("127.0.0.1", https)) {
+                assertThat(tls.isConnected()).isTrue();
+            }
+
+            assertThat(reload(app, http, "http.port=" + CONF_PORT + "\nhttps.port=" + CONF_PORT + "\n# reloaded\n"))
+                    .as("after the reload").isEqualTo(http + " " + http);
+        } finally {
+            server.destroyForcibly().waitFor();
+        }
+    }
+
+    /** The port the server's console says the [protocol] listener is on. */
+    private static int listening(Process server, File app, String protocol) throws Exception {
+        java.util.regex.Pattern line = java.util.regex.Pattern.compile("Listening for " + protocol + " at \\S*:(\\d+) ");
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(120);
+        while (System.nanoTime() < deadline) {
+            java.util.regex.Matcher found = line.matcher(read(console(app)));
+            if (found.find()) {
+                return Integer.parseInt(found.group(1));
+            }
+            assertThat(server.isAlive()).as("the JVM is running; console:%n%s", read(console(app))).isTrue();
+            Thread.sleep(100);
+        }
+        throw new AssertionError("no " + protocol + " listener; console:\n" + read(console(app)));
+    }
+
     private static void scratchApp(File app, String port) throws IOException {
         write(app, "conf/application.conf", conf(port));
         write(app, "conf/routes", "GET / Application.index\n");

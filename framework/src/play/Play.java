@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -401,11 +402,19 @@ public class Play {
         retiredConfigKeys.clear();
         configuration = readOneConfigurationFile("application.conf");
         extractHttpPort();
+        configuration.putAll(boundPorts);
         // Emptied before the plugins declare again in onConfigurationRead() (PF-179)
         ConfigRequirements.reset();
         // Plugins
         pluginCollection.onConfigurationRead();
     }
+
+    /**
+     * PF-230: the port the server bound for each port 0 it was given, by configuration key
+     * ({@code http.port}, {@code https.port}). Every read of the configuration puts them back,
+     * after the command line's port, so a DEV start or reload keeps the port the server listens on.
+     */
+    public static final Map<String, String> boundPorts = new ConcurrentHashMap<>();
 
     /**
      * Copy the HTTP port given on the command line into {@code http.port}, read as

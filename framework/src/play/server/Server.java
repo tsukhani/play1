@@ -109,7 +109,8 @@ public class Server {
             httpPort = 9000;
         }
 
-        if (httpPort == httpsPort) {
+        // Port 0 asks the system for a free port, a different one for each listener (PF-230).
+        if (httpPort == httpsPort && httpPort != 0) {
             Logger.error("Could not bind on https and http on the same port " + httpPort);
             fatal();
         }
@@ -152,7 +153,9 @@ public class Server {
                         .childHandler(new HttpServerPipelineFactory())
                         .childOption(ChannelOption.TCP_NODELAY, true);
 
-                serverChannels.add(bind(bootstrap, new InetSocketAddress(address, httpPort)));
+                Channel channel = bind(bootstrap, new InetSocketAddress(address, httpPort));
+                serverChannels.add(channel);
+                httpPort = boundPort(channel, httpPort, "http.port");
 
                 if (Play.mode == Mode.DEV) {
                     if (address == null) {
@@ -187,7 +190,9 @@ public class Server {
                         .childOption(ChannelOption.TCP_NODELAY, true);
 
                 if (beforeBind != null) beforeBind.accept("HTTPS");
-                serverChannels.add(bind(bootstrap, new InetSocketAddress(secureAddress, httpsPort)));
+                Channel channel = bind(bootstrap, new InetSocketAddress(secureAddress, httpsPort));
+                serverChannels.add(channel);
+                httpsPort = boundPort(channel, httpsPort, "https.port");
 
                 if (Play.mode == Mode.DEV) {
                     if (secureAddress == null) {
@@ -292,6 +297,23 @@ public class Server {
             throw new ChannelException(String.valueOf(bound.cause()), bound.cause());
         }
         return bound.channel();
+    }
+
+    /**
+     * PF-230: the port a listener got. For port 0, the one the system picked, which then also
+     * becomes the configuration's value of {@code key}, where an application reads its port, and
+     * stays it through every later read of the configuration ({@link Play#boundPorts}). The JUnit
+     * Platform runner starts the server of each test JVM that way, so that the JVMs of one run
+     * never share a port, whatever the configuration names.
+     */
+    private static int boundPort(Channel channel, int requested, String key) {
+        if (requested != 0) {
+            return requested;
+        }
+        String port = String.valueOf(((InetSocketAddress) channel.localAddress()).getPort());
+        Play.boundPorts.put(key, port);
+        Play.configuration.setProperty(key, port);
+        return Integer.parseInt(port);
     }
 
     /**
