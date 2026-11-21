@@ -103,6 +103,8 @@ bc. public static void generateLargeCSV() {
 
 Even if the CSV generation takes one hour, Play is able to simultaneously process several requests — each on its own virtual thread — sending back the generated data to the client as soon as it is available.
 
+Chunks written faster than the connection sends them go out together: each write to the socket carries everything queued at the time, up to 16 KiB, as one HTTP chunk (PF-238). A chunk written while nothing is queued still goes out at once. HTTP gives chunk boundaries no meaning, and neither may a client: server-sent events end each event with a blank line, and any other stream needs a delimiter of its own.
+
 
 h2. Using WebSockets
 

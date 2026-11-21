@@ -80,6 +80,37 @@ public class TestController extends Controller {
         sse.close();
     }
 
+    /**
+     * PF-238: {@code warmUp} events 1 ms apart, then {@code count} more {@code gapMs} apart, each
+     * written on an idle stream: the action sleeps before each, long enough for the one before to
+     * have gone out. Each event is {@code data: <i> <System.nanoTime() just before the write>}, so
+     * a client in the same JVM, {@link integration.SseWriteLatencyTest}, measures the time from the
+     * write to its arrival.
+     */
+    public static void sseIdle() throws InterruptedException {
+        int warmUp = Integer.parseInt(params.get("warmUp"));
+        int count = Integer.parseInt(params.get("count"));
+        long gapMs = Long.parseLong(params.get("gapMs"));
+        SseStream sse = openSSE();
+        sse.sendComment("open");
+        for (int i = 0; i < warmUp + count; i++) {
+            Thread.sleep(i < warmUp ? 1 : gapMs);
+            long t0 = System.nanoTime();
+            sse.sendRaw("data: " + i + " " + t0 + "\n\n");
+        }
+        sse.close();
+    }
+
+    /** PF-238: {@code count} numbered events written back to back, faster than the socket drains them. */
+    public static void sseBurst() {
+        int count = Integer.parseInt(params.get("count"));
+        SseStream sse = openSSE();
+        for (int i = 0; i < count; i++) {
+            sse.sendEvent("n", Map.of("i", i));
+        }
+        sse.close();
+    }
+
     // Live-set heap probe (gc first so retained queue bytes dominate the reading).
     public static void heapUsed() {
         System.gc();

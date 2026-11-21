@@ -1320,29 +1320,55 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
         private final java.util.concurrent.atomic.AtomicLong queuedBytes = new java.util.concurrent.atomic.AtomicLong();
         private final Object backpressureLock = new Object();
 
+        // PF-238: at most this much of the queue goes out in one readChunk, which is one socket
+        // write. 16 KiB is one TLS record and HTTP/2's default largest DATA frame.
+        static final int MAX_DRAIN_BYTES = 16 * 1024;
+
         @Override
         @Deprecated
         public ByteBuf readChunk(ChannelHandlerContext ctx) throws Exception {
             return readChunk(ctx.alloc());
         }
 
+        /**
+         * Everything queued when it is called, up to {@link #MAX_DRAIN_BYTES}, in one buffer
+         * (PF-238). The chunks are whole and in order, and one larger than the limit comes out on
+         * its own. A lone chunk is wrapped without a copy; the byte[] is never mutated after
+         * enqueue (writeChunk hands off a fresh array from getBytes(), or the caller's array, which
+         * SseStream/Response treat as immutable).
+         */
         @Override
         public ByteBuf readChunk(ByteBufAllocator allocator) throws Exception {
-            byte[] next = nextChunks.poll();
-            if (next == null) {
+            byte[] first = nextChunks.poll();
+            if (first == null) {
                 return null;
             }
-            served += next.length;
+            byte[] second = nextChunks.peek();
+            ByteBuf drained;
+            if (second == null || first.length + second.length > MAX_DRAIN_BYTES) {
+                drained = Unpooled.wrappedBuffer(first);
+            } else {
+                // A heap buffer, as a lone chunk is, so the encoders, TLS and the transport get the
+                // kind of buffer they always did. queuedBytes counts a chunk only after it is
+                // queued, so it may lag what is here.
+                long estimate = Math.max(queuedBytes.get(), (long) first.length + second.length);
+                drained = allocator.heapBuffer((int) Math.min(estimate, MAX_DRAIN_BYTES), MAX_DRAIN_BYTES);
+                drained.writeBytes(first);
+                byte[] next;
+                while ((next = nextChunks.peek()) != null && drained.readableBytes() + next.length <= MAX_DRAIN_BYTES) {
+                    nextChunks.poll();
+                    drained.writeBytes(next);
+                }
+            }
+            int length = drained.readableBytes();
+            served += length;
             // Account the drain and wake a writer parked on backpressure once we dip under LOW.
-            // The byte[] is never mutated after enqueue (writeChunk hands off a fresh array from
-            // getBytes(), or the caller's array which SseStream/Response treat as immutable), so we
-            // wrap it zero-copy instead of allocating + copying a second buffer per chunk.
-            if (queuedBytes.addAndGet(-next.length) < LOW_WATERMARK_BYTES) {
+            if (queuedBytes.addAndGet(-length) < LOW_WATERMARK_BYTES) {
                 synchronized (backpressureLock) {
                     backpressureLock.notifyAll();
                 }
             }
-            return Unpooled.wrappedBuffer(next);
+            return drained;
         }
 
         @Override
