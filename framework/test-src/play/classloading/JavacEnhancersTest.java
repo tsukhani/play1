@@ -23,6 +23,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import play.Play;
 import play.classloading.ApplicationClasses.ApplicationClass;
+import play.classloading.enhancers.ControllersEnhancer;
 import play.classloading.enhancers.LocalvariablesNamesEnhancer.LocalVariablesNamesTracer;
 import play.plugins.EnhancerPlugin;
 import play.plugins.PluginCollection;
@@ -153,6 +154,72 @@ class JavacEnhancersTest {
         assertThat(invokes(enhanced("controllers.Orders"), "show")).contains("play/utils/Java.invokeStatic");
         // MailerEnhancer wraps the method in infos.set(...) and infos.remove()
         assertThat(invokes(enhanced("notifiers.Mails"), "welcome")).contains("java/lang/ThreadLocal.set", "java/lang/ThreadLocal.remove");
+    }
+
+    @Test
+    void aRenderInsideTryWithResourcesClosesTheResourceAndACatchStillCannotSwallowIt() throws Exception {
+        // javac compiles try-with-resources' cleanup as a handler that catches Throwable, closes and rethrows; ECJ
+        // compiled it as a finally handler. ControllersEnhancer put its Result check at the start of every typed
+        // handler, so the RenderText left before close(): each such action leaked its connection, stream or lock.
+        source("controllers/Resources.java", """
+            package controllers;
+            public class Resources extends play.mvc.Controller {
+                public static final java.util.List<String> closed = new java.util.ArrayList<>();
+                public static void inTryWithResources() throws Exception {
+                    try (java.io.Closeable first = () -> closed.add("first"); java.io.Closeable second = () -> closed.add("second")) {
+                        renderText("rendered");
+                    }
+                }
+                public static void inTryWithResourcesWithItsOwnCatch() {
+                    try (java.io.Closeable own = () -> closed.add("own")) {
+                        renderText("rendered");
+                    } catch (RuntimeException | java.io.IOException e) {
+                        renderText("swallowed");
+                    }
+                }
+                public static void inCatch() {
+                    try {
+                        renderText("rendered");
+                    } catch (Exception e) {
+                        renderText("swallowed");
+                    }
+                }
+                public static void inCatchWithAnUnnamedVariable() {
+                    try {
+                        renderText("rendered");
+                    } catch (Exception _) {
+                        renderText("swallowed");
+                    }
+                }
+            }
+            """);
+        Class<?> resources = compileAndEnhance("controllers.Resources");
+
+        assertThat(renders(resources, "inTryWithResources")).isEqualTo("rendered");
+        assertThat(String.valueOf(resources.getField("closed").get(null))).as("closed, last opened first").isEqualTo("[second, first]");
+        // javac nests the cleanup handler inside the statement's own catch: the first closes, the second keeps its check
+        assertThat(renders(resources, "inTryWithResourcesWithItsOwnCatch")).isEqualTo("rendered");
+        assertThat(String.valueOf(resources.getField("closed").get(null))).isEqualTo("[second, first, own]");
+        assertThat(renders(resources, "inCatch")).isEqualTo("rendered");
+        assertThat(renders(resources, "inCatchWithAnUnnamedVariable")).isEqualTo("rendered");
+    }
+
+    /** The text of the RenderText the action throws, as an action call that is allowed to render. */
+    private static String renders(Class<?> controller, String action) throws Exception {
+        ControllersEnhancer.ControllerInstrumentation.initActionCall();
+        try {
+            controller.getMethod(action).invoke(null);
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            if (e.getCause() instanceof play.mvc.results.RenderText text) {
+                java.lang.reflect.Field field = play.mvc.results.RenderText.class.getDeclaredField("text");
+                field.setAccessible(true);
+                return (String) field.get(text);
+            }
+            throw e;
+        } finally {
+            ControllersEnhancer.ControllerInstrumentation.stopActionCall();
+        }
+        throw new AssertionError(action + " rendered nothing");
     }
 
     @Test

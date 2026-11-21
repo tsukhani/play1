@@ -11,6 +11,11 @@ import javassist.CtField;
 import javassist.CtMethod;
 import javassist.Modifier;
 import javassist.NotFoundException;
+import javassist.bytecode.BadBytecode;
+import javassist.bytecode.CodeIterator;
+import javassist.bytecode.ConstPool;
+import javassist.bytecode.MethodInfo;
+import javassist.bytecode.Opcode;
 import javassist.bytecode.annotation.Annotation;
 import javassist.expr.ExprEditor;
 import javassist.expr.FieldAccess;
@@ -132,6 +137,9 @@ public class ControllersEnhancer extends Enhancer {
 
                 @Override
                 public void edit(Handler handler) throws CannotCompileException {
+                    if (closesAndRethrows(handler)) {
+                        return;
+                    }
                     StringBuilder code = new StringBuilder();
                     try {
                         code.append("if($1 instanceof play.mvc.results.Result || $1 instanceof play.Invoker.Suspend) throw $1;");
@@ -150,6 +158,89 @@ public class ControllersEnhancer extends Enhancer {
 
         ctClass.defrost();
 
+    }
+
+    /**
+     * A handler javac writes for try-with-resources (PF-229): it catches Throwable, closes the resource and throws
+     * what it caught again. ECJ compiled the same cleanup as a finally handler, which has no {@code $1} and so
+     * never got the Result check; with javac the check made a render inside the try leave before close(), and the
+     * action leaked its connection, stream or lock. A handler of this shape rethrows a Result itself, after its
+     * cleanup, so it needs no check. Read from the handler's first instruction, an astore of the caught throwable,
+     * to the first athrow: there must be a call to a no-argument close() on the way, and the athrow must throw that
+     * same local. A catch that ends otherwise, however its variable is named, unnamed included, keeps the check.
+     */
+    static boolean closesAndRethrows(Handler handler) {
+        try {
+            if (handler.isFinally() || !"java.lang.Throwable".equals(handler.getType().getName())) {
+                return false;
+            }
+        } catch (NotFoundException e) {
+            return false;
+        }
+        MethodInfo method = handler.where().getMethodInfo();
+        ConstPool constPool = method.getConstPool();
+        CodeIterator code = method.getCodeAttribute().iterator();
+        code.move(handler.indexOfBytecode());
+        try {
+            int caught = storedLocal(code, code.next());
+            if (caught < 0) {
+                return false;
+            }
+            boolean closes = false;
+            int loaded = -1;
+            while (code.hasNext()) {
+                int index = code.next();
+                int opcode = code.byteAt(index);
+                if (opcode == Opcode.ATHROW) {
+                    return closes && loaded == caught;
+                }
+                if (opcode >= Opcode.IRETURN && opcode <= Opcode.RETURN) {
+                    return false;
+                }
+                if (opcode == Opcode.INVOKEINTERFACE || opcode == Opcode.INVOKEVIRTUAL) {
+                    int ref = code.u16bitAt(index + 1);
+                    String name = opcode == Opcode.INVOKEINTERFACE ? constPool.getInterfaceMethodrefName(ref)
+                        : constPool.getMethodrefName(ref);
+                    String type = opcode == Opcode.INVOKEINTERFACE ? constPool.getInterfaceMethodrefType(ref)
+                        : constPool.getMethodrefType(ref);
+                    closes |= "close".equals(name) && "()V".equals(type);
+                }
+                loaded = loadedLocal(code, index);
+            }
+        } catch (BadBytecode e) {
+            return false;
+        }
+        return false;
+    }
+
+    /** The local an astore at {@code index} writes, or -1 when the instruction is none. */
+    private static int storedLocal(CodeIterator code, int index) {
+        int opcode = code.byteAt(index);
+        if (opcode >= Opcode.ASTORE_0 && opcode <= Opcode.ASTORE_3) {
+            return opcode - Opcode.ASTORE_0;
+        }
+        if (opcode == Opcode.ASTORE) {
+            return code.byteAt(index + 1);
+        }
+        if (opcode == Opcode.WIDE && code.byteAt(index + 1) == Opcode.ASTORE) {
+            return code.u16bitAt(index + 2);
+        }
+        return -1;
+    }
+
+    /** The local an aload at {@code index} reads, or -1 when the instruction is none. */
+    private static int loadedLocal(CodeIterator code, int index) {
+        int opcode = code.byteAt(index);
+        if (opcode >= Opcode.ALOAD_0 && opcode <= Opcode.ALOAD_3) {
+            return opcode - Opcode.ALOAD_0;
+        }
+        if (opcode == Opcode.ALOAD) {
+            return code.byteAt(index + 1);
+        }
+        if (opcode == Opcode.WIDE && code.byteAt(index + 1) == Opcode.ALOAD) {
+            return code.u16bitAt(index + 2);
+        }
+        return -1;
     }
 
     /**
