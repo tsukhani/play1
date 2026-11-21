@@ -559,7 +559,39 @@ public class ActionInvoker {
         }
     }
 
+    /** An action that {@link #getActionMethod(String)} found, and the class loader it found it in. */
+    private record FoundAction(ClassLoader classloader, Class<?> controllerClass, Method actionMethod) {
+    }
+
+    /** Bounds {@link #foundActions}: a route such as {@code {controller}.{action}} takes the name from the URL. */
+    static final int FOUND_ACTIONS_MAX = 1024;
+
+    static final Map<String, FoundAction> foundActions = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Find the controller class and the action method that an action name such as
+     * {@code Application.index} names, as {@code {controllerClass, actionMethod}}.
+     *
+     * <p>PF-237: in PROD, where no class changes once the application has started, what was found
+     * for a name is kept, so a request does not look the class up again and copy its methods to
+     * find the action. A new class loader, which a restart brings, discards what was kept.
+     */
     public static Object[] getActionMethod(String fullAction) {
+        if (Play.mode == Play.Mode.PROD) {
+            FoundAction found = foundActions.get(fullAction);
+            if (found != null && found.classloader() == Play.classloader) {
+                return new Object[] { found.controllerClass(), found.actionMethod() };
+            }
+            Object[] ca = findAction(fullAction);
+            if (found != null || foundActions.size() < FOUND_ACTIONS_MAX) {
+                foundActions.put(fullAction, new FoundAction(Play.classloader, (Class<?>) ca[0], (Method) ca[1]));
+            }
+            return ca;
+        }
+        return findAction(fullAction);
+    }
+
+    private static Object[] findAction(String fullAction) {
         Method actionMethod = null;
         Class controllerClass = null;
         try {
