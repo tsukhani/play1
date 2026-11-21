@@ -263,12 +263,36 @@ public class Router {
      */
     static void parse(VirtualFile routeFile, String prefix) {
         String fileAbsolutePath = routeFile.getRealFile().getAbsolutePath();
-        String content = Play.usePrecompiled ? "" : routeFile.contentAsString();
-        if (Play.usePrecompiled || content.indexOf("${") > -1 || content.indexOf("#{") > -1 || content.indexOf("%{") > -1) {
+        String content;
+        boolean template;
+        if (Play.usePrecompiled) {
+            // PF-239: a routes file the template engine would print unchanged is read as it is, so
+            // a precompiled start that renders no template never loads Groovy. Rendering it was the
+            // first use of the template engine, about a sixth of such a start.
+            content = routeFile.exists() ? routeFile.contentAsString() : null;
+            template = content == null || hasTemplateSyntax(content);
+        } else {
+            content = routeFile.contentAsString();
+            template = content.indexOf("${") > -1 || content.indexOf("#{") > -1 || content.indexOf("%{") > -1;
+        }
+        if (template) {
             // Mutable map needs to be passed in.
             content = TemplateLoader.load(routeFile).render(new HashMap<String, Object>(16));
         }
         parse(content, prefix, fileAbsolutePath);
+    }
+
+    /**
+     * Whether {@code content} holds anything the template engine does not print as it is: the
+     * opening of every construct {@code TemplateParser} knows, comments included.
+     */
+    static boolean hasTemplateSyntax(String content) {
+        for (String opening : new String[] {"${", "#{", "%{", "{%", "&{", "@{", "*{"}) {
+            if (content.contains(opening)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     static void parse(String content, String prefix, String fileAbsolutePath) {
