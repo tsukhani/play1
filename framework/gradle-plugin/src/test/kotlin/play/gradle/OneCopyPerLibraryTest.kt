@@ -118,13 +118,16 @@ class OneCopyPerLibraryTest {
         }
     }
 
-    /** The jar names on playClasspath, main's compile classpath and test's, by classpath. */
+    /**
+     * The jar names on playClasspath, main's compile classpath, test's, and the classpath of
+     * Gradle's test task, which runs the tests with the Play classpath (PF-230), by classpath.
+     */
     private fun classpaths(result: BuildResult): Map<String, List<String>> {
         val lines = result.output.lines()
-        val printed = lines.filter { it.startsWith("compile=") || it.startsWith("testCompile=") }
+        val printed = lines.filter { it.startsWith("compile=") || it.startsWith("testCompile=") || it.startsWith("testRuntime=") }
             .associate { it.substringBefore('=') to it.substringAfter('=').split(',').filter(String::isNotEmpty) }
         val playClasspath = lines.filter { it.endsWith(".jar") && File(it).isAbsolute }.map { File(it).name }
-        assertEquals(2, printed.size, "printClasspaths printed nothing")
+        assertEquals(3, printed.size, "printClasspaths printed nothing")
         assertTrue(playClasspath.isNotEmpty(), "playClasspath printed nothing")
         return printed + ("playClasspath" to playClasspath)
     }
@@ -164,9 +167,11 @@ class OneCopyPerLibraryTest {
             |tasks.register("printClasspaths") {
             |    val main = project.the<SourceSetContainer>()["main"].compileClasspath
             |    val test = project.the<SourceSetContainer>()["test"].compileClasspath
+            |    val testRuntime = tasks.named<Test>("test").map { it.classpath }
             |    doLast {
             |        println("compile=" + main.files.map { it.name }.joinToString(","))
             |        println("testCompile=" + test.files.map { it.name }.joinToString(","))
+            |        println("testRuntime=" + testRuntime.get().files.map { it.name }.joinToString(","))
             |    }
             |}
             """.trimMargin() + "\n"

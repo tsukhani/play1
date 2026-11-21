@@ -38,6 +38,7 @@ import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
 import org.gradle.api.tasks.compile.JavaCompile
 import org.gradle.api.tasks.testing.Test
+import org.gradle.api.tasks.testing.logging.TestExceptionFormat
 import org.gradle.kotlin.dsl.create
 import org.gradle.kotlin.dsl.getByType
 import org.gradle.kotlin.dsl.register
@@ -89,6 +90,13 @@ abstract class Play1Extension {
      */
     abstract val importFrameworkBoms: Property<Boolean>
 
+    /**
+     * PF-230: how many JVMs Gradle's test task runs the application's tests in, each a test-mode
+     * application of its own that runs its classes one at a time. -PtestJvms overrides it for
+     * one build. [DEFAULT_TEST_JVMS] unless set.
+     */
+    abstract val testJvms: Property<Int>
+
     fun modules(vararg names: String) {
         modules.addAll(*names)
     }
@@ -108,6 +116,7 @@ class Play1Plugin : Plugin<Project> {
             appManagedLibraries.convention(emptyList())
             failOnNewerLibraryRequests.convention(false)
             importFrameworkBoms.convention(false)
+            testJvms.convention(DEFAULT_TEST_JVMS)
         }
         // play.id and http.port are NOT exposed as DSL properties. Configure them in
         // conf/application.conf (or %prefix.* overrides). Override at task time via
@@ -128,6 +137,7 @@ class Play1Plugin : Plugin<Project> {
 
         configureSourceSets(project, ext)
         configurePreview(project)
+        configureTestTask(project, ext)
         // After the build script, which sets frameworkPath and appManagedLibraries.
         project.afterEvaluate { alignWithFrameworkLib(project, ext) }
 
@@ -545,6 +555,76 @@ class Play1Plugin : Plugin<Project> {
         project.tasks.withType(Test::class.java).configureEach {
             if (previewEnabled()) jvmArgs(ENABLE_PREVIEW)
         }
+    }
+
+    /**
+     * PF-230: Gradle's test task runs the application's test/ classes on the JUnit Platform, in
+     * [Play1Extension.testJvms] JVMs (maxParallelForks), each of which runs its classes one at a
+     * time, Gradle's own default. Every JVM is a test-mode application of its own:
+     * play.test.PlayTestSession, which -Dplay.test.startApplication=true turns on, starts Play in
+     * it before the first class loads, with the HTTP server on a port the system picks, and each
+     * class runs in a job of its own as under /@tests. So a process-global, the in-memory database
+     * included, belongs to one JVM. The JVM gets what playAutotest's server JVM gets: the Play
+     * classpath in test mode, the JUL and log4j properties ahead of the conf's flags (as
+     * systemProperty, as in registerPlayJvmTask), confJvmArgs for play id test, certs/.env under
+     * the host environment, and an ephemeral secret when neither provides one. app/ and test/ are
+     * inputs because Play compiles them from source: a template or a fixture is no class file
+     * Gradle would see change.
+     */
+    private fun configureTestTask(project: Project, ext: Play1Extension) {
+        val appDir = project.projectDir
+        val frameworkJar = ext.frameworkPath.file(ext.frameworkVersion.map { "framework/play-$it.jar" })
+        val playVersion = ext.frameworkVersion
+        val jvms = project.providers.gradleProperty("testJvms").map { it.trim().toInt() }.orElse(ext.testJvms)
+        project.tasks.named("test", Test::class.java).configure {
+            useJUnitPlatform()
+            testLogging.exceptionFormat = TestExceptionFormat.FULL
+            maxParallelForks = jvms.get().also {
+                if (it < 1) throw GradleException("testJvms must be 1 or more, not $it")
+            }
+            val testSourceSet = project.extensions.getByType<JavaPluginExtension>().sourceSets.getByName("test")
+            classpath = testSourceSet.runtimeClasspath + playClasspathFor(project, ext, includeTestrunner = true)
+            inputs.files(project.fileTree("app"), project.fileTree("test"))
+                .withPropertyName("playSources").withPathSensitivity(PathSensitivity.RELATIVE)
+
+            jvmArgs(
+                "--enable-native-access=ALL-UNNAMED",
+                "-Dfile.encoding=utf-8",
+                "-Dapplication.path=${appDir.absolutePath}",
+                "-Dplay.id=test"
+            )
+            systemProperty(JUL_MANAGER_PROPERTY, LOG4J_JUL_MANAGER)
+            systemProperty(LOG4J_SHUTDOWN_HOOK_PROPERTY, "false")
+            systemProperty(START_APPLICATION_PROPERTY, "true")
+            jvmArgumentProviders.add(CommandLineArgumentProvider {
+                listOf("-Dplay.version=${playVersion.get()}", "-javaagent:${frameworkJar.get().asFile.absolutePath}")
+            })
+            // Not Gradle's own defaults for a test JVM, -Xmx512m and -ea, which no Play JVM has. Gradle
+            // passes -Xmx512m whenever the task names no heap, so it names the JVM's own default, a
+            // quarter of the memory, which playAutotest's server JVM runs with; jvm.memory's -Xmx,
+            // which confJvmArgs passes on below, still wins. An assert in the application's code
+            // is not checked, as under /@tests.
+            jvmDefaultMaxHeap()?.let { maxHeapSize = it }
+            enableAssertions = false
+            // configurePreview may have added the flag already, for the key without a play id
+            confJvmArgs(appDir, "test").filterNot { it == ENABLE_PREVIEW && it in jvmArgs.orEmpty() }.forEach { jvmArgs(it) }
+
+            val dotenv = loadDotEnv(File(appDir, "certs/.env"))
+            // PF-184: certs/.env fills in only what the host leaves undefined, as in registerPlayJvmTask.
+            dotenv.forEach { (k, v) ->
+                if (k !in environment) environment(k, v)
+            }
+            ensureTestSecret(appDir, dotenv)?.let { (varName, secret) ->
+                environment(varName, secret)
+                logger.lifecycle("~ Generated ephemeral $varName for this test run")
+            }
+        }
+    }
+
+    /** The heap a JVM started without -Xmx gets here: MaxRAMPercentage, 25, of the memory (PF-230). */
+    private fun jvmDefaultMaxHeap(): String? {
+        val os = java.lang.management.ManagementFactory.getOperatingSystemMXBean() as? com.sun.management.OperatingSystemMXBean
+        return os?.let { "${it.totalMemorySize / 4 / (1024 * 1024)}m" }
     }
 
     /** framework/lib's jars, less those of the libraries the application manages (PF-192). */
@@ -1427,11 +1507,11 @@ private const val LOG4J_SHUTDOWN_HOOK_PROPERTY = "log4j2.shutdownHookEnabled"
 private const val LOG4J_SHUTDOWN_HOOK_ARG = "-D$LOG4J_SHUTDOWN_HOOK_PROPERTY=false"
 
 // PF-192: the configurations whose jars end up beside framework/lib's: main and test
-// compilation, to which configureSourceSets adds it, and main's runtime, from which
-// playClasspathFor builds every Play JVM's classpath. Not testRuntimeClasspath: Gradle's
-// own test task runs without framework/lib, so an exclude there would take a library
-// away and put nothing in its place.
-private val CLASSPATHS_BESIDE_FRAMEWORK_LIB = listOf("compileClasspath", "runtimeClasspath", "testCompileClasspath")
+// compilation, to which configureSourceSets adds it, main's runtime, from which
+// playClasspathFor builds every Play JVM's classpath, and, since Gradle's test task runs the
+// application's tests with the Play classpath (PF-230), the tests' runtime.
+private val CLASSPATHS_BESIDE_FRAMEWORK_LIB =
+    listOf("compileClasspath", "runtimeClasspath", "testCompileClasspath", "testRuntimeClasspath")
 
 /** A jar of framework/lib with Maven coordinates (PF-192). */
 internal data class LibJar(val jar: String, val group: String, val artifact: String, val version: String) {
@@ -1693,6 +1773,17 @@ internal const val PREVIEW_KEY = "java.enablePreview"
 internal const val ENABLE_PREVIEW = "--enable-preview"
 
 internal fun enablesPreview(value: String?): Boolean = value?.trim().equals("true", ignoreCase = true)
+
+// PF-230: the system property that has play.test.PlayTestSession start the application in a JVM
+// of Gradle's test task, before the JUnit Platform loads the first test class.
+internal const val START_APPLICATION_PROPERTY = "play.test.startApplication"
+
+// PF-230: how many JVMs Gradle's test task runs the application's tests in, unless
+// play1 { testJvms } or -PtestJvms says otherwise. Provisional, from a synthetic suite of 24
+// classes on 14 cores: playAutotest's lanes 14-16 s at 0.9-1.1 GB peak RSS, one JVM 15.5 s at
+// 0.5-0.7 GB, two 9.5-9.7 s at 1.1-1.3 GB, four 8.1-8.6 s at 1.9-2.5 GB, eight no faster. Two
+// take about the lanes' memory and beat their time; the measurement on a real suite decides.
+internal const val DEFAULT_TEST_JVMS = 2
 
 // Read the env-var name from `application.secret=${VARNAME}`. Returns
 // PLAY_SECRET when the conf is missing or the line uses an unparseable form

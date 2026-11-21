@@ -20,7 +20,8 @@ import javax.tools.ToolProvider
  * PF-175: every Play JVM the plugin forks must set java.util.logging.manager to log4j-jul's
  * LogManager, and an app that sets the property itself must keep its own value. The plugin
  * builds that argv in three independent places — registerPlayJvmTask (playRun), spawnPlay
- * (playStart) and playAutotest — so passing one says nothing about the others. One site
+ * (playStart) and playAutotest — so passing one says nothing about the others; since PF-230,
+ * Gradle's test task (configureTestTask) is a fourth. One site
  * missing it is exactly the failure this guards: an app bridged under playStart but not
  * under playAutotest.
  *
@@ -43,14 +44,14 @@ class JulBridgeArgsTest {
     private val shutdownHook = "LOG4J_SHUTDOWN_HOOK"
 
     @ParameterizedTest
-    @ValueSource(strings = ["playRun", "playStart", "playAutotest"])
+    @ValueSource(strings = ["playRun", "playStart", "playAutotest", "test"])
     fun `forked Play JVM routes java util logging into log4j2`(task: String, @TempDir tmp: File) {
         val app = writeApp(tmp, confExtra = "")
         assertEquals(log4jManager, resolved(app, task, julManager))
     }
 
     @ParameterizedTest
-    @ValueSource(strings = ["playRun", "playStart", "playAutotest"])
+    @ValueSource(strings = ["playRun", "playStart", "playAutotest", "test"])
     fun `an app-set java util logging manager is not overridden`(task: String, @TempDir tmp: File) {
         // jvm.memory is the one conf channel all three sites lift onto the command line.
         val app = writeApp(tmp, confExtra = "jvm.memory=-Djava.util.logging.manager=com.example.AppLogManager")
@@ -73,14 +74,14 @@ class JulBridgeArgsTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = ["playRun", "playStart", "playAutotest"])
+    @ValueSource(strings = ["playRun", "playStart", "playAutotest", "test"])
     fun `forked Play JVM leaves stopping log4j to Play`(task: String, @TempDir tmp: File) {
         val app = writeApp(tmp, confExtra = "")
         assertEquals("false", resolved(app, task, shutdownHook))
     }
 
     @ParameterizedTest
-    @ValueSource(strings = ["playRun", "playStart", "playAutotest"])
+    @ValueSource(strings = ["playRun", "playStart", "playAutotest", "test"])
     fun `an app that turns log4j's shutdown hook back on gets it`(task: String, @TempDir tmp: File) {
         val app = writeApp(tmp, confExtra = "jvm.memory=-Dlog4j2.shutdownHookEnabled=true")
         assertEquals("true", resolved(app, task, shutdownHook))
@@ -106,9 +107,14 @@ class JulBridgeArgsTest {
         // run, which must never reach a real Play server on this machine's default 9000.
         val port = ServerSocket(0).use { it.localPort }
         val result = TestProject.runner(app, task, "-PhttpPort=$port").build()
-        // playRun forwards the JVM's stdout into the build output; the other two redirect it
-        // to logs/system.out, and playStart returns before its detached child has written.
-        val out = if (task == "playRun") result.output else awaitSystemOut(app)
+        // playRun forwards the JVM's stdout into the build output, and the test task into the
+        // class's JUnit XML; the other two redirect it to logs/system.out, and playStart
+        // returns before its detached child has written.
+        val out = when (task) {
+            "playRun" -> result.output
+            "test" -> TestProject.probeOutput(app)
+            else -> awaitSystemOut(app)
+        }
         return Regex("$label=(\\S+)").find(out)?.groupValues?.get(1)
             ?: fail("$task's JVM never reported $label:\n$out")
     }
@@ -138,6 +144,12 @@ class JulBridgeArgsTest {
         // playAutotest refuses to start without both files.
         File(app, "conf/routes").writeText("")
         File(app, "conf/application.conf").writeText("application.name=testapp\n$confExtra\n")
+        // PF-230: what Gradle's test task runs; the fake framework starts no Play there.
+        TestProject.writeProbeTest(
+            app,
+            "\"$julManager=\" + System.getProperty(\"java.util.logging.manager\")",
+            "\"$shutdownHook=\" + System.getProperty(\"log4j2.shutdownHookEnabled\")",
+        )
         return app
     }
 
@@ -190,6 +202,7 @@ class JulBridgeArgsTest {
         assertEquals(0, rc, "compiling the fake framework failed")
 
         File(root, "framework/lib").mkdirs()
+        TestProject.copyJUnitPlatform(File(root, "framework/lib"))
         writeJar(classes, File(root, "framework/play-$fwVersion.jar"))
         writeJar(classes, File(root, "modules/testrunner/lib/play-testrunner.jar"))
         return root

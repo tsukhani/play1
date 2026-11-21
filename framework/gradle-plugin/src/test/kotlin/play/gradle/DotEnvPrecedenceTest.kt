@@ -22,8 +22,8 @@ import javax.tools.ToolProvider
  * environment, so a value exported at deploy time was silently replaced by the file, while
  * spawnPlay (playStart) and playAutotest let the host win.
  *
- * The plugin builds that environment in three independent places, so passing one says
- * nothing about the others. Each task runs for real against a fake framework whose
+ * The plugin builds that environment in three independent places, and since PF-230 a fourth,
+ * Gradle's test task, so passing one says nothing about the others. Each task runs for real against a fake framework whose
  * play.server.Server prints the value it was handed.
  */
 // Same reservation as JulBridgeArgsTest: the forked JVMs and the detached playStart child
@@ -35,19 +35,19 @@ class DotEnvPrecedenceTest {
     private val probe = "PF184_PROBE"
 
     @ParameterizedTest
-    @ValueSource(strings = ["playRun", "playStart", "playAutotest"])
+    @ValueSource(strings = ["playRun", "playStart", "playAutotest", "test"])
     fun `a host variable is not overridden by certs dot env`(task: String, @TempDir tmp: File) {
         assertEquals("[from-host]", probeSeenBy(writeApp(tmp), task, hostValue = "from-host"))
     }
 
     @ParameterizedTest
-    @ValueSource(strings = ["playRun", "playStart", "playAutotest"])
+    @ValueSource(strings = ["playRun", "playStart", "playAutotest", "test"])
     fun `a host variable set to the empty string is not overridden by certs dot env`(task: String, @TempDir tmp: File) {
         assertEquals("[]", probeSeenBy(writeApp(tmp), task, hostValue = ""))
     }
 
     @ParameterizedTest
-    @ValueSource(strings = ["playRun", "playStart", "playAutotest"])
+    @ValueSource(strings = ["playRun", "playStart", "playAutotest", "test"])
     fun `certs dot env supplies a variable the host does not define`(task: String, @TempDir tmp: File) {
         assertEquals("[from-dotenv]", probeSeenBy(writeApp(tmp), task, hostValue = null))
     }
@@ -64,9 +64,14 @@ class DotEnvPrecedenceTest {
         // run, which must never reach a real Play server on this machine's default 9000.
         val port = ServerSocket(0).use { it.localPort }
         val result = TestProject.runner(app, task, "-PhttpPort=$port").withEnvironment(env).build()
-        // playRun forwards the JVM's stdout into the build output; the other two redirect it
-        // to logs/system.out, and playStart returns before its detached child has written.
-        val out = if (task == "playRun") result.output else awaitSystemOut(app)
+        // playRun forwards the JVM's stdout into the build output, and the test task into the
+        // class's JUnit XML; the other two redirect it to logs/system.out, and playStart
+        // returns before its detached child has written.
+        val out = when (task) {
+            "playRun" -> result.output
+            "test" -> TestProject.probeOutput(app)
+            else -> awaitSystemOut(app)
+        }
         return Regex("$probe=(\\[.*]|<unset>)").find(out)?.groupValues?.get(1)
             ?: fail("$task's JVM never reported $probe:\n$out")
     }
@@ -97,6 +102,11 @@ class DotEnvPrecedenceTest {
         File(app, "conf/application.conf").writeText("application.name=testapp\n")
         File(app, "certs").mkdirs()
         File(app, "certs/.env").writeText("$probe=from-dotenv\n")
+        // PF-230: what Gradle's test task runs; the fake framework starts no Play there.
+        TestProject.writeProbeTest(
+            app,
+            "\"$probe=\" + (System.getenv(\"$probe\") == null ? \"<unset>\" : \"[\" + System.getenv(\"$probe\") + \"]\")",
+        )
         return app
     }
 
@@ -149,6 +159,7 @@ class DotEnvPrecedenceTest {
         assertEquals(0, rc, "compiling the fake framework failed")
 
         File(root, "framework/lib").mkdirs()
+        TestProject.copyJUnitPlatform(File(root, "framework/lib"))
         writeJar(classes, File(root, "framework/play-$fwVersion.jar"))
         writeJar(classes, File(root, "modules/testrunner/lib/play-testrunner.jar"))
         return root

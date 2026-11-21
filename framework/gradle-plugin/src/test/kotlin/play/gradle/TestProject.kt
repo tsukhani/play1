@@ -39,6 +39,32 @@ object TestProject {
         )
     }
 
+    /**
+     * PF-230: Gradle's test task runs an application's tests with framework/lib's JUnit Platform
+     * jars, which a fake framework lacks: copy this checkout's into [frameworkLib].
+     */
+    fun copyJUnitPlatform(frameworkLib: File) {
+        val real = File("../../framework/lib")
+        real.listFiles { f -> Regex("(junit|opentest4j|apiguardian)-.*\\.jar").matches(f.name) }!!
+            .forEach { it.copyTo(File(frameworkLib, it.name), overwrite = true) }
+    }
+
+    /**
+     * A test class, ProbeTest, whose one test prints [lines] (Java expressions) to its JVM's
+     * stdout, which Gradle's test task keeps in the class's JUnit XML: see [probeOutput].
+     */
+    fun writeProbeTest(app: File, vararg lines: String) {
+        val prints = lines.joinToString("\n") { "        System.out.println($it);" }
+        File(app, "test").mkdirs()
+        File(app, "test/ProbeTest.java").writeText(
+            "public class ProbeTest {\n    @org.junit.jupiter.api.Test\n    public void report() {\n$prints\n    }\n}\n"
+        )
+    }
+
+    /** What ProbeTest printed in the test task's last run, or "" when it did not run. */
+    fun probeOutput(app: File): String =
+        File(app, "build/test-results/test/TEST-ProbeTest.xml").let { if (it.isFile) it.readText() else "" }
+
     fun runner(dir: File, vararg args: String): GradleRunner =
         GradleRunner.create()
             .withProjectDir(dir)
