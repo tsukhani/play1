@@ -17,7 +17,6 @@ import jakarta.persistence.PersistenceUnit;
 import jakarta.persistence.Query;
 import jakarta.persistence.spi.PersistenceUnitInfo;
 import jakarta.validation.Validation;
-import jakarta.validation.ValidatorFactory;
 import org.hibernate.validator.messageinterpolation.ParameterMessageInterpolator;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.core.config.Configurator;
@@ -321,15 +320,28 @@ public class JPAPlugin extends PlayPlugin {
         // ResourceBundleMessageInterpolator. Use ParameterMessageInterpolator instead
         // to avoid pulling in an EL impl dependency — Play uses OVal for form validation
         // so EL expression interpolation in JPA constraint messages is not needed.
-        ValidatorFactory validatorFactory = Validation.byDefaultProvider()
+        // PF-239: built on a thread of its own while Hibernate builds its metadata, which it
+        // does before it first calls the factory.
+        PendingValidatorFactory validatorFactory = new PendingValidatorFactory(() -> Validation.byDefaultProvider()
                 .configure()
                 .messageInterpolator(new ParameterMessageInterpolator())
-                .buildValidatorFactory();
+                .buildValidatorFactory(), Thread.currentThread().getContextClassLoader());
         configuration.put("jakarta.persistence.validation.factory", validatorFactory);
 
-        return new EntityManagerFactoryBuilderImpl(
-                new PersistenceUnitInfoDescriptor(persistenceUnitInfo), configuration
-        ).build();
+        EntityManagerFactory emf;
+        try {
+            emf = new EntityManagerFactoryBuilderImpl(
+                    new PersistenceUnitInfoDescriptor(persistenceUnitInfo), configuration
+            ).build();
+        } catch (RuntimeException e) {
+            // A factory that could not be built fails the start with its own exception, as it
+            // did when it was built before Hibernate, not as the failure it caused in Hibernate
+            validatorFactory.get();
+            throw e;
+        }
+        // Also when Hibernate was configured not to call it
+        validatorFactory.get();
+        return emf;
     }
 
     protected PersistenceUnitInfoImpl persistenceUnitInfo(String dbName, Configuration dbConfig) {
