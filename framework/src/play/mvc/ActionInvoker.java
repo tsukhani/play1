@@ -36,6 +36,9 @@ import play.utils.Utils;
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.InputStream;
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -542,21 +545,123 @@ public class ActionInvoker {
      * action methods now invoke directly like every other reflective call.
      */
     static Object invoke(Method method, Object instance, Object ... realArgs) throws Exception {
-        try {
-            return method.invoke(instance, realArgs);
-        } catch (InvocationTargetException ex) {
-            Throwable originalThrowable = ex.getTargetException();
-
-            if (originalThrowable instanceof Result || originalThrowable instanceof PlayException)
-                throw (Exception) originalThrowable;
-
-            StackTraceElement element = PlayException.getInterestingStackTraceElement(originalThrowable);
-            if (element != null) {
-                throw new JavaExecutionException(Play.classes.getApplicationClass(element.getClassName()), element.getLineNumber(),
-                        originalThrowable);
+        Handle handle = handles.get(method.getDeclaringClass()).get(method);
+        if (handle != null && handle.reflectionWouldCall(instance, realArgs)) {
+            Object[] args = realArgs == null ? NO_ARGS : realArgs;
+            Throwable thrown;
+            try {
+                return (Object) handle.handle().invokeExact(instance, args);
+            } catch (Throwable t) {
+                thrown = t;
             }
-            throw new JavaExecutionException(originalThrowable);
+            throw thrownBy(thrown);
         }
+        try {
+            Object result = method.invoke(instance, realArgs);
+            remember(method);
+            return result;
+        } catch (InvocationTargetException ex) {
+            remember(method);
+            throw thrownBy(ex.getTargetException());
+        }
+    }
+
+    /** What {@link #invoke} throws for what the method threw. */
+    private static Exception thrownBy(Throwable originalThrowable) {
+        if (originalThrowable instanceof Result || originalThrowable instanceof PlayException) {
+            return (Exception) originalThrowable;
+        }
+        StackTraceElement element = PlayException.getInterestingStackTraceElement(originalThrowable);
+        if (element != null) {
+            return new JavaExecutionException(Play.classes.getApplicationClass(element.getClassName()), element.getLineNumber(),
+                    originalThrowable);
+        }
+        return new JavaExecutionException(originalThrowable);
+    }
+
+    private static final Object[] NO_ARGS = new Object[0];
+
+    /**
+     * PF-237: handles for the controller methods {@link #invoke} has called, kept with their class.
+     * {@link Method#invoke} wraps whatever the method throws in an InvocationTargetException, and
+     * every action ends by throwing its Result, so each request filled in the stack trace of an
+     * exception that was thrown away. A handle throws what the method throws. It is made in PROD
+     * only, for a public method of a public class in the unnamed module, which reflection calls
+     * from anywhere, and only once a reflective call has reached the method, so the class has
+     * been initialised and the handle cannot be the first to fail on that.
+     */
+    private static final ClassValue<Map<Method, Handle>> handles = new ClassValue<>() {
+        @Override
+        protected Map<Method, Handle> computeValue(Class<?> type) {
+            return new java.util.concurrent.ConcurrentHashMap<>();
+        }
+    };
+
+    /** A method's handle, of type {@code (Object instance, Object[] args)Object}, and what its call checks. */
+    private record Handle(MethodHandle handle, Class<?> declaringClass, boolean isStatic, Class<?>[] types) {
+
+        /**
+         * Whether {@link Method#invoke} would call the method with these arguments rather than
+         * refuse them. When it would refuse, or might convert one, reflection is called so that it does.
+         */
+        boolean reflectionWouldCall(Object instance, Object[] args) {
+            if ((args == null ? 0 : args.length) != types.length) {
+                return false;
+            }
+            if (!isStatic && !declaringClass.isInstance(instance)) {
+                return false;
+            }
+            for (int i = 0; i < types.length; i++) {
+                Object arg = args[i];
+                if (types[i].isPrimitive()) {
+                    if (arg == null || arg.getClass() != wrapper(types[i])) {
+                        return false;
+                    }
+                } else if (arg != null && !types[i].isInstance(arg)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
+    private static void remember(Method method) {
+        Class<?> type = method.getDeclaringClass();
+        if (Play.mode != Play.Mode.PROD || !Modifier.isPublic(method.getModifiers()) || !Modifier.isPublic(type.getModifiers())
+                || type.getModule().isNamed()) {
+            return;
+        }
+        Map<Method, Handle> known = handles.get(type);
+        if (known.containsKey(method)) {
+            return;
+        }
+        try {
+            int n = method.getParameterCount();
+            boolean isStatic = Modifier.isStatic(method.getModifiers());
+            // Fixed arity: a varargs method takes its array as reflection passes it, not collected again.
+            MethodHandle handle = MethodHandles.publicLookup().unreflect(method).asFixedArity();
+            if (isStatic) {
+                handle = MethodHandles.dropArguments(
+                        handle.asType(MethodType.genericMethodType(n)).asSpreader(Object[].class, n), 0, Object.class);
+            } else {
+                handle = handle.asType(MethodType.genericMethodType(n + 1)).asSpreader(Object[].class, n);
+            }
+            known.put(method, new Handle(handle, type, isStatic, method.getParameterTypes()));
+        } catch (IllegalAccessException | RuntimeException e) {
+            // Reflection goes on calling it.
+        }
+    }
+
+    private static Class<?> wrapper(Class<?> primitive) {
+        if (primitive == int.class) return Integer.class;
+        if (primitive == long.class) return Long.class;
+        if (primitive == boolean.class) return Boolean.class;
+        if (primitive == double.class) return Double.class;
+        if (primitive == float.class) return Float.class;
+        if (primitive == short.class) return Short.class;
+        if (primitive == byte.class) return Byte.class;
+        if (primitive == char.class) return Character.class;
+        return Void.class;
     }
 
     /** An action that {@link #getActionMethod(String)} found, and the class loader it found it in. */
