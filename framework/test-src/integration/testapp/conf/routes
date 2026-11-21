@@ -23,4 +23,6 @@ GET     /context/entityManager     ContextController.entityManager
 GET     /inline/run                InlineJobController.run
 GET     /inline/failing            InlineJobController.failing
 GET     /inline/after              InlineJobController.after
+GET     /requestpath/context       RequestPathController.loggingContext
+GET     /requestpath/query         RequestPathController.query
 GET     /public/                   staticDir:public

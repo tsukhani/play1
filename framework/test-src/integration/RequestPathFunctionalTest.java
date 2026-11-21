@@ -1,5 +1,7 @@
 package integration;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonParser;
 import com.jamonapi.MonitorFactory;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -10,6 +12,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.regex.Pattern;
@@ -26,6 +29,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * encoded once per second, and the response headers no longer copied: each header once, with the
  * value it had;</li>
  * <li>JAMon monitors, which nothing read since /@status stopped printing them: none is recorded;</li>
+ * <li>the logging context, put in one step: its keys in the order the four puts gave them;</li>
+ * <li>an empty query string, no longer parsed: a query string still binds, and an unknown charset
+ * still fails the request.</li>
  * </ul>
  */
 public class RequestPathFunctionalTest {
@@ -77,6 +83,30 @@ public class RequestPathFunctionalTest {
         assertEquals(200, get("/json").statusCode());
         assertFalse(MonitorFactory.exists("TestController.json()", "ms."), "the action's monitor was recorded");
         assertFalse(MonitorFactory.exists("Waiting for execution", "ms."), "the queue's monitor was recorded");
+    }
+
+    @Test
+    void theLoggingContextKeepsTheOrderOfItsKeys() throws Exception {
+        HttpResponse<String> response = get("/requestpath/context");
+        assertEquals(200, response.statusCode());
+        JsonArray keys = JsonParser.parseString(response.body()).getAsJsonArray();
+        assertEquals("[\"request_id\",\"http_method\",\"http_path\",\"client_ip\",\"action_name\"]", keys.toString());
+    }
+
+    @Test
+    void aQueryStringStillBinds() throws Exception {
+        assertEquals("q=v", get("/requestpath/query?q=v").body());
+        assertEquals("q=null", get("/requestpath/query").body());
+    }
+
+    @Test
+    void anUnknownCharsetStillFailsTheRequestWithOrWithoutAQueryString() throws Exception {
+        for (String path : new String[] { "/requestpath/query", "/requestpath/query?q=v" }) {
+            HttpResponse<String> response = CLIENT.send(HttpRequest.newBuilder(URI.create(BASE + path))
+                    .header("Content-Type", "text/plain; charset=no-such-charset").build(),
+                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            assertEquals(500, response.statusCode(), () -> path + ": " + response.body());
+        }
     }
 
     private static HttpResponse<String> get(String path) throws Exception {

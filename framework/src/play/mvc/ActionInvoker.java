@@ -40,6 +40,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Stack;
@@ -119,12 +120,15 @@ public class ActionInvoker {
         // ThreadContext (MDC). When application.log.format=json the ECS
         // template flattens these as top-level JSON keys; in text mode they
         // sit unused unless the operator extends the PatternLayout.
-        ThreadContext.put("request_id", request.args.containsKey("__REQUEST_ID")
+        // PF-237: one putAll, in the order of the four puts it replaces. Each put copies the map.
+        Map<String, String> context = new LinkedHashMap<>(8);
+        context.put("request_id", request.args.containsKey("__REQUEST_ID")
                 ? request.args.get("__REQUEST_ID").toString()
                 : UUID.randomUUID().toString());
-        ThreadContext.put("http_method", request.method);
-        ThreadContext.put("http_path", request.path);
-        ThreadContext.put("client_ip", request.remoteAddress);
+        context.put("http_method", request.method);
+        context.put("http_path", request.path);
+        context.put("client_ip", request.remoteAddress);
+        ThreadContext.putAll(context);
 
         try {
             initActionContext(request, response);
@@ -137,10 +141,13 @@ public class ActionInvoker {
             // 1. Prepare request params
             Scope.Params.current().__mergeWith(request.routeArgs);
 
-            // add parameters from the URI query string
+            // add parameters from the URI query string. PF-237: an empty one adds nothing, so it
+            // is not parsed; the encoding is still looked up, which fails as before when unknown.
             String encoding = Http.Request.current().encoding;
-            Scope.Params.current()
-                    ._mergeWith(UrlEncodedParser.parseQueryString(new ByteArrayInputStream(request.querystring.getBytes(encoding))));
+            byte[] querystring = request.querystring.getBytes(encoding);
+            if (querystring.length > 0) {
+                Scope.Params.current()._mergeWith(UrlEncodedParser.parseQueryString(new ByteArrayInputStream(querystring)));
+            }
 
             // 2. Easy debugging ...
             if (Play.mode == Play.Mode.DEV) {
