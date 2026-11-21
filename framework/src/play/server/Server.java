@@ -462,6 +462,59 @@ public class Server {
         IO.write(pid.getBytes(), pidfile);
     }
 
+    /**
+     * PF-239: the Netty classes the bind and the first request initialize, in the order they
+     * do. Their static initializers read the platform (Unsafe, the direct memory limit, the
+     * selector provider, the network interfaces for a channel id) and none depends on Play.
+     */
+    static final String[] NETTY_PREINIT = {
+        "io.netty.util.internal.PlatformDependent",
+        "io.netty.util.NetUtil",
+        "io.netty.channel.DefaultChannelId",
+        "io.netty.buffer.ByteBufUtil",
+        "io.netty.buffer.ByteBufAllocator",
+        "io.netty.channel.nio.NioIoHandler",
+        "io.netty.channel.nio.NioEventLoopGroup",
+        "io.netty.channel.socket.nio.NioServerSocketChannel",
+        "io.netty.channel.socket.nio.NioSocketChannel",
+        "io.netty.channel.DefaultChannelPipeline",
+        "io.netty.handler.codec.http.HttpServerCodec",
+        "io.netty.handler.codec.http.HttpObjectAggregator",
+        "io.netty.handler.codec.http.HttpContentCompressor",
+        "io.netty.handler.codec.http.DefaultFullHttpResponse",
+        "io.netty.handler.codec.http.HttpHeaderNames",
+        "io.netty.handler.codec.http.HttpResponseStatus",
+    };
+
+    /**
+     * PF-239: initialize {@link #NETTY_PREINIT} and allocate and free one direct buffer, which
+     * links Netty's native memory calls, on a daemon thread while the application starts. The
+     * bind and the first request did this on their own thread: 25 to 50 ms of the bind phase on
+     * the head-to-head's application, on a thread that is otherwise idle until then. A class
+     * initialized here is the one the server then uses; one that fails to initialize fails
+     * again, and is reported, where the server first uses it.
+     */
+    static Thread preinitializeNetty() {
+        Thread thread = new Thread(() -> {
+            ClassLoader loader = Server.class.getClassLoader();
+            for (String name : NETTY_PREINIT) {
+                try {
+                    Class.forName(name, true, loader);
+                } catch (Throwable ignored) {
+                    // the server reports it when it gets there
+                }
+            }
+            try {
+                io.netty.buffer.Unpooled.directBuffer(1).release();
+            } catch (Throwable ignored) {
+                // as above
+            }
+        }, "play-netty-preinit");
+        thread.setDaemon(true);
+        thread.start();
+        return thread;
+    }
+
     public static void main(String[] args) throws Exception {
         // PF-189: every launcher turns log4j's own shutdown hook off, and Play.shutdownHook,
         // which Play.start() registers, stops log4j once the application has stopped. A JVM
@@ -473,6 +526,9 @@ public class Server {
                 LogManager.shutdown();
             }
         }, "play-log4j-shutdown"));
+        if (System.getProperty("precompile") == null) {
+            preinitializeNetty();
+        }
         try {
             File root = new File(System.getProperty("application.path", "."));
             if (System.getProperty("precompiled", "false").equals("true")) {
