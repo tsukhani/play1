@@ -621,9 +621,11 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
         }
 
         // Build a FullHttpResponse carrying both headers and body (Netty 4: HttpResponse alone has no content).
-        FullHttpResponse fullResponse = new DefaultFullHttpResponse(
-                nettyResponse.protocolVersion(), nettyResponse.status(), Unpooled.wrappedBuffer(content));
-        fullResponse.headers().set(nettyResponse.headers());
+        // PF-237: it takes the headers built for nettyResponse, which nothing uses after this, rather
+        // than a copy of them, which validated every name a second time.
+        FullHttpResponse fullResponse = new DefaultFullHttpResponse(nettyResponse.protocolVersion(),
+                nettyResponse.status(), Unpooled.wrappedBuffer(content), nettyResponse.headers(),
+                DefaultHttpHeadersFactory.trailersFactory().newHeaders());
 
         if (!fullResponse.status().equals(HttpResponseStatus.NOT_MODIFIED)) {
             if (Logger.isTraceEnabled()) {
