@@ -109,9 +109,9 @@ AOT_CACHE="app.aot"
 # not. Two of them differ: java.exe splits -classpath on ';' rather than ':',
 # and it cannot resolve '/c/Users/...' (it reads the leading slash as the
 # current drive's root and looks for C:\c\Users\...). Relative values need no
-# translation and are deliberately left alone -- the .classpath entries and
-# -javaagent below resolve against this script's own `cd "$SCRIPT_DIR"`, which
-# the native process inherits already translated. Where a relative path will
+# translation and are deliberately left alone -- the .classpath entries below
+# resolve against this script's own `cd "$SCRIPT_DIR"`, which the native
+# process inherits already translated. Where a relative path will
 # do, it is the portable answer (PF-171).
 case "$(uname -s)" in
     MINGW*|MSYS*|CYGWIN*) WINDOWS_JVM=1; CP_SEP=';' ;;
@@ -406,7 +406,10 @@ build_java_cmd() {
     JAVA_CMD=(
         java
         --enable-native-access=ALL-UNNAMED
-        -javaagent:"$FW_JAR"
+        # No -javaagent for the framework jar (PF-239): the agent is Play's HotSwap in DEV
+        # mode, and a bundle runs precompiled, which is PROD. Loading it cost every start
+        # java.instrument and the agent's premain, about 10 ms. An agent the application
+        # asks for (javaagent.path, or -javaagent: on the command line) is still passed.
         -Dapplication.path="$(native_path "$SCRIPT_DIR")"
         # Pin frameworkPath to the bundle's framework/ subdir so it stays
         # distinct from application.path (= $SCRIPT_DIR). Without this,

@@ -31,8 +31,8 @@ import javax.tools.ToolProvider
  * when the shell running it is POSIX — Git Bash / MSYS2 / Cygwin on Windows.
  * java.exe splits -classpath on ';' rather than ':' and cannot resolve
  * '/c/Users/...', so a POSIX-only launcher dies with a NoClassDefFoundError on
- * the first framework dependency (the -javaagent keeps the framework jar itself
- * loadable, which is why the symptom looks like a packaging bug).
+ * the first framework dependency (the -javaagent it had until PF-239 kept the
+ * framework jar itself loadable, which is why the symptom looked like a packaging bug).
  *
  * Most tests run the real script and assert the argv it hands `java` — a stub
  * that just echoes its arguments. On macOS and Linux the MSYS branch is reached
@@ -410,18 +410,18 @@ class BundleLauncherTest {
     }
 
     @Test
-    fun `javaagent stays relative on both platforms`(@TempDir tmp: File) {
+    fun `the launcher starts no java agent of its own on either platform`(@TempDir tmp: File) {
+        // PF-239: the framework jar's agent is HotSwap for DEV mode, and a bundle runs
+        // precompiled, which is PROD; it cost every start java.instrument and a premain.
         listOf(false, true).forEach { windows ->
             val bundle = File(tmp, "app-$windows").apply { mkdirs() }
             writeBundle(bundle)
             val stubs = File(tmp, "bin-$windows")
             writeStubs(stubs, windows)
 
-            val agent = launcherArgv(bundle, stubs).single { it.startsWith("-javaagent:") }
-            // Relative, so it resolves against the launcher's own `cd "$SCRIPT_DIR"`
-            // — which a Git Bash-spawned native process inherits already translated.
-            // Translating it would be a regression, not a fix.
-            assertEquals("-javaagent:framework/play-$fwVersion.jar", agent, "windows=$windows")
+            val argv = launcherArgv(bundle, stubs)
+            assertEquals(emptyList<String>(), argv.filter { it.startsWith("-javaagent:") }, "windows=$windows")
+            assertTrue("-Dprecompiled=true" in argv, "a bundle runs precompiled, so in PROD mode:\n$argv")
         }
     }
 
@@ -1088,10 +1088,10 @@ class BundleLauncherTest {
             run.stdout.firstOrNull { it.startsWith("$name=") }?.substringAfter('=')?.trimEnd('\r')
         assertEquals(bundle.canonicalPath, reported("APP"), "application.path is not the bundle")
         assertEquals(File(bundle, "framework").canonicalPath, reported("FRAMEWORK"), "framework.path")
-        // The -javaagent keeps the framework jar loadable even when -classpath is
-        // misread, so a file only the second jar holds is what shows the classpath
-        // took, separator included. (It was a file in conf/ until PF-180 took
-        // directories off the bundle's classpath.)
+        // A file only the second jar holds is what shows the classpath took, separator
+        // included: until PF-239 the launcher's -javaagent kept the framework jar
+        // loadable even when -classpath was misread. (It was a file in conf/ until
+        // PF-180 took directories off the bundle's classpath.)
         assertEquals("true", reported("SECOND_JAR_ON_CLASSPATH"), "-classpath did not take\n${run.stdout}")
         assertEquals("true", reported("VECTOR"), "jvm.memory's --add-modules did not reach the JVM")
         assertEquals("yes", reported("FROM_CONF"))
