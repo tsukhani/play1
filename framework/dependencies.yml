@@ -89,6 +89,10 @@ require:    &allDependencies
     - net.bytebuddy -> byte-buddy 1.18.17
     - jakarta.persistence -> jakarta.persistence-api 3.2.0
     - org.hibernate.validator -> hibernate-validator 9.2.0.Final
+    # hibernate-validator 9.2 reads bean properties through hibernate-accessor
+    # (ValidatorFactoryImpl, JavaBeanField/Getter), a compile dependency 9.1 did
+    # not have; transitiveDependencies is off, so it is declared here.
+    - org.hibernate.accessor -> hibernate-accessor 0.1.0
     - org.jboss.logging -> jboss-logging 3.6.3.Final
     - jakarta.transaction -> jakarta.transaction-api 2.0.1
     - jakarta.xml.bind -> jakarta.xml.bind-api 4.0.5
