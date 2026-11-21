@@ -152,6 +152,35 @@ bc. Fixtures.loadModels("users.yml", "roles.yml", "permissions.yml");
 p(note). The fixture file will be loaded as a Template by default.
 To avoid this, you can use @Fixtures.loadModels(boolean loadAsTemplate, String name)@ with @loadAsTemplate@ set to @false@.
 
+h2. <a name="transactions">Transactions in tests</a>
+
+By default a test runs inside a JPA transaction it did not open. The test runner that @play test@ and @play autotest@ use runs each test class in a job, and every test of the class reads and writes in that job's transaction, which commits only when the whole class has finished. A request that a functional test sends runs in a transaction of its own, so it does not see what the test saved:
+
+bc. @Test
+public void theRequestDoesNotSeeIt() {
+    User bob = new User("bob").save();
+    assertStatus(404, GET("/users/" + bob.id)); // bob is not committed yet
+}
+
+With @play.test.transaction=none@ in @application.conf@, the code of a test class, from its constructor and its <code>@BeforeAll</code> methods to its tests and its <code>@AfterAll</code> methods, runs with no transaction open, as it does in a plain JUnit setup. The key takes @ambient@, the default, or @none@, in any letter case; the application refuses to start with any other value.
+
+Once the setting is on, a test does these things for itself:
+
+* It opens and commits a transaction around what it reads or writes through JPA: @save()@, @findById()@, @JPA.em()@ and @DB.getConnection()@ all need one. @JPA.withTransaction("default", false, () -> ...)@ commits when the block returns and rolls back when it throws. Outside one, these fail with a message that says so.
+* It resets the database, because what it commits stays there for the next test. @Fixtures@ called with no transaction open, as from a <code>@BeforeEach</code> method, opens and commits one of its own, so what it deletes and loads is in the database when the test's requests run.
+* It opens a transaction around a job it calls directly, with @call()@ or @run()@: in the test runner such a job runs as part of the test, with no transaction. A job started with @now()@ or @in()@ runs in a transaction of its own, as does every request a functional test sends.
+
+bc. @BeforeEach
+public void setUp() {
+    Fixtures.deleteDatabase();
+}
+ 
+@Test
+public void theRequestSeesWhatTheTestCommitted() throws Throwable {
+    User bob = JPA.withTransaction("default", false, () -> new User("bob").save());
+    assertStatus(200, GET("/users/" + bob.id));
+}
+
 h2. <a name="running">Running the tests</a>
 
 To run the tests, you must run your application in @test@ mode using the @play test@ command:

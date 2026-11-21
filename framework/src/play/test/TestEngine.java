@@ -24,6 +24,8 @@ import org.junit.platform.launcher.core.LauncherFactory;
 
 import play.Logger;
 import play.Play;
+import play.exceptions.UnexpectedException;
+import play.libs.F;
 import play.mvc.Http.Request;
 import play.mvc.Http.Response;
 import play.mvc.Router;
@@ -177,7 +179,11 @@ public class TestEngine {
 
             initTest(testClass);
 
-            TestResults pluginTestResults = Play.pluginCollection.runTest(testClass);
+            // PF-231: with play.test.transaction=none, no code of the class runs inside the
+            // transaction of the job that the /@tests runner runs it in. PlayJUnitExtension sees
+            // to that for a BaseTest on any runner; this also covers a class that is not one,
+            // and the plugins' runners.
+            TestResults pluginTestResults = asTestCode(() -> Play.pluginCollection.runTest(testClass));
             if (pluginTestResults != null) {
                 return pluginTestResults;
             }
@@ -191,13 +197,26 @@ public class TestEngine {
             Listener listener = new Listener(testClass.getName(), testResults);
 
             launcher.registerTestExecutionListeners(listener);
-            launcher.execute(request);
+            asTestCode(() -> {
+                launcher.execute(request);
+                return null;
+            });
 
         } catch (ClassNotFoundException e) {
             Logger.error(e, "Test not found %s", name);
         }
 
         return testResults;
+    }
+
+    private static <T> T asTestCode(F.Function0<T> code) {
+        try {
+            return TestTransaction.run(code);
+        } catch (RuntimeException | Error e) {
+            throw e;
+        } catch (Throwable e) {
+            throw new UnexpectedException(e);
+        }
     }
 
     // ~~~~~~ Test Execution Listener (JUnit 5)

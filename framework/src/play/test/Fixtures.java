@@ -82,6 +82,10 @@ public class Fixtures {
      *            The SQL statements, separated by semicolons
      */
     public static void executeSQL(String sqlScript) {
+        if (needsOwnTransaction()) {
+            inOwnTransaction(() -> executeSQL(sqlScript));
+            return;
+        }
         for (CharSequence sql : new SQLSplitter(sqlScript)) {
             String s = sql.toString().strip();
             if (!s.isEmpty()) {
@@ -108,6 +112,10 @@ public class Fixtures {
      *            Types to delete
      */
     public static void delete(Class<? extends Model>... types) {
+        if (needsOwnTransaction()) {
+            inOwnTransaction(() -> delete(types));
+            return;
+        }
         idCache.clear();
         disableForeignKeyConstraints();
         for (Class<? extends Model> type : types) {
@@ -142,6 +150,10 @@ public class Fixtures {
      */
     @SuppressWarnings("unchecked")
     public static void deleteAllModels() {
+        if (needsOwnTransaction()) {
+            inOwnTransaction(Fixtures::deleteAllModels);
+            return;
+        }
         List<Class<? extends Model>> classes = new ArrayList<>();
         for (ApplicationClasses.ApplicationClass c : Play.classes.getAssignableClasses(Model.class)) {
             if (c.javaClass.isAnnotationPresent(Entity.class)) {
@@ -168,6 +180,10 @@ public class Fixtures {
      * Flush the entire JDBC database
      */
     public static void deleteDatabase() {
+        if (needsOwnTransaction()) {
+            inOwnTransaction(Fixtures::deleteDatabase);
+            return;
+        }
         try {
             idCache.clear();
             List<String> names = new ArrayList<>();
@@ -230,6 +246,10 @@ public class Fixtures {
      *            indicate if the file must interpreted as a Template
      */
     public static void loadModels(boolean loadAsTemplate, String name) {
+        if (needsOwnTransaction()) {
+            inOwnTransaction(() -> loadModels(loadAsTemplate, name));
+            return;
+        }
         VirtualFile yamlFile = null;
         String type = null;
         String id = null;
@@ -368,6 +388,10 @@ public class Fixtures {
      * @see #loadModels(boolean loadAsTemplate, String name)
      */
     public static void loadModels(boolean loadAsTemplate, String... names) {
+        if (needsOwnTransaction()) {
+            inOwnTransaction(() -> loadModels(loadAsTemplate, names));
+            return;
+        }
         for (String name : names) {
             loadModels(loadAsTemplate, name);
         }
@@ -638,6 +662,29 @@ public class Fixtures {
         // Returns the map containing the ids to load for this object's
         // relation.
         return resolvedYml;
+    }
+
+    /**
+     * PF-231: under play.test.transaction=none a test runs with no transaction open, and what
+     * the fixtures write has to be committed for the requests the test then sends to see it. A
+     * call made with no transaction open runs in one of its own, committed when the call returns.
+     * Under ambient, and inside a transaction, a call runs in the caller's, as it always has.
+     */
+    private static boolean needsOwnTransaction() {
+        return !TestTransaction.ambient() && JPA.isEnabled() && !JPA.isInsideTransaction();
+    }
+
+    private static void inOwnTransaction(Runnable call) {
+        try {
+            JPA.withTransaction(JPA.DEFAULT, false, () -> {
+                call.run();
+                return null;
+            });
+        } catch (RuntimeException | Error e) {
+            throw e;
+        } catch (Throwable e) {
+            throw new UnexpectedException(e);
+        }
     }
 
     private static void disableForeignKeyConstraints() {

@@ -128,6 +128,9 @@ public final class ConfigRequirements {
         // Logger selects the JSON layout for json and the text one for anything else, so a
         // mistyped value used to mean text without a word.
         requireIn(FRAMEWORK, "application.log.format", "text", "json");
+        // PF-231: play.test.TestTransaction reads anything but none as ambient, so a mistyped
+        // none would leave every test in the runner's transaction without a word.
+        requireIn(FRAMEWORK, "play.test.transaction", "ambient", "none");
         // application.session.sameSite is deliberately not declared. Its value only takes
         // effect as Lax, Strict or None in that exact letter case, and anything else is
         // dropped from the cookie rather than refused; a case-blind allowed set would either

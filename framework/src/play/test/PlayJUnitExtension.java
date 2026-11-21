@@ -1,16 +1,22 @@
 package play.test;
 
 import java.io.File;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Method;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.junit.jupiter.api.extension.BeforeAllCallback;
 import org.junit.jupiter.api.extension.BeforeEachCallback;
+import org.junit.jupiter.api.extension.DynamicTestInvocationContext;
 import org.junit.jupiter.api.extension.ExtensionContext;
+import org.junit.jupiter.api.extension.InvocationInterceptor;
+import org.junit.jupiter.api.extension.ReflectiveInvocationContext;
 import org.junit.jupiter.api.extension.TestExecutionExceptionHandler;
 import play.Invoker;
 import play.Invoker.DirectInvocation;
 import play.Play;
 
-public class PlayJUnitExtension implements BeforeAllCallback, BeforeEachCallback, TestExecutionExceptionHandler {
+public class PlayJUnitExtension implements BeforeAllCallback, BeforeEachCallback, InvocationInterceptor,
+        TestExecutionExceptionHandler {
 
     public static final String invocationType = "JUnitTest";
 
@@ -53,6 +59,68 @@ public class PlayJUnitExtension implements BeforeAllCallback, BeforeEachCallback
                 }
             });
         }
+    }
+
+    // PF-231: every constructor and method of the test class runs as play.test.transaction
+    // says, whichever runner runs it and whatever transaction that runner holds.
+
+    @Override
+    public <T> T interceptTestClassConstructor(Invocation<T> invocation,
+            ReflectiveInvocationContext<Constructor<T>> invocationContext, ExtensionContext extensionContext)
+            throws Throwable {
+        return asTestCode(invocation);
+    }
+
+    @Override
+    public void interceptBeforeAllMethod(Invocation<Void> invocation,
+            ReflectiveInvocationContext<Method> invocationContext, ExtensionContext extensionContext) throws Throwable {
+        asTestCode(invocation);
+    }
+
+    @Override
+    public void interceptBeforeEachMethod(Invocation<Void> invocation,
+            ReflectiveInvocationContext<Method> invocationContext, ExtensionContext extensionContext) throws Throwable {
+        asTestCode(invocation);
+    }
+
+    @Override
+    public void interceptTestMethod(Invocation<Void> invocation, ReflectiveInvocationContext<Method> invocationContext,
+            ExtensionContext extensionContext) throws Throwable {
+        asTestCode(invocation);
+    }
+
+    @Override
+    public <T> T interceptTestFactoryMethod(Invocation<T> invocation,
+            ReflectiveInvocationContext<Method> invocationContext, ExtensionContext extensionContext) throws Throwable {
+        return asTestCode(invocation);
+    }
+
+    @Override
+    public void interceptTestTemplateMethod(Invocation<Void> invocation,
+            ReflectiveInvocationContext<Method> invocationContext, ExtensionContext extensionContext) throws Throwable {
+        asTestCode(invocation);
+    }
+
+    @Override
+    public void interceptDynamicTest(Invocation<Void> invocation, DynamicTestInvocationContext invocationContext,
+            ExtensionContext extensionContext) throws Throwable {
+        asTestCode(invocation);
+    }
+
+    @Override
+    public void interceptAfterEachMethod(Invocation<Void> invocation,
+            ReflectiveInvocationContext<Method> invocationContext, ExtensionContext extensionContext) throws Throwable {
+        asTestCode(invocation);
+    }
+
+    @Override
+    public void interceptAfterAllMethod(Invocation<Void> invocation,
+            ReflectiveInvocationContext<Method> invocationContext, ExtensionContext extensionContext) throws Throwable {
+        asTestCode(invocation);
+    }
+
+    private static <T> T asTestCode(Invocation<T> invocation) throws Throwable {
+        return TestTransaction.run(invocation::proceed);
     }
 
     @Override
