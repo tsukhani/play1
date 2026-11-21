@@ -235,18 +235,9 @@ require:    &allDependencies
     - io.micrometer -> micrometer-observation 1.18.0
     - io.micrometer -> micrometer-registry-prometheus 1.18.0
     - io.micrometer -> micrometer-registry-otlp 1.18.0
-    # micrometer-registry-otlp transitives: opentelemetry-proto serializes the
-    # push payload, protobuf-java is its peer. The Prometheus side ships its
-    # own shaded protobuf so the unshaded one declared here is OTLP-only.
-    - io.opentelemetry.proto -> opentelemetry-proto 1.10.0-alpha
-    # PF-130: protobuf-java is the unshaded protobuf used only by the OTLP exporter
-    # (the Prometheus side ships its own shaded protobuf). Kept on a release that
-    # fixes CVE-2024-7254 (unbounded-recursion parsing DoS; patched in 3.25.5+ AND
-    # 4.27.5+). On the 4.x line to match micrometer 1.17's otlp registry:
-    # opentelemetry-proto 1.10.0-alpha's gencode targets protobuf-java 4.34.0, and
-    # the 4.35.x runtime is compatible with that gencode (runtime >= gencode, same
-    # major). transitiveDependencies is off, so this explicit pin governs.
-    - com.google.protobuf -> protobuf-java 4.36.2
+    # From 1.18.0 micrometer-registry-otlp shades the OpenTelemetry exporter and its
+    # OTLP marshalling, so it has no runtime dependency of its own: opentelemetry-proto
+    # and protobuf-java, which 1.17 needed, are no longer declared here.
     - io.prometheus -> prometheus-metrics-core 1.10.0
     - io.prometheus -> prometheus-metrics-model 1.10.0
     - io.prometheus -> prometheus-metrics-config 1.10.0

@@ -50,36 +50,6 @@
         <cpe>cpe:/a:gradle:gradle</cpe>
     </suppress>
 
-    <suppress>
-        <notes><![CDATA[
-            Right product, wrong language. CVE-2026-0994 is a recursion-depth bypass in
-            google.protobuf.json_format.ParseDict() in the Python package, for protobuf releases
-            up to 33.4. protobuf-java 4.36.x is release 36.x of the Java runtime; dependency-check
-            compares "4.36.x" with 33.4 and finds it lower. Suppressed by CVE, so protobuf CVEs
-            that do apply to protobuf-java still report.
-        ]]></notes>
-        <filePath regex="true">.*[/\\]framework[/\\]lib[/\\]protobuf-java-[^/\\]*\.jar$</filePath>
-        <cve>CVE-2026-0994</cve>
-    </suppress>
-
-    <suppress>
-        <notes><![CDATA[
-            Right project, other implementations. io.opentelemetry.proto:opentelemetry-proto is the
-            Java binding of the OTLP protocol definitions. dependency-check matches it to
-            cpe:/a:opentelemetry:opentelemetry, and these CVEs are filed against that CPE with a
-            target_sw of another language: CVE-2026-39882 and CVE-2026-41178 against
-            OpenTelemetry-Go, CVE-2026-40894 against OpenTelemetry .NET, CVE-2026-44967 against
-            OpenTelemetry-cpp and CVE-2026-54285 against opentelemetry-js. Suppressed by CVE, so a
-            CVE against OpenTelemetry Java still reports.
-        ]]></notes>
-        <filePath regex="true">.*[/\\]framework[/\\]lib[/\\]opentelemetry-proto-[^/\\]*\.jar$</filePath>
-        <cve>CVE-2026-39882</cve>
-        <cve>CVE-2026-40894</cve>
-        <cve>CVE-2026-41178</cve>
-        <cve>CVE-2026-44967</cve>
-        <cve>CVE-2026-54285</cve>
-    </suppress>
-
     <!-- ==================================================================
          SECTION B - TIME-BOXED RISK ACCEPTS (expire and fail the scan again)
          ================================================================== -->
