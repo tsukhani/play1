@@ -369,8 +369,25 @@ public class JPAPlugin extends PlayPlugin {
         // disable statistics via hibernate.generate_statistics in dbConfig are
         // honored — putIfAbsent only sets when the user hasn't.
         properties.putIfAbsent("hibernate.generate_statistics", "true");
+        applyLazyFormatMappers(properties);
 
         return properties;
+    }
+
+    /**
+     * PF-239: Hibernate's default JSON and XML format mappers, made when an attribute first needs
+     * one rather than while Hibernate boots (see {@link LazyFormatMapper}). A mapper the
+     * configuration names, in application.conf, as a system property or in hibernate.properties,
+     * is left to Hibernate.
+     */
+    static void applyLazyFormatMappers(Properties properties) {
+        Properties global = org.hibernate.cfg.Environment.getProperties();
+        if (!properties.containsKey(AvailableSettings.JSON_FORMAT_MAPPER) && !global.containsKey(AvailableSettings.JSON_FORMAT_MAPPER)) {
+            properties.put(AvailableSettings.JSON_FORMAT_MAPPER, LazyFormatMapper.Json.class);
+        }
+        if (!properties.containsKey(AvailableSettings.XML_FORMAT_MAPPER) && !global.containsKey(AvailableSettings.XML_FORMAT_MAPPER)) {
+            properties.put(AvailableSettings.XML_FORMAT_MAPPER, LazyFormatMapper.Xml.class);
+        }
     }
 
     /**
