@@ -462,26 +462,78 @@ public class JPA {
      * @return The block's result
      * @throws java.lang.Throwable
      *             Whatever the block throws
+     * @see OwnTransactions
      */
     public static <T> T withoutTransaction(String hint, F.Function0<T> block) throws Throwable {
-        Map<String, JPAContext> contexts = get();
-        Map<String, JPAContext> setAside = new HashMap<>(contexts);
-        String outerHint = withoutTransactionHint.get();
-        contexts.clear();
-        withoutTransactionHint.set(hint);
-        try {
-            return block.apply();
-        } finally {
-            if (outerHint == null) {
-                withoutTransactionHint.remove();
-            } else {
-                withoutTransactionHint.set(outerHint);
+        try (OwnTransactions own = new OwnTransactions(hint)) {
+            return own.run(block);
+        }
+    }
+
+    /**
+     * PF-231: the JPA transactions that a series of blocks open for themselves, kept apart from
+     * those of the thread that runs them, as the methods of one test class run one after another.
+     * Each {@link #run(F.Function0)} sets the thread's contexts aside, as
+     * {@link JPA#withoutTransaction(String, F.Function0)} does, and puts in their place the ones
+     * the earlier blocks left open; when the block ends, it keeps what the block leaves open and
+     * puts the thread's back. A transaction one block opens with {@link JPA#startTx(String, boolean)}
+     * is therefore still open in the next, until one of them closes it. {@link #close()} rolls back
+     * and closes an entity manager the blocks have left open.
+     */
+    public static final class OwnTransactions implements AutoCloseable {
+
+        private final String hint;
+        private final Map<String, JPAContext> own = new HashMap<>();
+
+        /**
+         * @param hint
+         *            Added to the failure of {@link JPA#em(String)} inside the blocks, to say how
+         *            code there opens a transaction
+         */
+        public OwnTransactions(String hint) {
+            this.hint = hint;
+        }
+
+        /**
+         * Run a block with the transactions the earlier blocks left open, and none of the thread's.
+         *
+         * @param block
+         *            Block of code to execute
+         * @param <T>
+         *            The type of the block's result
+         * @return The block's result
+         * @throws java.lang.Throwable
+         *             Whatever the block throws
+         */
+        public <T> T run(F.Function0<T> block) throws Throwable {
+            Map<String, JPAContext> contexts = get();
+            Map<String, JPAContext> setAside = new HashMap<>(contexts);
+            String outerHint = withoutTransactionHint.get();
+            contexts.clear();
+            contexts.putAll(own);
+            withoutTransactionHint.set(hint);
+            try {
+                return block.apply();
+            } finally {
+                if (outerHint == null) {
+                    withoutTransactionHint.remove();
+                } else {
+                    withoutTransactionHint.set(outerHint);
+                }
+                own.clear();
+                own.putAll(contexts);
+                contexts.clear();
+                contexts.putAll(setAside);
             }
-            for (JPAContext leftOpen : contexts.values()) {
+        }
+
+        /** Roll back and close every entity manager the blocks have left open. */
+        @Override
+        public void close() {
+            for (JPAContext leftOpen : own.values()) {
                 rollBackAndClose(leftOpen);
             }
-            contexts.clear();
-            contexts.putAll(setAside);
+            own.clear();
         }
     }
 

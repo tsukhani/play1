@@ -20,6 +20,8 @@ import play.exceptions.JPAException;
 /**
  * PF-231: {@link JPA#withoutTransaction} sets the thread's JPA contexts aside for a block, so that
  * the block runs with no transaction open, and puts them back when the block ends.
+ * {@link JPA.OwnTransactions} does so for a series of blocks, which keep the transactions they
+ * open from one to the next.
  */
 public class JPAWithoutTransactionTest {
 
@@ -83,6 +85,44 @@ public class JPAWithoutTransactionTest {
             JPA.bindForCurrentThread(JPA.DEFAULT, leftOpen, false);
             return null;
         });
+
+        verify(itsTransaction).rollback();
+        verify(itsTransaction, never()).commit();
+        verify(leftOpen).close();
+        assertThat(JPA.currentEntityManager.get()).containsExactly(entry(JPA.DEFAULT, runners));
+    }
+
+    @Test
+    public void aTransactionOneBlockLeavesOpenIsOpenInTheNextAndRolledBackAtTheClose() throws Throwable {
+        EntityManager leftOpen = mock(EntityManager.class);
+        EntityTransaction itsTransaction = mock(EntityTransaction.class);
+        when(leftOpen.isOpen()).thenReturn(true);
+        when(leftOpen.getTransaction()).thenReturn(itsTransaction);
+        when(itsTransaction.isActive()).thenReturn(true);
+
+        try (JPA.OwnTransactions own = new JPA.OwnTransactions("hint")) {
+            Boolean insideTheFirst = own.run(() -> {
+                boolean inside = JPA.isInsideTransaction();
+                JPA.bindForCurrentThread(JPA.DEFAULT, leftOpen, false);
+                return inside;
+            });
+            assertThat(insideTheFirst).as("the thread's transaction is set aside").isFalse();
+            assertThat(JPA.currentEntityManager.get()).as("between the blocks, the thread's is back")
+                    .containsExactly(entry(JPA.DEFAULT, runners));
+
+            EntityManager inTheNext = own.run(JPA::em);
+            assertThat(inTheNext).as("the next block has the one the first left open").isSameAs(leftOpen);
+            verify(leftOpen, never()).close();
+
+            assertThatThrownBy(() -> own.run(() -> {
+                JPA.unbindForCurrentThread(JPA.DEFAULT);
+                return JPA.em();
+            })).as("one a block closes is gone for the next").hasMessage(NO_CONTEXT + " hint");
+            own.run(() -> {
+                JPA.bindForCurrentThread(JPA.DEFAULT, leftOpen, false);
+                return null;
+            });
+        }
 
         verify(itsTransaction).rollback();
         verify(itsTransaction, never()).commit();

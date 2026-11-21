@@ -162,11 +162,12 @@ public void theRequestDoesNotSeeIt() {
     assertStatus(404, GET("/users/" + bob.id)); // bob is not committed yet
 }
 
-With @play.test.transaction=none@ in @application.conf@, the code of a test class, from its constructor and its <code>@BeforeAll</code> methods to its tests and its <code>@AfterAll</code> methods, runs with no transaction open, as it does in a plain JUnit setup. The key takes @ambient@, the default, or @none@, in any letter case; the application refuses to start with any other value.
+With @play.test.transaction=none@ in @application.conf@, the code of a test class, from its constructor and its <code>@BeforeAll</code> methods to its tests and its <code>@AfterAll</code> methods, runs with no transaction open but those it opens itself, as it does in a plain JUnit setup. The key takes @ambient@, the default, or @none@, in any letter case; the application refuses to start with any other value.
 
 Once the setting is on, a test does these things for itself:
 
 * It opens and commits a transaction around what it reads or writes through JPA: @save()@, @findById()@, @JPA.em()@ and @DB.getConnection()@ all need one. @JPA.withTransaction("default", false, () -> ...)@ commits when the block returns and rolls back when it throws. Outside one, these fail with a message that says so.
+* It closes a transaction it opens in one method and leaves open for the next. As in a plain JUnit setup, a transaction opened with @JPA.startTx("default", false)@ in a <code>@BeforeEach</code> method is still open in the test and in the <code>@AfterEach</code> method, which commits it with @JPA.closeTx("default")@. One still open when the class and its nested classes have finished is rolled back, with a warning in the log.
 * It resets the database, because what it commits stays there for the next test. @Fixtures@ called with no transaction open, as from a <code>@BeforeEach</code> method, opens and commits one of its own, so what it deletes and loads is in the database when the test's requests run.
 * It opens a transaction around a job it calls directly, with @call()@ or @run()@: in the test runner such a job runs as part of the test, with no transaction. A job started with @now()@ or @in()@ runs in a transaction of its own, as does every request a functional test sends.
 

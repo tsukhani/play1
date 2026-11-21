@@ -62,65 +62,83 @@ public class PlayJUnitExtension implements BeforeAllCallback, BeforeEachCallback
     }
 
     // PF-231: every constructor and method of the test class runs as play.test.transaction
-    // says, whichever runner runs it and whatever transaction that runner holds.
+    // says, whichever runner runs it and whatever transaction that runner holds. The calls of one
+    // outermost class share a TestTransaction.ClassScope, so under none a transaction that one of
+    // them leaves open is still open in the next, as in a plain JUnit setup, and @Nested classes
+    // see their enclosing class's. The scope lives in that class's store, which JUnit closes, and
+    // with it the scope, when the class has finished (it closes an AutoCloseable it stores unless
+    // junit.jupiter.extensions.store.close.autocloseable.enabled is false).
+
+    private static final ExtensionContext.Namespace NAMESPACE = ExtensionContext.Namespace
+            .create(PlayJUnitExtension.class);
 
     @Override
     public <T> T interceptTestClassConstructor(Invocation<T> invocation,
             ReflectiveInvocationContext<Constructor<T>> invocationContext, ExtensionContext extensionContext)
             throws Throwable {
-        return asTestCode(invocation);
+        return asTestCode(invocation, extensionContext);
     }
 
     @Override
     public void interceptBeforeAllMethod(Invocation<Void> invocation,
             ReflectiveInvocationContext<Method> invocationContext, ExtensionContext extensionContext) throws Throwable {
-        asTestCode(invocation);
+        asTestCode(invocation, extensionContext);
     }
 
     @Override
     public void interceptBeforeEachMethod(Invocation<Void> invocation,
             ReflectiveInvocationContext<Method> invocationContext, ExtensionContext extensionContext) throws Throwable {
-        asTestCode(invocation);
+        asTestCode(invocation, extensionContext);
     }
 
     @Override
     public void interceptTestMethod(Invocation<Void> invocation, ReflectiveInvocationContext<Method> invocationContext,
             ExtensionContext extensionContext) throws Throwable {
-        asTestCode(invocation);
+        asTestCode(invocation, extensionContext);
     }
 
     @Override
     public <T> T interceptTestFactoryMethod(Invocation<T> invocation,
             ReflectiveInvocationContext<Method> invocationContext, ExtensionContext extensionContext) throws Throwable {
-        return asTestCode(invocation);
+        return asTestCode(invocation, extensionContext);
     }
 
     @Override
     public void interceptTestTemplateMethod(Invocation<Void> invocation,
             ReflectiveInvocationContext<Method> invocationContext, ExtensionContext extensionContext) throws Throwable {
-        asTestCode(invocation);
+        asTestCode(invocation, extensionContext);
     }
 
     @Override
     public void interceptDynamicTest(Invocation<Void> invocation, DynamicTestInvocationContext invocationContext,
             ExtensionContext extensionContext) throws Throwable {
-        asTestCode(invocation);
+        asTestCode(invocation, extensionContext);
     }
 
     @Override
     public void interceptAfterEachMethod(Invocation<Void> invocation,
             ReflectiveInvocationContext<Method> invocationContext, ExtensionContext extensionContext) throws Throwable {
-        asTestCode(invocation);
+        asTestCode(invocation, extensionContext);
     }
 
     @Override
     public void interceptAfterAllMethod(Invocation<Void> invocation,
             ReflectiveInvocationContext<Method> invocationContext, ExtensionContext extensionContext) throws Throwable {
-        asTestCode(invocation);
+        asTestCode(invocation, extensionContext);
     }
 
-    private static <T> T asTestCode(Invocation<T> invocation) throws Throwable {
-        return TestTransaction.run(invocation::proceed);
+    private static <T> T asTestCode(Invocation<T> invocation, ExtensionContext context) throws Throwable {
+        return classScope(context).run(invocation::proceed);
+    }
+
+    private static TestTransaction.ClassScope classScope(ExtensionContext context) {
+        ExtensionContext outermostClass = context;
+        // the engine's context, the root, is the parent of an outermost class's
+        while (outermostClass.getParent().flatMap(ExtensionContext::getParent).isPresent()) {
+            outermostClass = outermostClass.getParent().get();
+        }
+        return outermostClass.getStore(NAMESPACE).computeIfAbsent(TestTransaction.ClassScope.class,
+                key -> new TestTransaction.ClassScope(), TestTransaction.ClassScope.class);
     }
 
     @Override

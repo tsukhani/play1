@@ -138,6 +138,33 @@ public class TestBodyTransactionTest {
                 + "        assertTrue(e.getMessage().contains(\"JPA.withTransaction(\"), e.getMessage());\n"
                 + "    }\n"
                 + "}\n");
+        // a transaction the class's own code opens in @BeforeEach is still open in @Test, as in plain JUnit
+        write(app, "test/OpensItsOwnTest.java", "import models.Thing;\n"
+                + "import org.junit.jupiter.api.*;\n"
+                + "import play.db.jpa.JPA;\n"
+                + "import play.test.Fixtures;\n"
+                + "public class OpensItsOwnTest extends play.test.FunctionalTest {\n"
+                + "    Long id;\n"
+                + "    @BeforeEach\n"
+                + "    public void open() {\n"
+                + "        Fixtures.deleteDatabase();\n"
+                + "        JPA.startTx(\"default\", false);\n"
+                + "        Thing thing = new Thing();\n"
+                + "        thing.name = \"own\";\n"
+                + "        thing.save();\n"
+                + "        id = thing.id;\n"
+                + "    }\n"
+                + "    @Test\n"
+                + "    public void theTestSeesWhatItsBeforeEachSaved() {\n"
+                + "        Thing found = Thing.findById(id);\n"
+                + "        assertEquals(\"own\", found.name);\n"
+                + "    }\n"
+                + "    @AfterEach\n"
+                + "    public void close() {\n"
+                + "        JPA.closeTx(\"default\");\n"
+                + "        assertContentEquals(\"own\", GET(\"/things/\" + id));\n"
+                + "    }\n"
+                + "}\n");
         // no PlayJUnitExtension: TestEngine.run sets the job's transaction aside for it
         write(app, "test/PlainTest.java", "public class PlainTest extends org.junit.jupiter.api.Assertions {\n"
                 + "    @org.junit.jupiter.api.Test\n"
@@ -148,6 +175,7 @@ public class TestBodyTransactionTest {
         Process server = server(app);
         try {
             assertPassed(app, "NoneTest", 6);
+            assertPassed(app, "OpensItsOwnTest", 1);
             assertPassed(app, "PlainTest", 1);
         } finally {
             server.destroyForcibly().waitFor();
