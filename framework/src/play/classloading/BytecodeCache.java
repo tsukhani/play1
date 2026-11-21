@@ -187,13 +187,15 @@ public class BytecodeCache {
     }
 
     /**
-     * PF-229: what decides the compiler's output besides the source: javac's version and the two
-     * settings that reach its options. A class compiled with another, by ECJ before PF-229 or
-     * without --enable-preview, is not one to load.
+     * PF-229: what decides the compiler's output besides the source: javac's version, the two
+     * settings that reach its options, and whether this JVM runs with --enable-preview, which
+     * reaches them too. A class compiled with another, by ECJ before PF-229 or with preview
+     * features a JVM started without the flag refuses, is not one to load.
      */
     static String compiler() {
         return "javac " + Runtime.version() + " java.source=" + Play.configuration.getProperty("java.source")
-                + " " + ApplicationCompiler.PREVIEW_KEY + "=" + Play.configuration.getProperty(ApplicationCompiler.PREVIEW_KEY);
+                + " " + ApplicationCompiler.PREVIEW_KEY + "=" + Play.configuration.getProperty(ApplicationCompiler.PREVIEW_KEY)
+                + " --enable-preview=" + ApplicationCompiler.Jvm.runsWithPreview();
     }
 
     /**

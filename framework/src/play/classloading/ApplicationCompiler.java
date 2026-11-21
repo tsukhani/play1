@@ -7,8 +7,12 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.lang.classfile.ClassFile;
+import java.lang.constant.ClassDesc;
+import java.lang.constant.ConstantDescs;
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -16,6 +20,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.stream.Stream;
 
 import javax.tools.Diagnostic;
@@ -77,6 +82,11 @@ public class ApplicationCompiler {
      *            The application classes container
      */
     public ApplicationCompiler(ApplicationClasses applicationClasses) {
+        this(applicationClasses, options(Play.configuration));
+    }
+
+    /** With these options, which the tests give it to compile for a JVM other than their own. */
+    ApplicationCompiler(ApplicationClasses applicationClasses, List<String> options) {
         final String runningJavaVersion = System.getProperty("java.version");
         if (Stream.of("1.5", "1.6", "1.7", "1.8", "9", "10", "11", "12", "13", "14", "15", "16",
                       "17", "18", "19", "20", "21", "22", "23", "24").anyMatch(runningJavaVersion::startsWith)) {
@@ -84,7 +94,7 @@ public class ApplicationCompiler {
         }
 
         this.applicationClasses = applicationClasses;
-        this.options = options(Play.configuration);
+        this.options = options;
         this.javac = ToolProvider.getSystemJavaCompiler();
         if (javac == null) {
             throw new CompilationException("This Java runtime has no Java compiler (the jdk.compiler module), and Play"
@@ -98,9 +108,20 @@ public class ApplicationCompiler {
      * javac's options. Always line numbers, source file and local variable tables ({@code -g}),
      * method parameters and UTF-8, as ECJ's settings map had them: the enhancers read the local
      * variable tables and action binding the parameter names. The release is {@code java.source};
-     * {@code java.enablePreview=true} adds {@code --enable-preview}.
+     * {@code java.enablePreview=true} adds {@code --enable-preview}. And what this JVM gives the
+     * classes Play defines in it: {@link Jvm}.
      */
     static List<String> options(Properties configuration) {
+        return options(configuration, Jvm.current(applicationModule()));
+    }
+
+    /** The unnamed module of the loader that defines the application's classes, which is what the JVM's exports name. */
+    private static Module applicationModule() {
+        return Play.classloader != null ? Play.classloader.getUnnamedModule()
+            : ClassLoader.getSystemClassLoader().getUnnamedModule();
+    }
+
+    static List<String> options(Properties configuration, Jvm jvm) {
         String source = configuration.getProperty("java.source", JAVA_SOURCE_DEFAULT_VERSION).trim();
         int running = Runtime.version().feature();
         int release;
@@ -125,7 +146,12 @@ public class ApplicationCompiler {
             // This JDK's own release: -source and -target, as Gradle's compileJava passes them. --release
             // would open a copy of the release's API for every compile, about 5 ms of each.
             options.addAll(List.of("-source", source, "-target", source));
+            options.addAll(jvm.moduleOptions());
+            // a JVM started with --enable-preview loads a class that uses preview features, so compile them
+            preview |= jvm.preview();
         } else {
+            // An older release's API, from the JDK's copy of it, where javac takes no --add-exports of a
+            // JDK module: code that needs one compiles only at the running JDK's release.
             options.addAll(List.of("--release", source));
         }
         options.addAll(List.of(
@@ -154,6 +180,83 @@ public class ApplicationCompiler {
             return true;
         }
         throw new CompilationException(String.format("%s is true or false, not %s", PREVIEW_KEY, value));
+    }
+
+    /**
+     * What the JVM that defines the application's classes gives them beyond what javac gives the code it
+     * compiles by default: the JDK modules it resolved, to which {@code --add-modules} adds; the packages
+     * of those modules that it exports to the application and not to everyone, as {@code --add-exports}
+     * and {@code --add-opens} do; and {@code --enable-preview}. ECJ read every class through Play's class
+     * loader, so it compiled against the JDK as this JVM has it, and javac does so when these reach its
+     * options. The build script's compiler arguments are not this JVM's: they reach Play's compile only
+     * through the flags the JVM is started with.
+     *
+     * @param modules the boot layer's modules from the JDK's own image, those that export to the application
+     * @param exports {@code module/package}, each exported to the application by a JVM flag
+     */
+    record Jvm(boolean preview, List<String> modules, List<String> exports) {
+
+        private static volatile Boolean runsWithPreview;
+
+        static Jvm current(Module application) {
+            ModuleLayer boot = ModuleLayer.boot();
+            List<String> modules = new ArrayList<>();
+            List<String> exports = new ArrayList<>();
+            boot.configuration().modules().stream()
+                // a module from --module-path javac would not find: only the JDK's image is on its system path
+                .filter(resolved -> resolved.reference().location().map(uri -> "jrt".equals(uri.getScheme())).orElse(false))
+                .map(resolved -> boot.findModule(resolved.name()).orElseThrow())
+                .sorted(Comparator.comparing(Module::getName))
+                .forEach(module -> {
+                    boolean exportsToApplication = false;
+                    for (String pkg : new TreeSet<>(module.getPackages())) {
+                        if (module.isExported(pkg)) {
+                            exportsToApplication = true;
+                        } else if (module.isExported(pkg, application)) {
+                            exportsToApplication = true;
+                            exports.add(module.getName() + "/" + pkg);
+                        }
+                    }
+                    if (exportsToApplication) {
+                        modules.add(module.getName());
+                    }
+                });
+            return new Jvm(runsWithPreview(), List.copyOf(modules), List.copyOf(exports));
+        }
+
+        /** Whether this JVM runs with {@code --enable-preview}, which is whether it defines a class marked as using preview features. */
+        static boolean runsWithPreview() {
+            Boolean enabled = runsWithPreview;
+            if (enabled == null) {
+                byte[] probe = ClassFile.of().build(ClassDesc.of("PreviewProbe"), probeClass -> probeClass
+                    .withVersion(ClassFile.latestMajorVersion(), ClassFile.PREVIEW_MINOR_VERSION)
+                    .withSuperclass(ConstantDescs.CD_Object));
+                try {
+                    new ClassLoader(null) {
+                        {
+                            defineClass("PreviewProbe", probe, 0, probe.length);
+                        }
+                    };
+                    enabled = true;
+                } catch (UnsupportedClassVersionError disabled) {
+                    enabled = false;
+                }
+                runsWithPreview = enabled;
+            }
+            return enabled;
+        }
+
+        /** javac's options for them: every module, as javac resolves by default only those no flag added. */
+        List<String> moduleOptions() {
+            List<String> options = new ArrayList<>();
+            if (!modules.isEmpty()) {
+                options.addAll(List.of("--add-modules", String.join(",", modules)));
+            }
+            for (String export : exports) {
+                options.addAll(List.of("--add-exports", export + "=ALL-UNNAMED"));
+            }
+            return options;
+        }
     }
 
     /**

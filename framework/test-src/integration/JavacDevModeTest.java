@@ -126,6 +126,31 @@ public class JavacDevModeTest {
             .isEqualTo(ClassFile.PREVIEW_MINOR_VERSION);
     }
 
+    @Test
+    public void aClassCompilesAgainstWhatTheJvmsFlagsGiveIt(@TempDir File app) throws Exception {
+        // ECJ read the classes through Play's class loader, so the application compiled against what the
+        // JVM's flags opened to it; javac does when they reach its options, which none of these did at first
+        scratchApp(app, "", """
+            package controllers;
+            import java.nio.ByteBuffer;
+            import jdk.incubator.vector.IntVector;
+            public class Application extends play.mvc.Controller {
+                public static void index() {
+                    long address = ((sun.nio.ch.DirectBuffer) ByteBuffer.allocateDirect(8)).address();
+                    StableValue<String> preview = StableValue.of();
+                    renderText((address != 0) + " " + (IntVector.SPECIES_PREFERRED.length() > 0) + " " + preview.orElseSet(() -> "preview"));
+                }
+            }
+            """);
+
+        try (Running play = start(app, "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED", "--add-modules=jdk.incubator.vector",
+                "--enable-preview")) {
+            HttpResponse<String> page = get(play, "/");
+            assertThat(page.statusCode()).as(page.body()).isEqualTo(200);
+            assertThat(page.body()).isEqualTo("true true preview");
+        }
+    }
+
     /** A Play started in a child JVM, stopped when closed. */
     private record Running(Process process, int port) implements AutoCloseable {
         @Override

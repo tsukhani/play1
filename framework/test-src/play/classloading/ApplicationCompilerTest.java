@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.URL;
+import java.net.URLClassLoader;
 import java.lang.classfile.Attributes;
 import java.lang.classfile.ClassFile;
 import java.lang.classfile.ClassModel;
@@ -13,7 +15,9 @@ import java.lang.classfile.attribute.CodeAttribute;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import org.junit.jupiter.api.AfterEach;
@@ -23,6 +27,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import play.Play;
 import play.classloading.ApplicationClasses.ApplicationClass;
+import play.classloading.ApplicationCompiler.Jvm;
 import play.exceptions.CompilationException;
 import play.vfs.VirtualFile;
 
@@ -150,12 +155,66 @@ class ApplicationCompilerTest {
         assertThat(older.setLastModified(946_684_800_000L)).isTrue();
         source("controllers/Uses.java", """
             package controllers;
-            public class Uses { public static String call() { return play.classloading.PropertiesEnhancerFixture.onlyInTheSource(); } }
+            public class Uses {
+                public static String call() { return play.classloading.PropertiesEnhancerFixture.onlyInTheSource(); }
+                // a class of the same package on the classpath that the application has no source of stays there
+                public static Class<?> other() { return play.classloading.LocalVariablesFixture.class; }
+            }
             """);
 
         compile("controllers.Uses");
 
         assertThat(Play.classes.getApplicationClass("play.classloading.PropertiesEnhancerFixture").javaByteCode).isNotNull();
+        assertThat(Play.classes.getApplicationClass("play.classloading.LocalVariablesFixture")).isNull();
+    }
+
+    @Test
+    void aPackageTheJvmExportsToTheApplicationIsOneItsClassesCompileAgainst() throws Exception {
+        source("controllers/Native.java", """
+            package controllers;
+            public class Native {
+                public static long address(java.nio.ByteBuffer buffer) { return ((sun.nio.ch.DirectBuffer) buffer).address(); }
+            }
+            """);
+        // as the JVM refuses it: this one has no --add-exports java.base/sun.nio.ch=ALL-UNNAMED
+        assertThatThrownBy(() -> compile("controllers.Native")).isInstanceOfSatisfying(CompilationException.class,
+            e -> assertThat(e.getMessage()).contains("package sun.nio.ch is not visible"));
+
+        // What --add-exports or --add-opens does, here to the unnamed module of a loader of the test's own,
+        // as the play jar, this JVM's agent, has the means to.
+        Module application = new URLClassLoader(new URL[0]).getUnnamedModule();
+        assertThat(HotswapAgent.instrumentation).as("the play jar as this JVM's agent").isNotNull();
+        HotswapAgent.instrumentation.redefineModule(Object.class.getModule(), Set.of(),
+            Map.of("sun.nio.ch", Set.of(application)), Map.of(), Set.of(), Map.of());
+        Jvm jvm = Jvm.current(application);
+        assertThat(jvm.exports()).contains("java.base/sun.nio.ch");
+        assertThat(Jvm.current(getClass().getModule()).exports()).doesNotContain("java.base/sun.nio.ch");
+        List<String> options = ApplicationCompiler.options(Play.configuration, jvm);
+        assertThat(options).containsSubsequence("--add-exports", "java.base/sun.nio.ch=ALL-UNNAMED");
+
+        Play.classes = new ApplicationClasses();
+        new ApplicationCompiler(Play.classes, options).compile(new String[] { "controllers.Native" });
+        assertThat(Play.classes.getApplicationClass("controllers.Native").javaByteCode).isNotNull();
+    }
+
+    @Test
+    void aModuleTheJvmResolvedIsOneTheApplicationsClassesCompileAgainst() throws Exception {
+        source("controllers/Vectors.java", """
+            package controllers;
+            public class Vectors { public static int lanes() { return jdk.incubator.vector.IntVector.SPECIES_PREFERRED.length(); } }
+            """);
+        // as the JVM refuses it: this one has no --add-modules jdk.incubator.vector
+        assertThat(Jvm.current(getClass().getModule()).modules()).contains("java.base", "java.sql").doesNotContain("jdk.incubator.vector");
+        assertThatThrownBy(() -> compile("controllers.Vectors")).isInstanceOf(CompilationException.class);
+
+        // what Jvm.current finds in a JVM that has it
+        Jvm jvm = new Jvm(false, List.of("java.base", "jdk.incubator.vector"), List.of());
+        List<String> options = ApplicationCompiler.options(Play.configuration, jvm);
+        assertThat(options).containsSubsequence("--add-modules", "java.base,jdk.incubator.vector");
+
+        Play.classes = new ApplicationClasses();
+        new ApplicationCompiler(Play.classes, options).compile(new String[] { "controllers.Vectors" });
+        assertThat(Play.classes.getApplicationClass("controllers.Vectors").javaByteCode).isNotNull();
     }
 
     @Test
@@ -226,6 +285,9 @@ class ApplicationCompilerTest {
         assertThat(ApplicationCompiler.options(conf)).contains("--enable-preview");
         conf.setProperty("java.enablePreview", "false");
         assertThat(ApplicationCompiler.options(conf)).doesNotContain("--enable-preview");
+        // a JVM started with --enable-preview loads what it compiles to, and this one was not
+        assertThat(Jvm.runsWithPreview()).isFalse();
+        assertThat(ApplicationCompiler.options(conf, new Jvm(true, List.of(), List.of()))).contains("--enable-preview");
         // a typo is no reason to compile without what the application asked for
         conf.setProperty("java.enablePreview", "yes");
         assertThatThrownBy(() -> ApplicationCompiler.options(conf)).isInstanceOf(CompilationException.class)
