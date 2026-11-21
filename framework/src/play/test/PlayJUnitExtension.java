@@ -52,12 +52,26 @@ public class PlayJUnitExtension implements BeforeAllCallback, InvocationIntercep
      * application's test/ compiled beside app/, as the {@code /@tests} runner's server has it.
      */
     static void start() {
+        init();
+        startInitialized();
+    }
+
+    /**
+     * The first half of {@link #start()}: the configuration read and the application's paths
+     * set, test/ among them, so that a server can be bound before the application starts, as
+     * {@code Server.main} binds it (PF-230).
+     */
+    static void init() {
         Play.init(new File(System.getProperty("application.path", ".")), getPlayId());
         // TestRunnerPlugin has added it already when play-testrunner.jar is on the classpath
         VirtualFile test = Play.getVirtualFile("test");
         if (!Play.javaPath.contains(test)) {
             Play.javaPath.add(test);
         }
+    }
+
+    /** The second half of {@link #start()}. */
+    static void startInitialized() {
         if (!Play.started) {
             Play.start();
         }

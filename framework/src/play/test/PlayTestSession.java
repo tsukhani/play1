@@ -28,7 +28,9 @@ import play.server.Server;
  * own: a lock on {@code tmp/test-jvms/<n>.lock}, which the system releases when the JVM
  * ends.</li>
  * <li>Play starts in test mode, as {@link PlayJUnitExtension} starts it, with test/ compiled
- * beside app/.</li>
+ * beside app/, once the server below has bound its ports, as {@code Server.main} starts it: so
+ * the plugins' {@code onApplicationStart} and the {@code @OnApplicationStart} jobs see the port
+ * the JVM listens on in {@code http.port}.</li>
  * <li>The thread's context class loader becomes Play's. A runner loads the classes it runs
  * after the session has opened, and Gradle loads them through the loader the thread had then,
  * so the test classes, and the application classes they reach, are the ones Play compiled and
@@ -66,10 +68,11 @@ public class PlayTestSession implements LauncherSessionListener {
                 return;
             }
             takeJvmNumber(new File(System.getProperty("application.path", "."), "tmp/test-jvms"));
-            PlayJUnitExtension.start();
+            PlayJUnitExtension.init();
             String httpsPort = Play.configuration.getProperty("https.port", "-1").trim();
             new Server(httpsPort.equals("-1") ? new String[] { "--http.port=0" }
                     : new String[] { "--http.port=0", "--https.port=0" });
+            PlayJUnitExtension.startInitialized();
         }
         Thread.currentThread().setContextClassLoader(Play.classloader);
     }

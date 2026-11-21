@@ -20,8 +20,13 @@ import play.libs.F;
  * <p>
  * JUnit calls the class's constructor and methods on its own thread, and the transaction is a
  * block around the job's body, so each call is handed to the job's thread and waited for, as
- * Jupiter's own {@code SEPARATE_THREAD} timeouts hand one to another thread. An interrupt of the
- * waiting thread, a same-thread timeout's for one, is passed on to the job's.
+ * Jupiter's own {@code SEPARATE_THREAD} timeouts hand one to another thread. The interrupt status
+ * goes with the call, as if it ran on JUnit's thread: an interrupt of the waiting thread, a
+ * same-thread timeout's for one, or the status it hands a call over with, reaches the code, and
+ * the waiting thread leaves the call with the status the code left. The job's thread is cleared
+ * after every call. So JUnit clears a status a test leaves set when the test ends, as it clears
+ * its own thread under {@code /@tests}, and a status left set never reaches the job's wait for
+ * the next call, where it would end the job and fail the class's remaining tests.
  */
 final class TestClassJob {
 
@@ -55,25 +60,20 @@ final class TestClassJob {
     <T> T run(F.Function0<T> code) throws Throwable {
         Call<T> call = new Call<>(code);
         calls.add(call);
-        boolean interrupted = false;
-        try {
-            while (true) {
-                try {
-                    if (call.done.await(50, TimeUnit.MILLISECONDS)) {
-                        break;
-                    }
-                    if (job.isDone()) {
-                        throw new UnexpectedException("The job the test class runs in has ended", failure());
-                    }
-                } catch (InterruptedException e) {
-                    interrupted = true;
-                    call.interrupt();
+        while (true) {
+            try {
+                if (call.done.await(50, TimeUnit.MILLISECONDS)) {
+                    break;
                 }
+                if (job.isDone()) {
+                    throw new UnexpectedException("The job the test class runs in has ended", failure());
+                }
+            } catch (InterruptedException e) {
+                call.interrupt();
             }
-        } finally {
-            if (interrupted) {
-                Thread.currentThread().interrupt();
-            }
+        }
+        if (call.leftInterrupted()) {
+            Thread.currentThread().interrupt();
         }
         if (call.failure != null) {
             throw call.failure;
@@ -114,9 +114,12 @@ final class TestClassJob {
         private final CountDownLatch done = new CountDownLatch(1);
         private T result;
         private Throwable failure;
-        // guarded by this: the thread running the code, and whether the waiting thread was interrupted
+        // guarded by this: the thread running the code, whether the waiting thread was
+        // interrupted before it started, whether it has finished, and the status it left
         private Thread worker;
-        private boolean interrupted;
+        private boolean interruptedBefore;
+        private boolean finished;
+        private boolean leftInterrupted;
 
         Call(F.Function0<T> code) {
             this.code = code;
@@ -126,7 +129,7 @@ final class TestClassJob {
         public void run() {
             synchronized (this) {
                 worker = Thread.currentThread();
-                if (interrupted) {
+                if (interruptedBefore) {
                     worker.interrupt();
                 }
             }
@@ -137,21 +140,26 @@ final class TestClassJob {
             } finally {
                 synchronized (this) {
                     worker = null;
-                    // as Jupiter clears its own thread after a same-thread timeout, so that it
-                    // does not reach the next call
-                    if (interrupted) {
-                        Thread.interrupted();
-                    }
+                    finished = true;
+                    leftInterrupted = Thread.interrupted();
                 }
                 done.countDown();
             }
         }
 
+        /** An interrupt of the waiting thread, which the code gets while it runs. */
         synchronized void interrupt() {
-            interrupted = true;
             if (worker != null) {
                 worker.interrupt();
+            } else if (finished) {
+                leftInterrupted = true;
+            } else {
+                interruptedBefore = true;
             }
+        }
+
+        synchronized boolean leftInterrupted() {
+            return leftInterrupted;
         }
     }
 }
