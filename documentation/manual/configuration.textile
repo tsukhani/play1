@@ -126,6 +126,7 @@ h3. Keys the framework declares
 
 |_. Key |_. Allowed values |
 | "application.log.format":#application.log.format | @text@, @json@ |
+| "play.test.transaction":#play.test.transaction | @ambient@, @none@ |
 
 
 h2(#application). Application configuration
@@ -643,6 +644,18 @@ Values:
 
 Default: @FIREFOX_38@
 
+h3(#play.test.transaction). play.test.transaction
+
+Whether the code of a test class runs inside a JPA transaction it did not open. With @ambient@ the test runner runs each test class in a job, and the class's tests read and write in that job's transaction, which commits only when the class has finished, so a request that a functional test sends does not see what the test saved. With @none@ the class's code runs with no transaction open but those it opens itself: a test opens and commits its own with @JPA.withTransaction@, a transaction one method opens with @JPA.startTx@ stays open in the methods that follow until the test closes it, and @Fixtures@ opens and commits one of its own when the test has none. For example:
+
+bc. play.test.transaction=none
+
+The value is not case sensitive. Any other value stops the application from starting; see "Declaring required configuration":#requirements.
+
+Default: @ambient@
+
+See also: "Transactions in tests":test#transactions.
+
 h3(#webclient.timeout). webclient.timeout
 
 Specifies the timeout of the WebConnection. Set to zero for an infinite wait.
@@ -802,13 +815,23 @@ h2(#java). Java source
 
 h3(#java.source). java.source
 
-Java source level, which overrides the @java.version@ system property. For example:
+The release Play compiles the application's Java sources at, with the JDK's @javac@ (PF-229). For example:
 
-bc. java.source=11
+bc. java.source=25
 
-Values:  @1.7@ (No longer supported since 1.5.0), @1.8@ (No longer supported since 1.7.0), @9@ (No longer supported since 1.7.0), @10@ (No longer supported since 1.7.0), @11@, @12@, @13@, @14@, @15@, @17@, @18@, @19@.
+Values: @25@ up to the release of the JDK that runs the application.
 
-Default: @11@
+Default: @25@
+
+h3(#java.enablePreview). java.enablePreview
+
+@true@ compiles the application with @--enable-preview@, so that it can use the JDK's preview features, and starts every JVM that runs it with that flag: @play run@, @play start@, @play test@, @play autotest@, @play precompile@, @play aot-gen@ and the launcher of a @play bundle@. Gradle's @compileJava@ and @compileTestJava@ compile with it, and its @test@ task runs with it. It needs @java.source@ to be the release of the JDK. A JVM started with @--enable-preview@ another way also has Play compile with it. Set it without a framework ID prefix. See "The Java compiler":production#javac. For example:
+
+bc. java.enablePreview=true
+
+Values: @true@ or @false@.
+
+Default: @false@
 
 
 h2(#jpa). JPA
