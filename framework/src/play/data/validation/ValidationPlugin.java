@@ -42,10 +42,14 @@ public class ValidationPlugin extends PlayPlugin {
         try {
             Validation.current.set(restore());
             boolean verify = false;
-            for (Annotation[] annotations : actionMethod.getParameterAnnotations()) {
-                if (annotations.length > 0) {
-                    verify = true;
-                    break;
+            // PF-237: an action without parameters has no parameter annotations, and asking
+            // for them copies the method's annotation arrays on every request.
+            if (actionMethod.getParameterCount() > 0) {
+                for (Annotation[] annotations : actionMethod.getParameterAnnotations()) {
+                    if (annotations.length > 0) {
+                        verify = true;
+                        break;
+                    }
                 }
             }
             if (!verify) {
