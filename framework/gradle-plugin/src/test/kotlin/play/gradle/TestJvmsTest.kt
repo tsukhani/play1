@@ -1,5 +1,13 @@
 package play.gradle
 
+import org.gradle.tooling.GradleConnector
+import org.gradle.tooling.TestLauncher
+import org.gradle.tooling.events.OperationType
+import org.gradle.tooling.events.ProgressListener
+import org.gradle.tooling.events.test.JvmTestOperationDescriptor
+import org.gradle.tooling.events.test.TestFailureResult
+import org.gradle.tooling.events.test.TestFinishEvent
+import org.gradle.tooling.events.test.TestSuccessResult
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -36,6 +44,50 @@ class TestJvmsTest {
         ServerSocket(0).use { held ->
             val app = app(tmp, conf = "%test.http.port=${held.localPort}\n")
             for (n in listOf("One", "Two")) write(app, "test/Static${n}Test.java", staticTest(n))
+            // The server binds before the application starts, as Server.main binds it, so start-time
+            // code sees the port the JVM listens on.
+            write(app, "app/jobs/PortAtStart.java", """
+                package jobs;
+                @play.jobs.OnApplicationStart
+                public class PortAtStart extends play.jobs.Job<Void> {
+                    public static String port;
+                    @Override
+                    public void doJob() {
+                        port = play.Play.configuration.getProperty("http.port");
+                    }
+                }
+            """.trimIndent())
+            // A status a test leaves set is JUnit's to clear when the test ends, as under /@tests,
+            // and no reason to end the class's job.
+            write(app, "test/InterruptTest.java", """
+                import org.junit.jupiter.api.*;
+                @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
+                public class InterruptTest extends play.test.UnitTest {
+                    @BeforeEach
+                    public void setUp(TestInfo test) {
+                        if (test.getTestMethod().get().getName().equals("seesWhatItsBeforeEachLeft")) {
+                            Thread.currentThread().interrupt();
+                        }
+                    }
+                    @Test @Order(1)
+                    public void leavesItsThreadInterrupted() {
+                        Thread.currentThread().interrupt();
+                    }
+                    @Test @Order(2)
+                    public void theNextTestRunsWithTheStatusClear() throws Exception {
+                        assertFalse(Thread.currentThread().isInterrupted());
+                        Thread.sleep(10);
+                    }
+                    @Test @Order(3)
+                    public void seesWhatItsBeforeEachLeft() {
+                        assertTrue(Thread.interrupted());
+                    }
+                    @Test @Order(4)
+                    public void runsInTheClassJob() {
+                        assertTrue(play.db.jpa.JPA.isInsideTransaction());
+                    }
+                }
+            """.trimIndent())
             write(app, "test/AmbientTest.java", """
                 import models.Thing;
                 import org.junit.jupiter.api.*;
@@ -81,6 +133,7 @@ class TestJvmsTest {
             assertTrue(Regex("""<failure message="[^"]*pf230 the answer ==&gt; expected: &lt;2&gt; but was: &lt;3&gt;""").containsMatchIn(failing), failing)
             assertTrue("at FailingTest.fails(FailingTest.java:5)" in failing, failing)
             assertPassed(app, "AmbientTest", 3)
+            assertPassed(app, "InterruptTest", 4)
 
             val one = jvmOf(app, "StaticOneTest")
             val two = jvmOf(app, "StaticTwoTest")
@@ -119,6 +172,70 @@ class TestJvmsTest {
         assertEquals(listOf("TEST-FirstTest.xml"), reports(app))
         assertPassed(app, "FirstTest", 1)
         assertTrue("""<testcase name="b()" classname="FirstTest"""" in report(app, "FirstTest"))
+    }
+
+    @Test
+    fun `an IDE runs one method or one class through the Tooling API`(@TempDir tmp: File) {
+        // IntelliJ IDEA and Eclipse run an application's tests through Gradle's Tooling API, whose
+        // TestLauncher runs the tests it names through the test task and reports each one as an
+        // event, which the IDE shows.
+        val app = app(tmp, conf = "")
+        write(app, "test/FirstTest.java", """
+            public class FirstTest extends play.test.UnitTest {
+                @org.junit.jupiter.api.Test public void a() {}
+                @org.junit.jupiter.api.Test public void b() {
+                    assertTrue(play.Play.started);
+                }
+            }
+        """.trimIndent())
+        write(app, "test/SecondTest.java", """
+            public class SecondTest extends play.test.UnitTest {
+                @org.junit.jupiter.api.Test public void c() {
+                    assertEquals(1, 2, "pf230 from the IDE");
+                }
+            }
+        """.trimIndent())
+        // TestKit injects the plugin under test into the builds it runs; this build has it on the
+        // settings' buildscript classpath instead, which the build script's plugins block sees.
+        val pluginClasspath = java.util.Properties().apply {
+            TestJvmsTest::class.java.classLoader.getResourceAsStream("plugin-under-test-metadata.properties")!!.use { load(it) }
+        }.getProperty("implementation-classpath").split(File.pathSeparator)
+        val settings = File(app, "settings.gradle.kts")
+        settings.writeText("buildscript { dependencies { classpath(files(" +
+            pluginClasspath.joinToString { "\"" + it.replace("\\", "\\\\") + "\"" } + ")) } }\n" + settings.readText())
+        // The daemon this starts, beside TestKit's, does not outlive the suite for long.
+        write(app, "gradle.properties", "org.gradle.daemon.idletimeout=60000")
+
+        fun launch(tests: TestLauncher.() -> Unit): Map<String, String> {
+            val outcomes = sortedMapOf<String, String>()
+            GradleConnector.newConnector()
+                .useInstallation(File(System.getProperty("play.test.gradleHome")))
+                // TestKit's own, so that the build reuses its caches
+                .useGradleUserHomeDir(File(System.getProperty("java.io.tmpdir"), ".gradle-test-kit-" + System.getProperty("user.name")))
+                .forProjectDirectory(app)
+                .connect().use { connection ->
+                    val launcher = connection.newTestLauncher()
+                    launcher.tests()
+                    launcher.addProgressListener(ProgressListener { event ->
+                        val test = event.descriptor as? JvmTestOperationDescriptor
+                        if (event is TestFinishEvent && test?.methodName != null) {
+                            outcomes["${test.className}.${test.methodName}"] = when (event.result) {
+                                is TestSuccessResult -> "passed"
+                                is TestFailureResult -> "failed: " + (event.result as TestFailureResult).failures.joinToString { it.message.orEmpty() }
+                                else -> "skipped"
+                            }
+                        }
+                    }, OperationType.TEST)
+                    launcher.setStandardOutput(System.out).setStandardError(System.err)
+                    runCatching { launcher.run() }
+                }
+            return outcomes
+        }
+
+        assertEquals(mapOf("FirstTest.b()" to "passed"), launch { withTaskAndTestMethods(":test", "FirstTest", listOf("b")) })
+        val second = launch { withTaskAndTestClasses(":test", listOf("SecondTest")) }
+        assertEquals(setOf("SecondTest.c()"), second.keys)
+        assertTrue("pf230 from the IDE ==> expected: <1> but was: <2>" in second.getValue("SecondTest.c()"), second.toString())
     }
 
     @Test
@@ -234,20 +351,30 @@ class TestJvmsTest {
     @Test
     fun `the JVM count is play1 testJvms, which -PtestJvms overrides`(@TempDir tmp: File) {
         TestProject.write(tmp)
-        File(tmp, "build.gradle.kts").appendText("""
+        val build = File(tmp, "build.gradle.kts")
+        // An eager withType above the play1 block realizes the test task before the block has run.
+        build.writeText(build.readText().replace("play1 {", "tasks.withType<Test> { systemProperty(\"pf230.eager\", \"1\") }\n\nplay1 {"))
+        build.appendText("""
             tasks.register("printTestJvms") {
                 val test = tasks.named<Test>("test")
-                doLast { println("TEST_JVMS=" + test.get().maxParallelForks) }
+                doLast { println("TEST_JVMS=" + test.get().maxParallelForks + " TEST_HEAP=" + test.get().maxHeapSize) }
             }
         """.trimIndent() + "\n")
-        fun jvms(vararg args: String) = Regex("TEST_JVMS=(\\d+)").find(TestProject.runner(tmp, "printTestJvms", *args).build().output)!!.groupValues[1].toInt()
+        fun printed(vararg args: String) = Regex("TEST_JVMS=(\\d+) TEST_HEAP=(\\S+)").find(TestProject.runner(tmp, "printTestJvms", *args).build().output)!!.groupValues
+        fun jvms(vararg args: String) = printed(*args)[1].toInt()
 
         assertEquals(DEFAULT_TEST_JVMS, jvms())
-        File(tmp, "build.gradle.kts").appendText("play1 { testJvms = 3 }\n")
+        build.appendText("play1 { testJvms = 3 }\n")
         assertEquals(3, jvms())
         assertEquals(4, jvms("-PtestJvms=4"))
         val refused = TestProject.runner(tmp, "printTestJvms", "-PtestJvms=0").buildAndFail()
         assertTrue("testJvms must be 1 or more, not 0" in refused.output, refused.output)
+
+        // The heap jvm.memory's flags give, which Gradle's own -Xmx, after them, would replace.
+        write(tmp, "conf/application.conf", "%test.jvm.memory=-XX:MaxRAM=8g -XX:MaxRAMPercentage=10\n")
+        assertEquals("819m", printed()[2])
+        write(tmp, "conf/application.conf", "%test.jvm.memory=-Xms256m -Xmx1500m\n")
+        assertEquals("1500m", printed()[2])
     }
 
     private fun staticTest(name: String) = """
@@ -264,6 +391,7 @@ class TestJvmsTest {
                     HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/")).build(),
                     HttpResponse.BodyHandlers.ofString());
                 assertEquals("ok", index.body());
+                assertEquals(port, jobs.PortAtStart.port, "the port an @OnApplicationStart job saw");
                 System.out.println("PF230 pid=" + ProcessHandle.current().pid() + " port=" + port
                     + " jvm=" + System.getProperty("play.test.jvm"));
                 Thread.sleep(500);

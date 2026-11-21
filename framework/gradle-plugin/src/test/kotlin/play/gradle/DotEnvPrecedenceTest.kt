@@ -1,6 +1,7 @@
 package play.gradle
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assertions.fail
 import org.junit.jupiter.api.condition.DisabledOnOs
 import org.junit.jupiter.api.condition.OS
@@ -53,17 +54,48 @@ class DotEnvPrecedenceTest {
     }
 
     /**
+     * PF-230: the two tasks that build the environment while the build is configured,
+     * registerPlayJvmTask's and Gradle's test task, did so through `environment(...)`, and
+     * Gradle then stores the task's whole environment map in the configuration cache entry. A
+     * build that reused the entry started the JVM with the host environment of the build that
+     * stored it: a value the host changed since, or a variable it left undefined since, never
+     * reached the JVM, and a host value that replaced the file's lost to it.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = ["playRun", "test"])
+    fun `a build that reuses the configuration cache passes on the host environment it runs in`(task: String, @TempDir tmp: File) {
+        val app = writeApp(tmp)
+        // One port for every run: a changed -P property would store a new entry.
+        val port = ServerSocket(0).use { it.localPort }
+        val args = listOf("-PhttpPort=$port", "--configuration-cache") + if (task == "test") listOf("--rerun") else emptyList()
+
+        assertEquals("[one]", probeSeenBy(app, task, hostValue = "one", args))
+        var output = ""
+        assertEquals("[two]", probeSeenBy(app, task, hostValue = "two", args) { output = it })
+        assertTrue("Configuration cache entry reused" in output, output)
+        assertEquals("[from-dotenv]", probeSeenBy(app, task, hostValue = null, args))
+        assertEquals("[from-host]", probeSeenBy(app, task, hostValue = "from-host", args))
+    }
+
+    /**
      * Run [task] with the probe set to [hostValue] in the build's environment (undefined when
      * null) and return what its forked JVM saw: the value in brackets, or `<unset>`.
      */
-    private fun probeSeenBy(app: File, task: String, hostValue: String?): String {
+    private fun probeSeenBy(
+        app: File,
+        task: String,
+        hostValue: String?,
+        args: List<String>? = null,
+        buildOutput: (String) -> Unit = {},
+    ): String {
         // withEnvironment replaces the build's whole environment, so start from this one.
         val env = System.getenv().toMutableMap()
         if (hostValue == null) env.remove(probe) else env[probe] = hostValue
         // An explicit free port: playAutotest POSTs /@kill to its port before and after the
         // run, which must never reach a real Play server on this machine's default 9000.
-        val port = ServerSocket(0).use { it.localPort }
-        val result = TestProject.runner(app, task, "-PhttpPort=$port").withEnvironment(env).build()
+        val runArgs = args ?: listOf("-PhttpPort=${ServerSocket(0).use { it.localPort }}")
+        val result = TestProject.runner(app, task, *runArgs.toTypedArray()).withEnvironment(env).build()
+        buildOutput(result.output)
         // playRun forwards the JVM's stdout into the build output, and the test task into the
         // class's JUnit XML; the other two redirect it to logs/system.out, and playStart
         // returns before its detached child has written.

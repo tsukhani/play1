@@ -44,6 +44,7 @@ import org.gradle.kotlin.dsl.getByType
 import org.gradle.kotlin.dsl.register
 import org.gradle.process.CommandLineArgumentProvider
 import org.gradle.process.ExecOperations
+import org.gradle.process.ProcessForkOptions
 import org.gradle.work.DisableCachingByDefault
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -567,25 +568,34 @@ class Play1Plugin : Plugin<Project> {
      * included, belongs to one JVM. The JVM gets what playAutotest's server JVM gets: the Play
      * classpath in test mode, the JUL and log4j properties ahead of the conf's flags (as
      * systemProperty, as in registerPlayJvmTask), confJvmArgs for play id test, certs/.env under
-     * the host environment, and an ephemeral secret when neither provides one. app/ and test/ are
-     * inputs because Play compiles them from source: a template or a fixture is no class file
-     * Gradle would see change.
+     * the host environment, and an ephemeral secret when neither provides one, both when the task
+     * runs (see applyLaunchEnvironment). app/ and test/ are inputs because Play compiles them from
+     * source: a template or a fixture is no class file Gradle would see change. certs/.env is one
+     * too; an environment variable is not, so a build that changes only one reruns with --rerun.
      */
     private fun configureTestTask(project: Project, ext: Play1Extension) {
         val appDir = project.projectDir
         val frameworkJar = ext.frameworkPath.file(ext.frameworkVersion.map { "framework/play-$it.jar" })
         val playVersion = ext.frameworkVersion
         val jvms = project.providers.gradleProperty("testJvms").map { it.trim().toInt() }.orElse(ext.testJvms)
+        // After the build script, which sets play1 { testJvms }: an eager tasks.withType<Test> { }
+        // above the play1 block realizes the task, and with it the configure action below, first.
+        project.afterEvaluate {
+            tasks.named("test", Test::class.java).configure {
+                maxParallelForks = jvms.get().also {
+                    if (it < 1) throw GradleException("testJvms must be 1 or more, not $it")
+                }
+            }
+        }
         project.tasks.named("test", Test::class.java).configure {
             useJUnitPlatform()
             testLogging.exceptionFormat = TestExceptionFormat.FULL
-            maxParallelForks = jvms.get().also {
-                if (it < 1) throw GradleException("testJvms must be 1 or more, not $it")
-            }
             val testSourceSet = project.extensions.getByType<JavaPluginExtension>().sourceSets.getByName("test")
             classpath = testSourceSet.runtimeClasspath + playClasspathFor(project, ext, includeTestrunner = true)
             inputs.files(project.fileTree("app"), project.fileTree("test"))
                 .withPropertyName("playSources").withPathSensitivity(PathSensitivity.RELATIVE)
+            // A collection, which records a missing file as missing; a declared file must exist.
+            inputs.files(File(appDir, "certs/.env")).withPropertyName("dotEnv").withPathSensitivity(PathSensitivity.RELATIVE)
 
             jvmArgs(
                 "--enable-native-access=ALL-UNNAMED",
@@ -599,33 +609,24 @@ class Play1Plugin : Plugin<Project> {
             jvmArgumentProviders.add(CommandLineArgumentProvider {
                 listOf("-Dplay.version=${playVersion.get()}", "-javaagent:${frameworkJar.get().asFile.absolutePath}")
             })
-            // Not Gradle's own defaults for a test JVM, -Xmx512m and -ea, which no Play JVM has. Gradle
-            // passes -Xmx512m whenever the task names no heap, so it names the JVM's own default, a
-            // quarter of the memory, which playAutotest's server JVM runs with; jvm.memory's -Xmx,
-            // which confJvmArgs passes on below, still wins. An assert in the application's code
-            // is not checked, as under /@tests.
-            jvmDefaultMaxHeap()?.let { maxHeapSize = it }
+            // Not Gradle's own defaults for a test JVM, -Xmx512m and -ea, which no Play JVM has.
+            // Gradle passes -Xmx512m whenever the task names no heap, and puts its -Xmx after every
+            // other option, where it would beat jvm.memory's heap flags; so the task names the heap
+            // those flags give, the JVM's own default without any, as playAutotest's server JVM
+            // has it (testJvmMaxHeap). A build script's maxHeapSize still wins. An assert in the
+            // application's code is not checked, as under /@tests.
+            val confArgs = confJvmArgs(appDir, "test")
+            physicalMemory()?.let { maxHeapSize = testJvmMaxHeap(confArgs, it) }
             enableAssertions = false
             // configurePreview may have added the flag already, for the key without a play id
-            confJvmArgs(appDir, "test").filterNot { it == ENABLE_PREVIEW && it in jvmArgs.orEmpty() }.forEach { jvmArgs(it) }
+            confArgs.filterNot { it == ENABLE_PREVIEW && it in jvmArgs.orEmpty() }.forEach { jvmArgs(it) }
 
-            val dotenv = loadDotEnv(File(appDir, "certs/.env"))
-            // PF-184: certs/.env fills in only what the host leaves undefined, as in registerPlayJvmTask.
-            dotenv.forEach { (k, v) ->
-                if (k !in environment) environment(k, v)
-            }
-            ensureTestSecret(appDir, dotenv)?.let { (varName, secret) ->
-                environment(varName, secret)
-                logger.lifecycle("~ Generated ephemeral $varName for this test run")
-            }
+            doFirst { applyLaunchEnvironment(this as Test, appDir, testMode = true, logger) }
         }
     }
 
-    /** The heap a JVM started without -Xmx gets here: MaxRAMPercentage, 25, of the memory (PF-230). */
-    private fun jvmDefaultMaxHeap(): String? {
-        val os = java.lang.management.ManagementFactory.getOperatingSystemMXBean() as? com.sun.management.OperatingSystemMXBean
-        return os?.let { "${it.totalMemorySize / 4 / (1024 * 1024)}m" }
-    }
+    private fun physicalMemory(): Long? =
+        (java.lang.management.ManagementFactory.getOperatingSystemMXBean() as? com.sun.management.OperatingSystemMXBean)?.totalMemorySize
 
     /** framework/lib's jars, less those of the libraries the application manages (PF-192). */
     private fun frameworkLibFor(project: Project, ext: Play1Extension): FileCollection = project.files(project.provider {
@@ -898,24 +899,11 @@ class Play1Plugin : Plugin<Project> {
                 extra.split(Regex("\\s+")).filter { it.isNotEmpty() }.forEach { jvmArgs(it) }
             }
 
-            val dotenv = loadDotEnv(File(project.projectDir, "certs/.env"))
-            // PF-184: certs/.env only fills in what the host leaves undefined, as in
-            // spawnPlay and playAutotest. `environment` starts out as the build's own
-            // environment, so a key already in it -- even one set to "" -- is the host's.
-            dotenv.forEach { (k, v) ->
-                if (k !in environment) environment(k, v)
-            }
-            // Hermetic test runs (playTest, playPrecompile, playAutotest) — if
-            // certs/.env and the host env both lack the application.secret env
-            // var, synthesize an ephemeral one so `play autotest` works on a
-            // fresh checkout without first running `play secret`. The framework
-            // rejects literal secrets and demands a `${VAR}` placeholder.
-            if (isTestMode) {
-                ensureTestSecret(project.projectDir, dotenv)?.let { (varName, secret) ->
-                    environment(varName, secret)
-                    logger.lifecycle("~ Generated ephemeral $varName for this test run")
-                }
-            }
+            // PF-184: certs/.env only fills in what the host leaves undefined, as in spawnPlay and
+            // playAutotest, and a test-mode JVM gets an ephemeral secret when neither defines it,
+            // when the task runs (PF-230, see applyLaunchEnvironment).
+            val launchDir = project.projectDir
+            doFirst { applyLaunchEnvironment(this as JavaExec, launchDir, isTestMode, logger) }
 
             // Only pass --http.port / --https.port when -PhttpPort / -PhttpsPort
             // was supplied; otherwise let conf/application.conf decide.
@@ -1818,6 +1806,65 @@ private fun ensureTestSecret(appDir: File, dotenv: Map<String, String>): Pair<St
     if (dotenv.containsKey(varName)) return null
     if (!System.getenv(varName).isNullOrEmpty()) return null
     return varName to generateSecret()
+}
+
+/**
+ * PF-184: the environment of the JVM a JavaExec or a Test task forks. certs/.env fills in only
+ * what the host environment leaves undefined: `environment` starts out as the build's own, so a
+ * key already in it -- even one set to "" -- is the host's. A test-mode JVM (playTest,
+ * playPrecompile, Gradle's test task) whose secret variable neither defines gets an ephemeral
+ * one, so that the tests run on a fresh checkout without `play secret` first; the framework
+ * rejects literal secrets and demands a `${VAR}` placeholder.
+ *
+ * Called from a doFirst, when the task runs (PF-230). `environment` is then the environment of
+ * the build that runs it, whereas a change made to it while the build is configured has Gradle
+ * store the whole map in the configuration cache entry, and a build that reuses the entry starts
+ * the JVM with the host environment of the build that stored it.
+ */
+private fun applyLaunchEnvironment(options: ProcessForkOptions, appDir: File, testMode: Boolean, logger: Logger) {
+    val dotenv = loadDotEnv(File(appDir, "certs/.env"))
+    dotenv.forEach { (k, v) ->
+        if (k !in options.environment) options.environment(k, v)
+    }
+    if (testMode) {
+        ensureTestSecret(appDir, dotenv)?.let { (varName, secret) ->
+            options.environment(varName, secret)
+            logger.lifecycle("~ Generated ephemeral $varName for this test run")
+        }
+    }
+}
+
+/**
+ * PF-230: the maximum heap of a JVM of Gradle's test task, which [confArgs] (confJvmArgs) start,
+ * as HotSpot sizes it before aligning the value: the last -Xmx or -XX:MaxHeapSize as given, else
+ * -XX:MaxRAMPercentage of -XX:MaxRAM or of [physicalMemory], 25% unless set, and without either
+ * flag of at most MaxRAM's default, 128 GB. Gradle passes -Xmx512m to a test JVM whose task names
+ * no heap, after every other option, so the task has to name this one.
+ */
+internal fun testJvmMaxHeap(confArgs: List<String>, physicalMemory: Long): String {
+    confArgs.lastOrNull { it.startsWith("-Xmx") || it.startsWith(MAX_HEAP_SIZE) }?.let {
+        return it.removePrefix("-Xmx").removePrefix(MAX_HEAP_SIZE)
+    }
+    fun last(prefix: String) = confArgs.lastOrNull { it.startsWith(prefix) }?.removePrefix(prefix)
+    val maxRam = last("-XX:MaxRAM=")?.let(::jvmSizeInBytes)
+    val percent = last("-XX:MaxRAMPercentage=")?.toDoubleOrNull()
+    val memory = maxRam ?: if (percent == null) minOf(physicalMemory, 128L shl 30) else physicalMemory
+    return "${(memory * (percent ?: 25.0) / 100 / (1L shl 20)).toLong()}m"
+}
+
+private const val MAX_HEAP_SIZE = "-XX:MaxHeapSize="
+
+/** A size as a JVM option takes it: a number of bytes, or of k, m, g or t. */
+private fun jvmSizeInBytes(value: String): Long? {
+    val match = Regex("(\\d+)([kKmMgGtT]?)").matchEntire(value.trim()) ?: return null
+    val shift = when (match.groupValues[2].lowercase()) {
+        "k" -> 10
+        "m" -> 20
+        "g" -> 30
+        "t" -> 40
+        else -> 0
+    }
+    return match.groupValues[1].toLong() shl shift
 }
 
 /**
