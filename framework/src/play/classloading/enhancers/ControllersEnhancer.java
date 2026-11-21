@@ -4,7 +4,10 @@ import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
+import java.util.Comparator;
+import java.util.Set;
 import java.util.Stack;
+import java.util.TreeSet;
 import javassist.CannotCompileException;
 import javassist.CtClass;
 import javassist.CtField;
@@ -12,8 +15,10 @@ import javassist.CtMethod;
 import javassist.Modifier;
 import javassist.NotFoundException;
 import javassist.bytecode.BadBytecode;
+import javassist.bytecode.CodeAttribute;
 import javassist.bytecode.CodeIterator;
 import javassist.bytecode.ConstPool;
+import javassist.bytecode.LocalVariableAttribute;
 import javassist.bytecode.MethodInfo;
 import javassist.bytecode.Opcode;
 import javassist.bytecode.annotation.Annotation;
@@ -133,23 +138,17 @@ public class ControllersEnhancer extends Enhancer {
             }
 
             // Enhance global catch to avoid potential unwanted catching of play.mvc.results.Result
+            final Set<Integer> checkedHandlers = new TreeSet<>(Comparator.reverseOrder());
             ctMethod.instrument(new ExprEditor() {
 
                 @Override
-                public void edit(Handler handler) throws CannotCompileException {
-                    if (closesAndRethrows(handler)) {
-                        return;
-                    }
-                    StringBuilder code = new StringBuilder();
-                    try {
-                        code.append("if($1 instanceof play.mvc.results.Result || $1 instanceof play.Invoker.Suspend) throw $1;");
-                        handler.insertBefore(code.toString());
-                    } catch (NullPointerException e) {
-                        // TODO: finally clause ?
-                        // There are no $1 in finally statements in javassist
+                public void edit(Handler handler) {
+                    if (!handler.isFinally() && !closesAndRethrows(handler)) {
+                        checkedHandlers.add(handler.indexOfBytecode());
                     }
                 }
             });
+            insertResultChecks(ctMethod, checkedHandlers);
 
         }
 
@@ -161,13 +160,55 @@ public class ControllersEnhancer extends Enhancer {
     }
 
     /**
+     * Puts {@code if (e instanceof Result || e instanceof Suspend) throw e;} at the start of each handler, in the
+     * handler's own place. javassist's Handler.insertBefore appended it at the end of the method instead, and code
+     * there is in no exception range: the Result it rethrew skipped every finally and monitorexit around the catch
+     * (HotSpot then threw IllegalMonitorStateException in place of the render), with ECJ's bytecode too. In place,
+     * the ranges that cover the handler's code cover the check as well. The check works on the caught throwable on
+     * the stack and needs no local.
+     *
+     * @param handlerPcs
+     *            the handlers' positions, highest first, so that an insertion never moves one still to come
+     */
+    private void insertResultChecks(CtMethod method, Set<Integer> handlerPcs) throws BadBytecode {
+        if (handlerPcs.isEmpty()) {
+            return;
+        }
+        MethodInfo info = method.getMethodInfo();
+        ConstPool constPool = info.getConstPool();
+        int result = constPool.addClassInfo("play.mvc.results.Result");
+        int suspend = constPool.addClassInfo("play.Invoker$Suspend");
+        byte[] check = {
+            (byte) Opcode.DUP,
+            (byte) Opcode.INSTANCEOF, (byte) (result >> 8), (byte) result,
+            (byte) Opcode.IFNE, 0, 10, // to the athrow
+            (byte) Opcode.DUP,
+            (byte) Opcode.INSTANCEOF, (byte) (suspend >> 8), (byte) suspend,
+            (byte) Opcode.IFEQ, 0, 4, // past the athrow, into the handler
+            (byte) Opcode.ATHROW,
+        };
+        CodeAttribute code = info.getCodeAttribute();
+        CodeIterator iterator = code.iterator();
+        for (int pc : handlerPcs) {
+            // not exclusive: the handler's entries keep pointing at pc, now the check, and a range ending at pc
+            // (the try's own) still does not cover it
+            iterator.insertAt(pc, check);
+        }
+        code.setMaxStack(code.computeMaxStack());
+        info.rebuildStackMapIf6(classPool, method.getDeclaringClass().getClassFile());
+    }
+
+    /**
      * A handler javac writes for try-with-resources (PF-229): it catches Throwable, closes the resource and throws
      * what it caught again. ECJ compiled the same cleanup as a finally handler, which has no {@code $1} and so
      * never got the Result check; with javac the check made a render inside the try leave before close(), and the
      * action leaked its connection, stream or lock. A handler of this shape rethrows a Result itself, after its
-     * cleanup, so it needs no check. Read from the handler's first instruction, an astore of the caught throwable,
-     * to the first athrow: there must be a call to a no-argument close() on the way, and the athrow must throw that
-     * same local. A catch that ends otherwise, however its variable is named, unnamed included, keeps the check.
+     * cleanup, so it needs no check. javac keeps the caught throwable in a synthetic local, which the local
+     * variable table does not name; a catch of the source always has its variable there. Read from the handler's
+     * first instruction, an astore of the caught throwable, to the first athrow: there must be a call to a
+     * no-argument close() on the way, and the athrow must throw that same local. A catch that ends otherwise, and
+     * any catch of the source, however its variable is named, unnamed included, keeps the check: a catch that
+     * closes, rethrows only some throwables and renders otherwise would swallow the render.
      */
     static boolean closesAndRethrows(Handler handler) {
         try {
@@ -183,7 +224,7 @@ public class ControllersEnhancer extends Enhancer {
         code.move(handler.indexOfBytecode());
         try {
             int caught = storedLocal(code, code.next());
-            if (caught < 0) {
+            if (caught < 0 || namesLocal(method, caught, code.lookAhead())) {
                 return false;
             }
             boolean closes = false;
@@ -209,6 +250,17 @@ public class ControllersEnhancer extends Enhancer {
             }
         } catch (BadBytecode e) {
             return false;
+        }
+        return false;
+    }
+
+    /** Whether the method's local variable table names the local at {@code pc}. */
+    private static boolean namesLocal(MethodInfo method, int local, int pc) {
+        LocalVariableAttribute table = (LocalVariableAttribute) method.getCodeAttribute().getAttribute(LocalVariableAttribute.tag);
+        for (int i = 0; table != null && i < table.tableLength(); i++) {
+            if (table.index(i) == local && table.startPc(i) <= pc && pc < table.startPc(i) + table.codeLength(i)) {
+                return true;
+            }
         }
         return false;
     }

@@ -76,15 +76,15 @@ public class LocalvariablesNamesEnhancer extends Enhancer {
 
                 try {
                     // The instruction at which this local variable has been created
-                    Integer pc = localVariableAttribute.startPc(i);
+                    int pc = localVariableAttribute.startPc(i);
 
-                    // Move to the next instruction (insertionPc)
+                    // Insert before that instruction, and scan from it below: it can itself be a store, an
+                    // iinc of count right after int count = 0, say, which a scan from the next one missed
                     CodeIterator codeIterator = codeAttribute.iterator();
                     codeIterator.move(pc);
-                    pc = codeIterator.next();
 
                     Bytecode b = makeBytecodeForLVStore(method, localVariableAttribute.signature(i), name, localVariableAttribute.index(i));
-                    codeIterator.insert(pc, b.get());
+                    codeIterator.insert(b.get());
                     codeAttribute.setMaxStack(codeAttribute.computeMaxStack());
 
                     // Bon chaque instruction de cette méthode
@@ -97,7 +97,12 @@ public class LocalvariablesNamesEnhancer extends Enhancer {
 
                         int varNumber = -1;
                         // The variable changes
-                        if (storeByCode.containsKey(op)) {
+                        if (op == Opcode.WIDE) {
+                            // a store or an iinc with a two-byte index, and iinc by more than a byte
+                            if (Integer.valueOf(-2).equals(storeByCode.get(codeIterator.byteAt(index + 1)))) {
+                                varNumber = codeIterator.u16bitAt(index + 2);
+                            }
+                        } else if (storeByCode.containsKey(op)) {
                             varNumber = storeByCode.get(op);
                             if (varNumber == -2) {
                                 varNumber = codeIterator.byteAt(index + 1);

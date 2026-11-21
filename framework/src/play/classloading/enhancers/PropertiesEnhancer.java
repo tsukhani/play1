@@ -16,6 +16,7 @@ import javassist.CtField;
 import javassist.CtMethod;
 import javassist.CtNewConstructor;
 import javassist.NotFoundException;
+import javassist.expr.ConstructorCall;
 import javassist.expr.ExprEditor;
 import javassist.expr.FieldAccess;
 import play.Logger;
@@ -138,10 +139,22 @@ public class PropertiesEnhancer extends Enhancer {
 
     private void interceptAllFieldsAccess(final CtClass ctClass) throws CannotCompileException {
         for (final CtBehavior ctMethod : ctClass.getDeclaredBehaviors()) {
+            // Java 25 (JEP 513): a constructor may assign its fields before super() or this(), where this is no
+            // object yet and cannot be handed to a setter; such a write stays as it is. The editor visits the
+            // code in order, and javac and ECJ lay out the statements before that call ahead of it.
+            final boolean[] beforeConstructorCall = { ctMethod instanceof CtConstructor && ((CtConstructor) ctMethod).isConstructor() };
             ctMethod.instrument(new ExprEditor() {
 
                 @Override
+                public void edit(ConstructorCall call) {
+                    beforeConstructorCall[0] = false;
+                }
+
+                @Override
                 public void edit(FieldAccess fieldAccess) throws CannotCompileException {
+                    if (beforeConstructorCall[0] && fieldAccess.isWriter()) {
+                        return;
+                    }
                     try {
 
                         // Check access to property ?

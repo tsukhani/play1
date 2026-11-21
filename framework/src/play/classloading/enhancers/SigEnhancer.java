@@ -3,8 +3,10 @@ package play.classloading.enhancers;
 import javassist.CtClass;
 import javassist.CtField;
 import javassist.CtMethod;
+import javassist.bytecode.BootstrapMethodsAttribute;
 import javassist.bytecode.CodeAttribute;
 import javassist.bytecode.CodeIterator;
+import javassist.bytecode.ConstPool;
 import javassist.bytecode.LocalVariableAttribute;
 import javassist.bytecode.Opcode;
 import javassist.bytecode.annotation.Annotation;
@@ -77,6 +79,9 @@ public class SigEnhancer extends Enhancer {
                 } else if (op == Opcode.LDC_W || op == Opcode.LDC2_W) {
                     int poolIdx = (i.byteAt(index + 1) << 8) | i.byteAt(index + 2);
                     sigChecksum.append("[").append(i.get().getConstPool().getLdcValue(poolIdx)).append("]");
+                } else if (op == Opcode.INVOKEDYNAMIC) {
+                    // a string concatenation's literals are bootstrap arguments of makeConcatWithConstants, no ldc
+                    appendBootstrapArguments(sigChecksum, ctClass, i.u16bitAt(index + 1));
                 }
                 sigChecksum.append(".");
             }
@@ -107,5 +112,16 @@ public class SigEnhancer extends Enhancer {
 
         // Done.
         applicationClass.sigChecksum = sigChecksum.toString().hashCode();
+    }
+
+    /** The constants among an invokedynamic's bootstrap arguments: strings, numbers and class names. */
+    private static void appendBootstrapArguments(StringBuilder sigChecksum, CtClass ctClass, int invokeDynamic) {
+        ConstPool constPool = ctClass.getClassFile().getConstPool();
+        BootstrapMethodsAttribute bootstrapMethods = (BootstrapMethodsAttribute) ctClass.getClassFile().getAttribute(BootstrapMethodsAttribute.tag);
+        sigChecksum.append("[");
+        for (int argument : bootstrapMethods.getMethods()[constPool.getInvokeDynamicBootstrap(invokeDynamic)].arguments) {
+            sigChecksum.append(constPool.getTag(argument) == ConstPool.CONST_Class ? constPool.getClassInfo(argument) : constPool.getLdcValue(argument)).append(",");
+        }
+        sigChecksum.append("]");
     }
 }
