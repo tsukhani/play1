@@ -37,9 +37,10 @@ import play.libs.F;
  * which also covers a class that is no {@link BaseTest} and the plugins' runners.</li>
  * <li>Under {@code ambient}, both of those run the code as it is, so a runner that is to give
  * {@code ambient} the meaning it has under {@code /@tests} must itself hold a transaction around
- * each class when {@link #ambient()} is true, as the {@code /@tests} runner's job does. A class
- * that {@link PlayJUnitExtension} starts Play for has none: its {@code beforeEach} runs an empty
- * invocation, whose transaction closes before the test starts.</li>
+ * each class when {@link #ambient()} is true, as the {@code /@tests} runner's job does. On a
+ * JUnit Platform runner that started Play, {@link PlayTestSession} on Gradle's test task or
+ * {@link PlayJUnitExtension} itself, the extension runs each class in a job of its own
+ * ({@code TestClassJob}), which holds it.</li>
  * </ul>
  */
 public final class TestTransaction {

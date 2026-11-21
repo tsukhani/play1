@@ -5,21 +5,25 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.junit.jupiter.api.extension.BeforeAllCallback;
-import org.junit.jupiter.api.extension.BeforeEachCallback;
 import org.junit.jupiter.api.extension.DynamicTestInvocationContext;
 import org.junit.jupiter.api.extension.ExtensionContext;
 import org.junit.jupiter.api.extension.InvocationInterceptor;
 import org.junit.jupiter.api.extension.ReflectiveInvocationContext;
 import org.junit.jupiter.api.extension.TestExecutionExceptionHandler;
-import play.Invoker;
-import play.Invoker.DirectInvocation;
 import play.Play;
+import play.exceptions.UnexpectedException;
+import play.libs.F;
+import play.vfs.VirtualFile;
 
-public class PlayJUnitExtension implements BeforeAllCallback, BeforeEachCallback, InvocationInterceptor,
-        TestExecutionExceptionHandler {
+public class PlayJUnitExtension implements BeforeAllCallback, InvocationInterceptor, TestExecutionExceptionHandler {
 
     public static final String invocationType = "JUnitTest";
 
+    /**
+     * True when a JUnit Platform runner started Play in this JVM, {@link PlayTestSession} on
+     * Gradle's test task or this extension itself, rather than the {@code /@tests} runner. Each
+     * test class then runs in a job of its own, as {@code /@tests} runs it (PF-230).
+     */
     public static boolean useCustomRunner = false;
 
 
@@ -27,47 +31,46 @@ public class PlayJUnitExtension implements BeforeAllCallback, BeforeEachCallback
     public void beforeAll(ExtensionContext context) throws Exception {
         synchronized (Play.class) {
             if (!Play.started) {
-                Play.init(new File("."), getPlayId());
-                Play.javaPath.add(Play.getVirtualFile("test"));
-                if (!Play.started) {
-                    Play.start();
-                }
-                useCustomRunner = true;
+                start();
             }
         }
-        // Initialize Play for the test class if needed (equivalent to initTest in old code)
         Class<?> testClass = context.getRequiredTestClass();
-        TestEngine.initTest(testClass);
+        try {
+            classRun(context).onItsThread(() -> {
+                TestEngine.initTest(testClass);
+                return null;
+            });
+        } catch (Exception | Error e) {
+            throw e;
+        } catch (Throwable e) {
+            throw new UnexpectedException(e);
+        }
     }
 
-
-    @Override
-    public void beforeEach(ExtensionContext context) throws Exception {
-        if (useCustomRunner) {
-            if (!Play.started) {
-                Play.forceProd = true;
-                Play.init(new File("."), getPlayId());
-            }
-            Invoker.invokeInThread(new DirectInvocation() {
-                @Override
-                public void execute() throws Exception {
-                    // Nothing here; test method will run
-                }
-                @Override
-                public Invoker.InvocationContext getInvocationContext() {
-                    return new Invoker.InvocationContext(invocationType);
-                }
-            });
+    /**
+     * Start Play in test mode for the tests this JVM runs on the JUnit Platform, with the
+     * application's test/ compiled beside app/, as the {@code /@tests} runner's server has it.
+     */
+    static void start() {
+        Play.init(new File(System.getProperty("application.path", ".")), getPlayId());
+        // TestRunnerPlugin has added it already when play-testrunner.jar is on the classpath
+        VirtualFile test = Play.getVirtualFile("test");
+        if (!Play.javaPath.contains(test)) {
+            Play.javaPath.add(test);
         }
+        if (!Play.started) {
+            Play.start();
+        }
+        useCustomRunner = true;
     }
 
     // PF-231: every constructor and method of the test class runs as play.test.transaction
     // says, whichever runner runs it and whatever transaction that runner holds. The calls of one
     // outermost class share a TestTransaction.ClassScope, so under none a transaction that one of
     // them leaves open is still open in the next, as in a plain JUnit setup, and @Nested classes
-    // see their enclosing class's. The scope lives in that class's store, which JUnit closes, and
-    // with it the scope, when the class has finished (it closes an AutoCloseable it stores unless
-    // junit.jupiter.extensions.store.close.autocloseable.enabled is false).
+    // see their enclosing class's. The scope lives in that class's store, beside the class's job
+    // (PF-230), and JUnit closes both when the class has finished (it closes an AutoCloseable it
+    // stores unless junit.jupiter.extensions.store.close.autocloseable.enabled is false).
 
     private static final ExtensionContext.Namespace NAMESPACE = ExtensionContext.Namespace
             .create(PlayJUnitExtension.class);
@@ -128,17 +131,54 @@ public class PlayJUnitExtension implements BeforeAllCallback, BeforeEachCallback
     }
 
     private static <T> T asTestCode(Invocation<T> invocation, ExtensionContext context) throws Throwable {
-        return classScope(context).run(invocation::proceed);
+        return classRun(context).asTestCode(invocation::proceed);
     }
 
-    private static TestTransaction.ClassScope classScope(ExtensionContext context) {
+    private static ClassRun classRun(ExtensionContext context) {
         ExtensionContext outermostClass = context;
         // the engine's context, the root, is the parent of an outermost class's
         while (outermostClass.getParent().flatMap(ExtensionContext::getParent).isPresent()) {
             outermostClass = outermostClass.getParent().get();
         }
-        return outermostClass.getStore(NAMESPACE).computeIfAbsent(TestTransaction.ClassScope.class,
-                key -> new TestTransaction.ClassScope(), TestTransaction.ClassScope.class);
+        return outermostClass.getStore(NAMESPACE).computeIfAbsent(ClassRun.class, key -> new ClassRun(),
+                ClassRun.class);
+    }
+
+    /**
+     * The code of one outermost test class and its {@code @Nested} classes: their
+     * {@link TestTransaction.ClassScope}, and, when a JUnit Platform runner started Play, the job
+     * they run in (PF-230). Closed by JUnit with the class's store.
+     */
+    private static final class ClassRun implements AutoCloseable {
+
+        private final TestTransaction.ClassScope scope = new TestTransaction.ClassScope();
+        private final TestClassJob job = useCustomRunner ? new TestClassJob() : null;
+
+        <T> T onItsThread(F.Function0<T> code) throws Throwable {
+            return job == null ? code.apply() : job.run(code);
+        }
+
+        <T> T asTestCode(F.Function0<T> code) throws Throwable {
+            return onItsThread(() -> scope.run(code));
+        }
+
+        @Override
+        public void close() throws Exception {
+            try {
+                onItsThread(() -> {
+                    scope.close();
+                    return null;
+                });
+            } catch (Exception | Error e) {
+                throw e;
+            } catch (Throwable e) {
+                throw new UnexpectedException(e);
+            } finally {
+                if (job != null) {
+                    job.end();
+                }
+            }
+        }
     }
 
     @Override
