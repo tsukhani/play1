@@ -359,10 +359,15 @@ public class ApplicationClassloader extends ClassLoader {
         if (!modifieds.isEmpty()) {
             modifiedWithDependencies.addAll(Play.pluginCollection.onClassesChange(modifieds));
         }
+        if (!modifiedWithDependencies.isEmpty()) {
+            // PF-229: in one compile. Each javac task costs milliseconds of its own, about 40 ms
+            // in a large application, where ECJ's took about 2.
+            Play.classes.compiler().compile(modifiedWithDependencies.stream().map(c -> c.name).toArray(String[]::new));
+        }
         List<ClassDefinition> newDefinitions = new ArrayList<>();
         boolean dirtySig = false;
         for (ApplicationClass applicationClass : modifiedWithDependencies) {
-            if (applicationClass.compile() == null) {
+            if (applicationClass.javaByteCode == null) {
                 Play.classes.classes.remove(applicationClass.name);
                 currentState = new ApplicationClassloaderState();// show others that we have changed..
             } else {

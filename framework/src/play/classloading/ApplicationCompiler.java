@@ -14,6 +14,7 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -74,6 +75,12 @@ public class ApplicationCompiler {
      * manager is not made for concurrent tasks, so compiles take turns: {@link #compile}.
      */
     private final StandardJavaFileManager standardFileManager;
+
+    /**
+     * The classes Play has compiled, as javac reads them, by name: kept from one compile to the next while
+     * a class's bytes stay the same, as making each one's URI anew took milliseconds of every compile.
+     */
+    private Map<String, Compiled> compiledFiles = new HashMap<>();
 
     /**
      * Try to guess the magic configuration options
@@ -334,7 +341,11 @@ public class ApplicationCompiler {
         /** By the name of the class a file is named after. One object per file, whether javac was given it or found it. */
         private final Map<String, Source> sources = new HashMap<>();
 
-        private final Map<String, Boolean> applicationPackages = new HashMap<>();
+        /** By package: the files of its top-level classes on Play's java path, by simple name, the first root's of two. */
+        private final Map<String, Map<String, VirtualFile>> packageSources = new HashMap<>();
+
+        /** By package: the classes Play has compiled, as they were when this compile began. */
+        private Map<String, List<Compiled>> compiledByPackage;
 
         final Map<String, Output> outputs = new LinkedHashMap<>();
 
@@ -365,19 +376,33 @@ public class ApplicationCompiler {
                 return kinds.contains(Kind.SOURCE) ? sourcesIn(packageName) : List.of();
             }
             Iterable<JavaFileObject> listed = super.list(location, packageName, kinds, recurse);
-            if (location != StandardLocation.CLASS_PATH || !kinds.contains(Kind.CLASS) || !isApplicationPackage(packageName)) {
+            if (location != StandardLocation.CLASS_PATH || !kinds.contains(Kind.CLASS)) {
                 return listed;
             }
-            List<JavaFileObject> files = new ArrayList<>();
-            for (JavaFileObject file : listed) {
-                if (file.getKind() != Kind.CLASS || ApplicationClasses.getJava(inferBinaryName(location, file)) == null) {
-                    files.add(file);
-                }
+            Map<String, VirtualFile> sources = packageSources(packageName);
+            List<Compiled> compiled = compiledIn(packageName);
+            if (sources.isEmpty() && compiled.isEmpty()) {
+                return listed;
             }
-            for (ApplicationClass applicationClass : applicationClasses.all()) {
-                if (applicationClass.javaByteCode != null && applicationClass.getPackage().equals(packageName)) {
-                    files.add(new Compiled(applicationClass));
+            Set<String> compiledNames = new HashSet<>();
+            List<JavaFileObject> files = new ArrayList<>(compiled);
+            for (Compiled file : compiled) {
+                compiledNames.add(file.name);
+            }
+            // By the file's name alone: a lookup of its source per class, as getJava does, took 19 ms of each
+            // compile for a package of 1500 classes with compileJava's output on the classpath.
+            boolean classesOnly = kinds.size() == 1;
+            int prefix = packageName.isEmpty() ? 0 : packageName.length() + 1;
+            for (JavaFileObject file : listed) {
+                if (classesOnly || file.getKind() == Kind.CLASS) {
+                    String binaryName = inferBinaryName(location, file);
+                    int dollar = binaryName.indexOf('$', prefix);
+                    if (sources.containsKey(binaryName.substring(prefix, dollar < 0 ? binaryName.length() : dollar))
+                            || compiledNames.contains(binaryName)) {
+                        continue;
+                    }
                 }
+                files.add(file);
             }
             return files;
         }
@@ -385,39 +410,66 @@ public class ApplicationCompiler {
         /** The sources of a package that Play has not compiled yet. Of two roots with the same file, the first's, as getJava has it. */
         private List<JavaFileObject> sourcesIn(String packageName) {
             List<JavaFileObject> files = new ArrayList<>();
-            String dir = packageName.replace('.', '/');
-            for (VirtualFile root : Play.javaPath) {
-                VirtualFile pkg = dir.isEmpty() ? root : root.child(dir);
-                if (!pkg.isDirectory()) {
-                    continue;
+            for (Map.Entry<String, VirtualFile> file : packageSources(packageName).entrySet()) {
+                String className = packageName.isEmpty() ? file.getKey() : packageName + "." + file.getKey();
+                ApplicationClass applicationClass = applicationClasses.getApplicationClass(className);
+                if (applicationClass == null || applicationClass.javaByteCode != null) {
+                    continue; // javac reads the class Play compiled, from list
                 }
-                for (VirtualFile file : pkg.list()) {
-                    String fileName = file.getName();
-                    if (file.isDirectory() || !fileName.endsWith(".java") || fileName.startsWith(".")) {
-                        continue;
-                    }
-                    String simpleName = fileName.substring(0, fileName.length() - ".java".length());
-                    Source source = source(dir.isEmpty() ? simpleName : packageName + "." + simpleName);
-                    if (source != null && source.applicationClass.javaByteCode == null
-                            && source.applicationClass.javaFile.equals(file) && !files.contains(source)) {
-                        files.add(source);
-                    }
+                Source source = source(className);
+                if (source != null && source.applicationClass.javaFile.equals(file.getValue()) && !files.contains(source)) {
+                    files.add(source);
                 }
             }
             return files;
         }
 
-        /** Whether a root of the application has this package, so that classes of the application can be in it. */
-        private boolean isApplicationPackage(String packageName) {
-            return applicationPackages.computeIfAbsent(packageName, name -> {
+        private Map<String, VirtualFile> packageSources(String packageName) {
+            return packageSources.computeIfAbsent(packageName, name -> {
+                Map<String, VirtualFile> files = new LinkedHashMap<>();
                 String dir = name.replace('.', '/');
                 for (VirtualFile root : Play.javaPath) {
-                    if ((dir.isEmpty() ? root : root.child(dir)).isDirectory()) {
-                        return true;
+                    VirtualFile pkg = dir.isEmpty() ? root : root.child(dir);
+                    if (!pkg.isDirectory()) {
+                        continue;
+                    }
+                    for (VirtualFile file : pkg.list()) {
+                        String fileName = file.getName();
+                        if (!file.isDirectory() && fileName.endsWith(".java") && !fileName.startsWith(".")) {
+                            files.putIfAbsent(fileName.substring(0, fileName.length() - ".java".length()), file);
+                        }
                     }
                 }
-                return false;
+                return files;
             });
+        }
+
+        private List<Compiled> compiledIn(String packageName) {
+            if (compiledByPackage == null) {
+                compiledByPackage = new HashMap<>();
+                Map<String, Compiled> previous = compiledFiles;
+                compiledFiles = new HashMap<>();
+                for (ApplicationClass applicationClass : applicationClasses.all()) {
+                    if (applicationClass.javaByteCode != null) {
+                        Compiled file = previous.get(applicationClass.name);
+                        if (file == null || file.code != applicationClass.javaByteCode) {
+                            file = new Compiled(applicationClass);
+                        }
+                        compiledFiles.put(applicationClass.name, file);
+                        compiledByPackage.computeIfAbsent(applicationClass.getPackage(), name -> new ArrayList<>()).add(file);
+                    }
+                }
+            }
+            return compiledByPackage.getOrDefault(packageName, List.of());
+        }
+
+        /**
+         * Nothing: what javac writes stays in memory. The standard file manager's flush drops its index of
+         * the classpath jars' packages, which the next compile then made again, milliseconds of each. The
+         * jars do not change under a running JVM, and its directories are listed afresh at every compile.
+         */
+        @Override
+        public void flush() {
         }
 
         @Override
@@ -477,7 +529,7 @@ public class ApplicationCompiler {
 
         final String name;
 
-        private final byte[] code;
+        final byte[] code;
 
         Compiled(ApplicationClass applicationClass) {
             super(memoryUri(applicationClass.name), Kind.CLASS);
