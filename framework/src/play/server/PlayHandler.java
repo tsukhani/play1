@@ -463,6 +463,72 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
         }
     }
 
+    /** The Date header of one wall-clock second, as {@link Utils#formatHttpDate} writes it. */
+    private record HttpDate(long second, String value) {
+    }
+
+    private static volatile HttpDate httpDate = new HttpDate(Long.MIN_VALUE, null);
+
+    /**
+     * PF-237: the Date header for now. The header has a resolution of one second, so every
+     * response of the same second carries the same text, which is formatted once per second
+     * rather than once per response.
+     */
+    static String httpDateNow() {
+        return httpDate(System.currentTimeMillis());
+    }
+
+    static String httpDate(long millis) {
+        long second = Math.floorDiv(millis, 1000L);
+        HttpDate date = httpDate;
+        if (date.second() != second) {
+            date = new HttpDate(second, Utils.formatHttpDate(new Date(millis)));
+            httpDate = date;
+        }
+        return date.value();
+    }
+
+    /** What, besides the second it is encoded in, a Set-Cookie header of an empty cookie depends on. */
+    private record EmptyCookie(String name, boolean wrap, long maxAge, String path, String domain, boolean secure,
+            boolean httpOnly, io.netty.handler.codec.http.cookie.CookieHeaderNames.SameSite sameSite,
+            boolean partitioned) {
+    }
+
+    private record EncodedCookie(long second, String header) {
+    }
+
+    /** Bounds {@link #emptyCookies}: the names come from the application, the usual ones are Play's three. */
+    static final int EMPTY_COOKIES_MAX = 64;
+
+    static final Map<EmptyCookie, EncodedCookie> emptyCookies = new ConcurrentHashMap<>();
+
+    /**
+     * PF-237: {@link ServerCookieEncoder#STRICT}'s header for a cookie. Play deletes its session,
+     * flash and errors cookies on every response that does not set them, and the encoder, run on a
+     * new virtual thread for each request, set up Netty's thread-local state and a calendar for
+     * each one. A cookie with an empty value has the same header for every response of a
+     * second (its Expires has a resolution of one second), so that header is encoded once per
+     * second and kept, but only when the encoder ran inside the second it is kept for.
+     */
+    static String encodeCookie(DefaultCookie c) {
+        if (!c.value().isEmpty()) {
+            return ServerCookieEncoder.STRICT.encode(c);
+        }
+        EmptyCookie key = new EmptyCookie(c.name(), c.wrap(), c.maxAge(), c.path(), c.domain(), c.isSecure(),
+                c.isHttpOnly(), c.sameSite(), c.isPartitioned());
+        long second = Math.floorDiv(System.currentTimeMillis(), 1000L);
+        EncodedCookie encoded = emptyCookies.get(key);
+        if (encoded != null && encoded.second() == second) {
+            return encoded.header();
+        }
+        String header = ServerCookieEncoder.STRICT.encode(c);
+        if (Math.floorDiv(System.currentTimeMillis(), 1000L) == second
+                && (encoded != null || emptyCookies.size() < EMPTY_COOKIES_MAX)) {
+            emptyCookies.put(key, new EncodedCookie(second, header));
+        }
+        return header;
+    }
+
     protected static void addToResponse(Response response, HttpResponse nettyResponse) {
         Map<String, Http.Header> headers = response.headers;
         for (Map.Entry<String, Http.Header> entry : headers.entrySet()) {
@@ -472,7 +538,7 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
             }
         }
 
-        nettyResponse.headers().set(DATE, Utils.formatHttpDate(new Date()));
+        nettyResponse.headers().set(DATE, httpDateNow());
 
         // PF-57: advertise the HTTP/3 endpoint via Alt-Svc on every TLS-protected response.
         // RFC 7838: a browser that has discovered Alt-Svc remembers the endpoint and uses
@@ -518,7 +584,7 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
                     }
                 }
             }
-            nettyResponse.headers().add(SET_COOKIE, ServerCookieEncoder.STRICT.encode(c));
+            nettyResponse.headers().add(SET_COOKIE, encodeCookie(c));
         }
 
         if (!response.headers.containsKey(CACHE_CONTROL) && !response.headers.containsKey(EXPIRES)
