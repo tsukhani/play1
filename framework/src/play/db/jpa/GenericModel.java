@@ -414,6 +414,19 @@ public class GenericModel extends JPABase {
     }
 
     /**
+     * What a finder of GenericModel throws when it runs itself: JPAEnhancer gives every entity class finders of its
+     * own, so this one runs only for a class that is no entity, or for a method reference such as
+     * {@code Book::findById}. The compiler names the class that declares the method there, GenericModel, so the call
+     * never reaches the entity's finder, and no enhancer can redirect it: the entity's type is not in the bytecode.
+     */
+    static UnsupportedOperationException notEnhanced() {
+        return new UnsupportedOperationException("This is GenericModel's own finder, which runs in place of an entity's"
+            + " when the class is not annotated with @jakarta.persistence.Entity, or when the call is a method reference"
+            + " such as Book::findById, which names GenericModel and not Book. Annotate the class, or call the finder"
+            + " through a lambda: id -> Book.findById(id).");
+    }
+
+    /**
      * Create the new entity
      * 
      * @param name
@@ -425,7 +438,7 @@ public class GenericModel extends JPABase {
      * @return The created entity.
      */
     public static <T extends JPABase> T create(String name, Params params) {
-        throw new UnsupportedOperationException("Please annotate your JPA model with @jakarta.persistence.Entity annotation.");
+        throw notEnhanced();
     }
 
     /**
@@ -434,7 +447,7 @@ public class GenericModel extends JPABase {
      * @return number of entities of this class
      */
     public static long count() {
-        throw new UnsupportedOperationException("Please annotate your JPA model with @jakarta.persistence.Entity annotation.");
+        throw notEnhanced();
     }
 
     /**
@@ -447,7 +460,7 @@ public class GenericModel extends JPABase {
      * @return A long
      */
     public static long count(String query, Object... params) {
-        throw new UnsupportedOperationException("Please annotate your JPA model with @jakarta.persistence.Entity annotation.");
+        throw notEnhanced();
     }
 
     /**
@@ -458,7 +471,7 @@ public class GenericModel extends JPABase {
      * @return All entities of this type
      */
     public static <T extends JPABase> List<T> findAll() {
-        throw new UnsupportedOperationException("Please annotate your JPA model with @jakarta.persistence.Entity annotation.");
+        throw notEnhanced();
     }
 
     /**
@@ -471,7 +484,7 @@ public class GenericModel extends JPABase {
      * @return The entity, or null when no entity has that id or {@code id} is null
      */
     public static <T extends JPABase> T findById(Object id) {
-        throw new UnsupportedOperationException("Please annotate your JPA model with @jakarta.persistence.Entity annotation.");
+        throw notEnhanced();
     }
 
     /**
@@ -484,7 +497,7 @@ public class GenericModel extends JPABase {
      * @return A JPAQuery
      */
     public static JPAQuery find(String query, Object... params) {
-        throw new UnsupportedOperationException("Please annotate your JPA model with @jakarta.persistence.Entity annotation.");
+        throw notEnhanced();
     }
 
     /**
@@ -493,7 +506,7 @@ public class GenericModel extends JPABase {
      * @return A JPAQuery
      */
     public static JPAQuery all() {
-        throw new UnsupportedOperationException("Please annotate your JPA model with @jakarta.persistence.Entity annotation.");
+        throw notEnhanced();
     }
 
     /**
@@ -506,7 +519,7 @@ public class GenericModel extends JPABase {
      * @return Number of entities deleted
      */
     public static int delete(String query, Object... params) {
-        throw new UnsupportedOperationException("Please annotate your JPA model with @jakarta.persistence.Entity annotation.");
+        throw notEnhanced();
     }
 
     /**
@@ -515,7 +528,7 @@ public class GenericModel extends JPABase {
      * @return Number of entities deleted
      */
     public static int deleteAll() {
-        throw new UnsupportedOperationException("Please annotate your JPA model with @jakarta.persistence.Entity annotation.");
+        throw notEnhanced();
     }
 
     /**
