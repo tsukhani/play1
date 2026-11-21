@@ -1,0 +1,6 @@
+# The head-to-head's endpoints, as in helidon-se and helidon-mp
+GET     /plaintext                              Bench.plaintext
+GET     /json                                   Bench.json
+GET     /db                                     Bench.db
+GET     /jpa                                    Bench.jpa
+GET     /sse                                    Bench.sse

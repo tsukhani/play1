@@ -112,6 +112,21 @@ ant dependency-check             # OWASP dependency-check over every jar the rel
 The Gradle plugin lives at `framework/gradle-plugin/` and is built via `./gradlew :gradle-plugin:build` from the repo root.
 Its own tests are gated by `ant test` via the `gradle-plugin-test` target (PF-171) — see Testing Patterns.
 
+### Benchmarks against Helidon
+
+`benchmarks/helidon/` (PF-236) measures the fork against Helidon 4.5.7 SE and MP:
+- **The applications:** three minimal applications with the same endpoints (plain text, JSON, JDBC, JPA and SSE), each
+  built by Gradle with the checkout's own wrapper.
+- **The driver:** `run.py --framework <a built checkout>`. It measures startup with and without each one's AOT cache,
+  load with oha, memory, and the edit loop under Gradle.
+- **The output:** a JSON file per run and a summary table to quote on a ticket.
+- **The target:** ADR 0003 keeps the fork on condition that it reaches Helidon MP's figures. PF-235's tasks are
+  measured with this harness, before and after, in one session on one machine.
+- **Not part of the build:** it takes about 40 minutes and its figures depend on the machine, so `ant test` does not
+  run it. It is excluded from the release zip (`benchmarks/**` in `build.xml`).
+- **Pitfalls it already handles:** its README lists them; MP's Hibernate logs two warnings per JPA request unless
+  `SessionImpl` is silenced. Keep them handled when changing an application.
+
 ## Architecture
 
 ### Core Request Lifecycle

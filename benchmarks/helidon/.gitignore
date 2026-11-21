@@ -1,0 +1,3 @@
+# run.py writes its copies of the applications and its results here by default
+out/
+__pycache__/
