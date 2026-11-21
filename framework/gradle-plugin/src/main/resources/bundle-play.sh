@@ -9,7 +9,9 @@
 # java 25+ is the only dependency.
 
 set -e
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# dirname's answer without running dirname (PF-239: every start paid for the process).
+case "$0" in */*) SCRIPT_DIR="${0%/*}" ;; *) SCRIPT_DIR=. ;; esac
+SCRIPT_DIR="$(cd "${SCRIPT_DIR:-/}" && pwd)"
 cd "$SCRIPT_DIR"
 
 # Warnings are one line on stderr each, so stdout stays machine-readable
@@ -392,7 +394,13 @@ start_frontend() {
 build_java_cmd() {
     [ -f "$FW_JAR" ]   || { echo "play: $FW_JAR not found (run from bundle root)" >&2; exit 1; }
     [ -f .classpath ]  || { echo "play: .classpath not found at $SCRIPT_DIR" >&2; exit 1; }
-    CP=$(tr '\n' "$CP_SEP" < .classpath | sed "s/${CP_SEP}\$//")
+    # The lines joined with CP_SEP, as `tr '\n' "$CP_SEP" | sed "s/$CP_SEP\$//"` joined
+    # them, without the two processes (PF-239).
+    local entry first=1
+    CP=""
+    while IFS= read -r entry || [ -n "$entry" ]; do
+        if [ "$first" = 1 ]; then CP="$entry"; first=0; else CP="$CP$CP_SEP$entry"; fi
+    done < .classpath
     conf_jvm_args
     if [ $# -gt 0 ]; then AOT_JVM=("$1"); else aot_cache_arg; fi
     JAVA_CMD=(
@@ -460,23 +468,42 @@ launch() {
 # %<id>. entry ahead of the bare key, the way confValue() in Play1Plugin.kt
 # resolves it for the Gradle launch paths. Prints nothing when neither is set.
 conf_value() {
-    local conf="conf/application.conf" key value
+    local value
+    value=$(conf_values "$1")
+    value="${value#=}"
+    [ -z "$value" ] || printf '%s\n' "$value"
+}
+
+# PF-239: conf_value for each key given, in one pass over application.conf: a
+# line per key, in order, "=" and then the value, so that an unset key is a line
+# too. conf_value ran awk twice per key, and conf_jvm_args reads eleven keys on
+# every start. For each key the first line naming %<id>.key and the first naming
+# the bare key are kept, and the first of the two that is not empty wins.
+conf_values() {
+    local conf="conf/application.conf"
     [ -f "$conf" ] || return 0
-    for key in "%$PLAY_ID.$1" "$1"; do
-        value=$(awk -v k="$key" '
-            index($0, k) == 1 && substr($0, length(k) + 1) ~ /^[[:space:]]*=/ {
-                v = substr($0, length(k) + 1)
-                sub(/^[[:space:]]*=[[:space:]]*/, "", v)
-                sub(/[[:space:]]+$/, "", v)
-                print v
-                exit
+    awk -v id="$PLAY_ID" '
+        BEGIN {
+            n = ARGC - 2
+            for (i = 1; i <= n; i++) { key[i] = ARGV[i]; ARGV[i] = "" }
+        }
+        {
+            for (i = 1; i <= n; i++) {
+                for (j = 1; j <= 2; j++) {
+                    k = j == 1 ? "%" id "." key[i] : key[i]
+                    if (!((i, j) in v) && index($0, k) == 1 && substr($0, length(k) + 1) ~ /^[[:space:]]*=/) {
+                        s = substr($0, length(k) + 1)
+                        sub(/^[[:space:]]*=[[:space:]]*/, "", s)
+                        sub(/[[:space:]]+$/, "", s)
+                        v[i, j] = s
+                    }
+                }
             }
-        ' "$conf")
-        if [ -n "$value" ]; then
-            printf '%s\n' "$value"
-            return 0
-        fi
-    done
+        }
+        END {
+            for (i = 1; i <= n; i++) print "=" (v[i, 1] != "" ? v[i, 1] : v[i, 2])
+        }
+    ' "$@" "$conf"
 }
 
 # PF-183: the JVM flags application.conf asks for -- javaagent.path, agentlib,
@@ -485,16 +512,21 @@ conf_value() {
 # step (BundleLauncherTest compares their output): a bundle that skipped these
 # keys ran without options the app's own conf requests.
 conf_jvm_args() {
-    local value port host ssl auth name
-    local -a flags
+    local value port host ssl auth name line i
+    local -a flags conf
     CONF_JVM=()
-    value=$(conf_value javaagent.path)
+    # Every key below in one pass over application.conf (PF-239), in this order.
+    while IFS= read -r line; do conf+=("${line#=}"); done <<EOF
+$(conf_values javaagent.path agentlib jvm.memory jmx.port jmx.hostname jmx.ssl jmx.authenticate \
+    jmx.ssl.config.file jmx.password.file jmx.access.file java.enablePreview)
+EOF
+    value=${conf[0]}
     [ -z "$value" ] || CONF_JVM+=("-javaagent:$value")
-    value=$(conf_value agentlib)
+    value=${conf[1]}
     [ -z "$value" ] || CONF_JVM+=("-agentlib:$value")
     # A whitespace-separated bag of flags. read -a splits without globbing, so
     # a `*` in a flag is not expanded against the bundle directory.
-    value=$(conf_value jvm.memory)
+    value=${conf[2]}
     if [ -n "$value" ]; then
         IFS=$' \t' read -r -a flags <<< "$value"
         CONF_JVM+=("${flags[@]}")
@@ -505,11 +537,11 @@ conf_jvm_args() {
     # hold the credentials and the keystore settings; files because a -D is
     # readable in `ps`. The registry follows jmx.ssl: left plain it would hand
     # out the connector stub unencrypted.
-    port=$(conf_value jmx.port)
-    host=$(conf_value jmx.hostname)
+    port=${conf[3]}
+    host=${conf[4]}
     if [ -n "$port" ] && [ -n "$host" ]; then
-        case "$(conf_value jmx.ssl)" in [Ff][Aa][Ll][Ss][Ee]) ssl=false ;; *) ssl=true ;; esac
-        case "$(conf_value jmx.authenticate)" in [Ff][Aa][Ll][Ss][Ee]) auth=false ;; *) auth=true ;; esac
+        case "${conf[5]}" in [Ff][Aa][Ll][Ss][Ee]) ssl=false ;; *) ssl=true ;; esac
+        case "${conf[6]}" in [Ff][Aa][Ll][Ss][Ee]) auth=false ;; *) auth=true ;; esac
         CONF_JVM+=(
             -Dcom.sun.management.jmxremote
             "-Dcom.sun.management.jmxremote.port=$port"
@@ -520,15 +552,17 @@ conf_jvm_args() {
             "-Djava.rmi.server.hostname=$host"
             "-Dcom.sun.management.jmxremote.registry.ssl=$ssl"
         )
+        i=7
         for name in ssl.config.file password.file access.file; do
-            value=$(conf_value "jmx.$name")
+            value=${conf[$i]}
+            i=$((i + 1))
             [ -z "$value" ] || CONF_JVM+=("-Dcom.sun.management.jmxremote.$name=$value")
         done
     fi
     # PF-229: an application that sets java.enablePreview=true was compiled with
     # --enable-preview, and the JVM loads such a class only when started with it
     # too. The word true in any case, as Play reads it when it compiles.
-    case "$(conf_value java.enablePreview)" in [Tt][Rr][Uu][Ee]) CONF_JVM+=(--enable-preview) ;; esac
+    case "${conf[10]}" in [Tt][Rr][Uu][Ee]) CONF_JVM+=(--enable-preview) ;; esac
 }
 
 # PF-180: -XX:AOTCache for `run` and `start`, when aot-gen has left a cache.
