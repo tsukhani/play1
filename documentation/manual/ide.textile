@@ -19,6 +19,10 @@ To run the app from IntelliJ, use the Gradle tool window and double-click the
 @play1 → playRun@ task. The same panel exposes @playTest@, @playAutotest@,
 @playPrecompile@, and the rest of the @play1@ task group.
 
+The run icon beside a test class or a test method runs that class or that method
+through Gradle's @test@ task, with Gradle as the test runner, the default: see
+"Running the tests with Gradle":test#gradle.
+
 
 h2(#custom). <a>Other IDEs and editors</a>
 

@@ -207,6 +207,56 @@ For example:
 bc. %test.db=mem
 %test.jpa.ddl=create-drop
 
+h2. <a name="gradle">Running the tests with Gradle, in JVMs of their own</a>
+
+Gradle's @test@ task runs the classes under @test/@ on the JUnit Platform, in JVMs of their own. Each JVM starts the application in @test@ mode, as @play test@ does, and runs its classes one at a time; Gradle hands the classes out to the JVMs. So a static field, a cache or a registry that one class sets is not seen by a class in another JVM, and with an in-memory @%test@ database, such as @%test.db.url=jdbc:h2:mem:play@, each JVM has a database of its own.
+
+bc. ./gradlew test
+
+Because @check@ and @build@ depend on @test@, @./gradlew check@ and @./gradlew build@ run the suite too.
+
+The application runs in two JVMs unless you say otherwise. Set the number in @build.gradle.kts@, or for one build on the command line, which wins:
+
+bc. play1 {
+    testJvms = 4
+}
+
+bc. ./gradlew test -PtestJvms=8
+
+Each JVM starts the application once and has a heap of its own, so more JVMs take more memory. Gradle does not rerun the task when only the number changes; add @--rerun@ for that.
+
+h3. One class, or one method
+
+bc. ./gradlew test --tests UserTest
+./gradlew test --tests UserTest.aVeryImportantThingToTest
+./gradlew test --tests 'models.*'
+
+From IntelliJ IDEA, open the application's @build.gradle.kts@ (see "Setting up your IDE":ide). With *Settings → Build, Execution, Deployment → Build Tools → Gradle → Run tests using* set to *Gradle*, the default for a Gradle project, the run icon beside a test class or a test method runs that class or that method in the same way. IntelliJ's own runner, *Run tests using: IntelliJ IDEA*, is not supported: it loads the classes Gradle compiled, which Play has not enhanced, and starts no application before them.
+
+h3. Results
+
+A run writes one JUnit XML report per class to @build/test-results/test/TEST-<class>.xml@, which Jenkins reads with @junit 'build/test-results/test/*.xml'@, and an HTML report to @build/reports/tests/test/index.html@. A failed test is listed on the console with the message of the assertion that failed and the line of the test it failed on:
+
+bc. UserTest > aVeryImportantThingToTest() FAILED
+    org.opentest4j.AssertionFailedError: expected: <2> but was: <3>
+        at UserTest.aVeryImportantThingToTest(UserTest.java:9)
+
+h3. What a test sees in its JVM
+
+* Each test class runs in a job of its own, as under @play test@, so "play.test.transaction":#transactions means the same on both runners. A class that is no @UnitTest@ or @FunctionalTest@, and does not declare <code>@ExtendWith(PlayJUnitExtension.class)</code>, runs as plain JUnit, outside any job and transaction.
+* The class's code runs on the job's thread, not on the thread that JUnit runs the class on. A JUnit extension of your own that keeps something in a thread-local for the test's code to read does not reach it.
+* The HTTP server listens on a port the system picks, whatever @http.port@ says, so that no two JVMs share one. @Play.configuration.getProperty("http.port")@ gives it, for a test that sends real HTTP requests to its own application. When the configuration has an @https.port@, HTTPS gets a picked port too, in @https.port@. @application.baseUrl@ is left as it is.
+* Files are shared: every JVM runs in the application's directory. A test that writes to a path of its own can give each JVM a path of its own with the @play.test.jvm@ system property, the JVM's number in the run from 1, which a configuration value can name. The @:0@ default is the value under @play test@ and @play autotest@, which do not set it:
+
+bc. %test.myapp.workspace=tmp/workspace-${play.test.jvm:0}
+
+* The heap is the JVM's default, as for every Play JVM, unless @jvm.memory@ sets one with @-Xmx@ ("JVM settings in application.conf":deployment#conf-jvm), and Java's @assert@ statements are not checked, as under @play test@.
+* Gradle runs every class under @test/@ that has JUnit tests, which may be more than the classes the test runner page lists.
+
+The task runs again when a file under @app/@, @test/@ or @conf/@ changes, or a class or a library on its classpath does.
+
+@play test@ and @play autotest@ work as before, with the test runner's lanes, in one JVM.
+
 h2. <a name="continuous">Continuous integration, and running the tests automatically</a>
 
 The @autotest@ command does the same as the @test@ command, but it automatically launches a headless browser via Firephoque, runs all the tests, and stops:

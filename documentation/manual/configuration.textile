@@ -654,6 +654,8 @@ The value is not case sensitive. Any other value stops the application from star
 
 Default: @ambient@
 
+The JVMs of Gradle's @test@ task run each test class in a job of their own too, so the value means the same there; see "Running the tests with Gradle":test#gradle.
+
 See also: "Transactions in tests":test#transactions.
 
 h3(#webclient.timeout). webclient.timeout
@@ -733,7 +735,7 @@ Default: @/@
 
 h3(#http.port). http.port
 
-The port that the HTTP server listens on.
+The port that the HTTP server listens on. With @0@, given here or as @--http.port=0@, the server listens on a port the system picks, and @http.port@ then holds that port. The JVMs of Gradle's @test@ task start their servers that way, whatever this key says; see "Running the tests with Gradle":test#gradle.
 
 Default: @9000@
 
@@ -806,6 +808,8 @@ h3(#https.port). https.port
 Enables an HTTPS connector, listening on the specified port. For example:
 
 bc. https.port=9443
+
+With @0@ the server listens on a port the system picks, and @https.port@ then holds that port, as for "http.port":#http.port.
 
 Default: none - no HTTPS configuration.
 

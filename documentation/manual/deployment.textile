@@ -47,7 +47,7 @@ Virtual threads make per-request stack memory negligible, so the historical "tun
 
 h3. <a name="conf-jvm">JVM settings in application.conf</a>
 
-JVM flags can also live in @application.conf@, where they apply however the application is launched: @play run@, @play start@, @play test@ and the launcher inside a @play bundle@ all read the same keys. A key prefixed with the framework ID, such as @%prod.jvm.memory@, beats the bare key. Flags given on the command line come after these, so the command line wins where a flag is repeated.
+JVM flags can also live in @application.conf@, where they apply however the application is launched: @play run@, @play start@, @play test@, the JVMs of Gradle's @test@ task and the launcher inside a @play bundle@ all read the same keys. A key prefixed with the framework ID, such as @%prod.jvm.memory@, beats the bare key. Flags given on the command line come after these, so the command line wins where a flag is repeated.
 
 * @jvm.memory@ — JVM flags separated by whitespace. Despite the name it takes any flag, not only heap sizes: @jvm.memory=-Xms512m -Xmx2g --add-modules=jdk.incubator.vector@
 * @javaagent.path@ — a Java agent jar, passed as @-javaagent:<path>@
