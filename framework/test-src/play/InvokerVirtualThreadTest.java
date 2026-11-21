@@ -279,4 +279,33 @@ public class InvokerVirtualThreadTest {
         future.get(5, TimeUnit.SECONDS);
         assertThat(Invoker.inflightInvocations.get()).isEqualTo(initialInflight);
     }
+
+    @Test
+    void stopCalledFromOneOfTheSchedulersThreadsLeavesThatThreadUninterrupted() throws Exception {
+        // PF-229: a DEV reload stops the invoker from the request's own thread, and Play.start() went
+        // on under the interrupt shutdownNow() gave it, until javac's next jar read closed the jar.
+        Invoker.init();
+        AtomicBoolean interrupted = new AtomicBoolean(true);
+        CountDownLatch done = new CountDownLatch(1);
+        Invoker.scheduler.submit(() -> {
+            Invoker.stop();
+            interrupted.set(Thread.currentThread().isInterrupted());
+            done.countDown();
+        });
+
+        assertThat(done.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(interrupted).isFalse();
+    }
+
+    @Test
+    void stopLeavesACallerThatWasInterruptedAlreadyInterrupted() {
+        Invoker.init();
+        Thread.currentThread().interrupt();
+        try {
+            Invoker.stop();
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+        } finally {
+            Thread.interrupted();
+        }
+    }
 }

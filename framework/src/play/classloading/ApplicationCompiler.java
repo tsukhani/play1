@@ -22,6 +22,10 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.stream.Stream;
 
 import javax.tools.Diagnostic;
@@ -40,6 +44,7 @@ import play.Logger;
 import play.Play;
 import play.classloading.ApplicationClasses.ApplicationClass;
 import play.exceptions.CompilationException;
+import play.exceptions.UnexpectedException;
 import play.vfs.VirtualFile;
 
 /**
@@ -75,6 +80,20 @@ public class ApplicationCompiler {
      * manager is not made for concurrent tasks, so compiles take turns: {@link #compile}.
      */
     private final StandardJavaFileManager standardFileManager;
+
+    /**
+     * The thread every javac task runs on, which nothing interrupts. javac reads the classpath's jars through
+     * the JDK's zip file system, whose channel an interrupt closes during a read, and the jar stays open in
+     * {@link #standardFileManager}: one compile on an interrupted thread left every later compile of the JVM
+     * failing with "bad class file ... ClosedChannelException". ECJ read classes through Play's class loader,
+     * which an interrupt does not touch. javac's calls into {@link FileManager} take no lock a caller can hold.
+     */
+    private static final ExecutorService JAVAC_THREAD = Executors.newSingleThreadExecutor(task -> {
+        Thread thread = new Thread(null, task, "play-javac", 0, false);
+        thread.setDaemon(true);
+        thread.setContextClassLoader(ClassLoader.getSystemClassLoader());
+        return thread;
+    });
 
     /**
      * The classes Play has compiled, as javac reads them, by name: kept from one compile to the next while
@@ -287,7 +306,7 @@ public class ApplicationCompiler {
             }
 
             DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
-            boolean succeeded = javac.getTask(null, fileManager, diagnostics, options, null, units).call();
+            boolean succeeded = onJavacThread(javac.getTask(null, fileManager, diagnostics, options, null, units));
             for (Diagnostic<? extends JavaFileObject> diagnostic : diagnostics.getDiagnostics()) {
                 if (diagnostic.getKind() == Diagnostic.Kind.ERROR) {
                     throw compilationError(diagnostic);
@@ -311,6 +330,33 @@ public class ApplicationCompiler {
                 if (applicationClass != null) {
                     applicationClass.compiled(output.bytes.toByteArray());
                 }
+            }
+        }
+    }
+
+    /** Runs the task on {@link #JAVAC_THREAD}. An interrupted caller waits on, and has its status back afterwards. */
+    private static boolean onJavacThread(JavaCompiler.CompilationTask task) {
+        Future<Boolean> result = JAVAC_THREAD.submit(task);
+        boolean interrupted = false;
+        try {
+            while (true) {
+                try {
+                    return result.get();
+                } catch (InterruptedException e) {
+                    interrupted = true;
+                } catch (ExecutionException e) {
+                    if (e.getCause() instanceof RuntimeException runtime) {
+                        throw runtime;
+                    }
+                    if (e.getCause() instanceof Error error) {
+                        throw error;
+                    }
+                    throw new UnexpectedException(e.getCause());
+                }
+            }
+        } finally {
+            if (interrupted) {
+                Thread.currentThread().interrupt();
             }
         }
     }

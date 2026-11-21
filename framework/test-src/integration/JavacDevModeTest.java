@@ -98,6 +98,40 @@ public class JavacDevModeTest {
     }
 
     @Test
+    public void aRestartStartsTheApplicationOnAThreadThatIsNotInterrupted(@TempDir File app) throws Exception {
+        // The request that finds a changed signature restarts the application on its own thread, and
+        // Invoker.stop() interrupted that thread. Play.start() went on under the interrupt: javac's next
+        // read of a jar there closed the jar, and every later compile of the JVM failed.
+        scratchApp(app, "", """
+            package controllers;
+            public class Application extends play.mvc.Controller {
+                public static void index() {
+                    renderText(jobs.Boot.interrupted);
+                }
+            }
+            """);
+        write(app, "app/jobs/Boot.java", """
+            package jobs;
+            @play.jobs.OnApplicationStart
+            public class Boot extends play.jobs.Job<Void> {
+                public static String interrupted = "not run";
+                @Override public void doJob() { interrupted = "interrupted " + Thread.currentThread().isInterrupted(); }
+            }
+            """);
+
+        try (Running play = start(app)) {
+            assertThat(get(play, "/").body()).isEqualTo("interrupted false");
+
+            edit(app, "app/controllers/Application.java", "public static void index() {",
+                "public static void other() { }\n    public static void index() {");
+            HttpResponse<String> page = get(play, "/");
+            assertThat(page.statusCode()).as(page.body()).isEqualTo(200);
+            assertThat(page.body()).isEqualTo("interrupted false");
+        }
+        assertThat(Files.readString(new File(app, "console.log").toPath())).contains("Restart:");
+    }
+
+    @Test
     public void aPreviewApiCompilesAndRunsThroughPlaysOwnCompileWithJavaEnablePreview(@TempDir File app) throws Exception {
         scratchApp(app, "java.enablePreview=true\n", """
             package controllers;

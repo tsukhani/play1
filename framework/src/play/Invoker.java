@@ -515,7 +515,17 @@ public class Invoker {
      */
     public static synchronized void stop() {
         VirtualThreadScheduledExecutor s = scheduler;
-        if (s != null) s.shutdownNow();
+        if (s != null) {
+            // A DEV reload runs this on the request's own thread, one of the scheduler's, which
+            // shutdownNow() interrupts with the others. Play.start() then went on under that
+            // interrupt, and its first interruptible read failed: javac's, which closed a jar
+            // for every later compile (PF-229). The calling thread keeps the status it had.
+            boolean interrupted = Thread.currentThread().isInterrupted();
+            s.shutdownNow();
+            if (!interrupted) {
+                Thread.interrupted();
+            }
+        }
         scheduler = null;
     }
 

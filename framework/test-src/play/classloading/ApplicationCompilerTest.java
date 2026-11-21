@@ -123,6 +123,33 @@ class ApplicationCompilerTest {
     }
 
     @Test
+    void aCompileOnAnInterruptedThreadReadsTheJarsAndLeavesThemReadableForTheNextCompile() throws Exception {
+        // A DEV reload ran Play.start() on an interrupted thread, and javac's first read of a jar under
+        // that interrupt closed the jar's channel for good: every later compile failed with "bad class
+        // file ... ClosedChannelException", which only a new JVM ended.
+        source("models/Order.java", """
+            package models;
+            @jakarta.persistence.Entity public class Order { }
+            """);
+        source("models/Line.java", """
+            package models;
+            @jakarta.persistence.Entity public class Line { jakarta.persistence.CascadeType cascade; }
+            """);
+
+        Thread.currentThread().interrupt();
+        try {
+            compile("models.Order");
+            assertThat(Thread.currentThread().isInterrupted()).as("the caller keeps its interrupt status").isTrue();
+        } finally {
+            Thread.interrupted();
+        }
+        compile("models.Line");
+
+        assertThat(Play.classes.getApplicationClass("models.Order").javaByteCode).isNotNull();
+        assertThat(Play.classes.getApplicationClass("models.Line").javaByteCode).isNotNull();
+    }
+
+    @Test
     void aClassCompiledEarlierIsReadAsPlayCompiledItAndNotFromItsSource() throws Exception {
         File price = source("models/Price.java", """
             package models;
