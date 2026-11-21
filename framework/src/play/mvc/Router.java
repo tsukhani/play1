@@ -409,7 +409,8 @@ public class Router {
             Logger.trace("Route: " + request.path + " - " + request.querystring);
         }
         // request method may be overridden if a x-http-method-override parameter is given (PF-170)
-        if (request.querystring != null) {
+        // PF-237: the pattern needs the parameter's name, so a query string without it is not matched.
+        if (request.querystring != null && request.querystring.contains("x-http-method-override=")) {
             Matcher matcher = methodOverride.matcher(request.querystring);
             if (matcher.matches() && isMethodOverrideAllowed(request.method, matcher.group("method"))) {
                 if (Logger.isTraceEnabled()) {
@@ -873,6 +874,13 @@ public class Router {
         List<String> formats = new ArrayList<>(1);
         String host;
         Arg hostArg = null;
+        /**
+         * PF-237: the path when its pattern is plain text, which only that text matches, so a
+         * request's path is compared with it rather than run through a matcher. Null otherwise.
+         */
+        String literalPath;
+        /** PF-237: true while {@link #hostPattern} is the {@code .*} that compute() starts from. */
+        boolean anyHost;
         public int routesFileLine;
         public String routesFile;
         static final Pattern customRegexPattern = new Pattern("\\{([a-zA-Z_][a-zA-Z_0-9]*)\\}");
@@ -882,6 +890,8 @@ public class Router {
         public void compute() {
             this.host = "";
             this.hostPattern = new Pattern(".*");
+            this.anyHost = true;
+            this.literalPath = null;
             if (action.startsWith("staticDir:") || action.startsWith("staticFile:")) {
                 // Is there is a host argument, append it.
                 if (!path.startsWith("/")) {
@@ -894,6 +904,7 @@ public class Router {
                         return;
                     }
                     this.hostPattern = new Pattern(host.replaceAll("\\.", "\\\\."));
+                    this.anyHost = false;
                 }
                 if (!method.equalsIgnoreCase("*") && !method.equalsIgnoreCase("GET")) {
                     Logger.warn("Static route only support GET method");
@@ -929,6 +940,7 @@ public class Router {
 
                     Matcher m = new Pattern(pattern).matcher(host);
                     this.hostPattern = new Pattern(pattern);
+                    this.anyHost = false;
 
                     if (m.matches()) {
                         if (this.host.contains("{")) {
@@ -970,6 +982,7 @@ public class Router {
 
                 patternString = argsPattern.replacer("({$2}$1)").replace(patternString);
                 this.pattern = new Pattern(patternString);
+                this.literalPath = isPlainText(patternString) ? patternString : null;
                 // Action pattern
                 patternString = action;
                 patternString = patternString.replace(".", "[.]");
@@ -982,6 +995,18 @@ public class Router {
                 }
                 actionPattern = new Pattern(patternString, REFlags.IGNORE_CASE);
             }
+        }
+
+        /** Letters, digits and {@code / - _ ~ %}: text in which no character means anything to the pattern. */
+        static boolean isPlainText(String pattern) {
+            for (int i = 0; i < pattern.length(); i++) {
+                char c = pattern.charAt(i);
+                if (!(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9'
+                        || c == '/' || c == '-' || c == '_' || c == '~' || c == '%')) {
+                    return false;
+                }
+            }
+            return true;
         }
 
         public void addParams(String params) {
@@ -1054,16 +1079,22 @@ public class Router {
             if (method == null || this.method.equals("*") || method.equalsIgnoreCase(this.method)
                     || (method.equalsIgnoreCase("head") && ("get").equalsIgnoreCase(this.method))) {
 
-                Matcher matcher = pattern.matcher(path);
+                // PF-237: a plain-text path is compared, and the .* host pattern, whose dot
+                // matches anything but a line break, is not run; both answer what the matcher would.
+                Matcher matcher = literalPath == null ? pattern.matcher(path) : null;
 
                 boolean hostMatches = (domain == null);
                 if (domain != null) {
-
-                    Matcher hostMatcher = hostPattern.matcher(domain);
-                    hostMatches = hostMatcher.matches();
+                    if (anyHost) {
+                        hostMatches = domain.indexOf('\n') < 0 && domain.indexOf('\r') < 0;
+                    } else {
+                        Matcher hostMatcher = hostPattern.matcher(domain);
+                        hostMatches = hostMatcher.matches();
+                    }
                 }
+                boolean pathMatches = matcher == null ? literalPath.equals(path) : matcher.matches();
                 // Extract the host variable
-                if (matcher.matches() && contains(accept) && hostMatches) {
+                if (pathMatches && contains(accept) && hostMatches) {
                     // 404
                     if (action.equals("404")) {
                         throw new NotFound(method, path);
