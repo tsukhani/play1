@@ -9,6 +9,8 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -137,10 +139,22 @@ public class BytecodeCache {
                 return;
             }
             File f = cacheFile(cacheFileId(name));
-            try (FileOutputStream fos = new FileOutputStream(f)) {
-                fos.write(hash(source).getBytes(UTF_8));
-                fos.write(0);
-                fos.write(byteCode);
+            // PF-230: written beside the cache file and moved over it, so that a reader sees the
+            // old file or the new one and never a part of one. The JVMs of one JUnit Platform
+            // run start the same application at once, and read and write the same cache.
+            File part = File.createTempFile(f.getName(), ".part", f.getParentFile());
+            try {
+                try (FileOutputStream fos = new FileOutputStream(part)) {
+                    fos.write(hash(source).getBytes(UTF_8));
+                    fos.write(0);
+                    fos.write(byteCode);
+                }
+                Files.move(part.toPath(), f.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (IOException e) {
+                // Windows refuses to replace a file another process has open: that one's copy serves
+                Logger.trace("Bytecode of %s not cached: %s", name, e);
+            } finally {
+                Files.deleteIfExists(part.toPath());
             }
 
             // emit bytecode to standard class layout as well
