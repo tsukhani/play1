@@ -1,7 +1,10 @@
 package integration;
 
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.MethodOrderer;
+import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestMethodOrder;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -37,6 +40,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * action's {@code System.nanoTime()} before each write and the client's at arrival are one clock.
  * It prints {@code RESULT,sse-idle,...} with the figures, for comparing builds.
  */
+@TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class SseWriteLatencyTest {
 
     private static final int HTTP_PORT = 19080;
@@ -52,14 +56,18 @@ class SseWriteLatencyTest {
      * Each measured event is written after 15 ms in which nothing was. An event held back until a
      * later write, or a timer, would take about the gap or never come; the bound is half the gap.
      *
-     * <p>The 5,000 events before them, 1 ms apart, are idle writes too and warm up what each one
-     * runs (the resumeTransfer task, the wakeup of the event loop, the lone-chunk read) until the
-     * JIT has compiled it. Without them the figure is that of whatever the JVM ran before: a burst
-     * that took one task per event, as one did before PF-238, had warmed that path for it.
+     * <p>The figure is that of the steady state, so the case runs first and the 10,000 events
+     * before the measured ones, 1 ms apart, are idle writes too: they run what each measured one
+     * runs (the resumeTransfer task, the wakeup of the event loop, the read of a lone chunk) until
+     * C2 has compiled it, at about 5,000 calls. Otherwise the figure is that of whatever the JVM ran
+     * before. A burst that took one task per event, as one did before PF-238, warmed that path; one
+     * that takes a few does not, and with the bursts first and 5,000 events of warm-up the same
+     * code read as up to 110 µs slower after PF-238 than before it.
      */
     @Test
+    @Order(1)
     void anEventWrittenOnAnIdleStreamArrivesAtOnce() throws Exception {
-        int warmUp = 5_000;
+        int warmUp = 10_000;
         int count = 200;
         long gapMs = 15;
         List<Long> micros = new ArrayList<>();
