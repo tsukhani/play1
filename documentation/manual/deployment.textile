@@ -53,6 +53,7 @@ JVM flags can also live in @application.conf@, where they apply however the appl
 * @javaagent.path@ — a Java agent jar, passed as @-javaagent:<path>@
 * @agentlib@ — a native agent, passed as @-agentlib:<value>@
 * @jmx.port@ and @jmx.hostname@ — start "the JMX agent":deployment#jmx on that address. Both are required; one alone does nothing.
+* @java.enablePreview@ — @true@ starts the JVM with @--enable-preview@, for an application that uses Java's preview features (PF-229). The key is the one opt-in for them: Play compiles the application with @--enable-preview@ too, Gradle's @compileJava@ and @compileTestJava@ do, and Gradle's @test@ task runs with it, because the JVM loads a class compiled that way only when it was started with the flag. Only the word @true@, in any case, turns it on; when Play compiles it refuses any value but @true@ or @false@. Set it without a framework ID prefix: @play precompile@ compiles in test mode the classes that a production start loads, and Gradle compiles once for every ID. See "The Java compiler":production#javac.
 
 h3. <a name="jmx">The JMX agent</a>
 
@@ -274,7 +275,7 @@ Tell the framework to load from @precompiled/@ instead of recompiling at boot:
 
 bc. play start /path/to/myapp -Dprecompiled=true
 
-The system property forces @prod@ mode and skips both the Java and template compile passes. If @precompiled/@ is missing, the framework logs @"Precompiled classes are missing!!"@ and refuses to start.
+The system property forces @prod@ mode and skips both the Java and template compile passes. If @precompiled/@ is missing, the framework logs @"Precompiled classes are missing!!"@ and refuses to start. Compiling nothing, such a start needs no Java compiler: it runs on a Java runtime without the @jdk.compiler@ module ("The Java compiler":production#javac).
 
 A start in this mode can use the JDK's AOT cache, which takes a second or more off it: see "The AOT cache for play start and play run":#aot-cache-precompiled.
 

@@ -6,6 +6,17 @@ h2. <a name="jdk">JDK requirement</a>
 
 Play 1.12 requires **JDK 25 or later** at runtime. Build your application targeting Java 25 (e.g. @--release 25@ if you compile with @javac@ directly). Older JDKs are not supported — the framework relies on Java 25 features including JEP 491 (virtual threads no longer pin the carrier thread under @synchronized@).
 
+h2. <a name="javac">The Java compiler</a>
+
+Play compiles the application's Java sources itself, in the JVM it runs in: in dev mode, when @play test@ and @play autotest@ start, in @play precompile@, and in a production start that is not precompiled. It compiles them with the JDK's own compiler, @javac@, which replaced the Eclipse compiler (ECJ) of earlier releases (PF-229). The classes Play loads are therefore the output of the same compiler as Gradle's @compileJava@, which is where an application's compiler plugins, such as Error Prone or NullAway, check the code.
+
+* Play always compiles with line numbers, local variable tables and parameter names (@javac -g -parameters@), whatever the build script says: action binding and the bytecode enhancers read them.
+* @java.source@ in @application.conf@ is the release, 25 when it is not set. It can be any release from 25 up to the one of the JDK Play runs on.
+* @java.enablePreview=true@ compiles with @--enable-preview@, for an application that uses Java's preview features; see "JVM settings in application.conf":deployment#conf-jvm. It needs @java.source@ to be the JDK's own release, because @javac@ compiles the preview features of that release only.
+* A start that compiles needs a JDK. @javac@ is the @jdk.compiler@ module, which a JRE, or a runtime image built with @jlink@ without that module, does not have; such a start stops with "This Java runtime has no Java compiler". A precompiled start (@-Dprecompiled=true@, which every @play bundle@ uses) compiles nothing and runs on a runtime without the module.
+
+**Upgrading.** @javac@ refuses a few things ECJ accepted, and @test/@ is where they show: Gradle compiles @app/@ before every start, so @app/@ compiled with @javac@ already, but nothing compiled @test/@ with it before. One is an import on demand of a package that does not exist, such as the @import models.*;@ that the tests of a new application carried while the application had no @models@ package; @javac@ reports "package models does not exist". In dev mode a reload of a changed class takes a few milliseconds longer than it did with ECJ.
+
 h2. <a name="server-narrative">Deployment model</a>
 
 Play 1.12 deploys as a stand-alone Netty server — there is no servlet/WAR path. Production is a @play start@ process (typically running behind a reverse proxy that terminates TLS / HTTP/2 / HTTP/3 and load-balances). For the underlying HTTP server's capabilities (HTTP/2, HTTP/3, ALPN, virtual-thread dispatch), see "the HTTP server":httpserver. For deployment topology and process supervision, see "deployment":deployment.
