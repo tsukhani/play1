@@ -16,3 +16,4 @@ This directory is for maintainers. It is excluded from the distribution zip
 |---|---|---|
 | [0001](0001-reject-graalvm-native-image.md) | No GraalVM native image; the JDK's AOT cache for the bundle instead | Accepted |
 | [0002](0002-defer-build-time-metadata.md) | Build-time metadata generation deferred; runtime scanning stays | Accepted |
+| [0003](0003-stay-on-the-fork-over-helidon.md) | No move to Helidon; the fork reaches Helidon MP's numbers instead (PF-235) | Accepted |
