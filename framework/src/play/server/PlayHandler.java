@@ -769,15 +769,25 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
             // use for logging/auth decisions, not for security boundaries.
             return "0.0.0.0";
         }
-        String fullAddress = ((InetSocketAddress) raw).getAddress().getHostAddress();
-        if (fullAddress.matches("/[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+[:][0-9]+")) {
+        return remoteIPAddressOf(((InetSocketAddress) raw).getAddress().getHostAddress());
+    }
+
+    static String remoteIPAddressOf(String fullAddress) {
+        // PF-237: the patterns are compiled once, and only tried on an address that has the
+        // character each one needs, rather than compiled twice for every request.
+        if (fullAddress.startsWith("/") && SLASHED_ADDRESS_WITH_PORT.matcher(fullAddress).matches()) {
             fullAddress = fullAddress.substring(1);
             fullAddress = fullAddress.substring(0, fullAddress.indexOf(':'));
-        } else if (fullAddress.matches(".*[%].*")) {
+        } else if (fullAddress.indexOf('%') >= 0 && ADDRESS_WITH_SCOPE.matcher(fullAddress).matches()) {
             fullAddress = fullAddress.substring(0, fullAddress.indexOf('%'));
         }
         return fullAddress;
     }
+
+    private static final java.util.regex.Pattern SLASHED_ADDRESS_WITH_PORT =
+            java.util.regex.Pattern.compile("/[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+[:][0-9]+");
+    private static final java.util.regex.Pattern ADDRESS_WITH_SCOPE = java.util.regex.Pattern.compile(".*[%].*");
+    private static final java.util.regex.Pattern LOOPBACK_HOST = java.util.regex.Pattern.compile("^127\\.0\\.0\\.1:?[0-9]*$");
 
     /**
      * PF-57: walk to the underlying transport-level peer address. For TCP (HTTP/1.1, HTTP/2)
@@ -900,7 +910,7 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
             boolean isLoopback = false;
             try {
                 isLoopback = ((InetSocketAddress) ctx.channel().remoteAddress()).getAddress().isLoopbackAddress()
-                        && host.matches("^127\\.0\\.0\\.1:?[0-9]*$");
+                        && LOOPBACK_HOST.matcher(host).matches();
             } catch (Exception e) {
                 // ignore it
             }
