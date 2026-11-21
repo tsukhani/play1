@@ -105,12 +105,39 @@ public class BootTimingsLineTest {
         scratchApp(app, "application.mode=dev");
         boot(app, 0, "-Dprecompile=yes");
 
-        // The JDT classes come out of a signed jar. Opening it, to build a compiler that a
-        // precompiled start never runs, took about 50 ms of every such start, unreported by any phase.
+        // Building a compiler that a precompiled start never runs cost it time no phase reported:
+        // about 50 ms when it was ECJ's, out of a signed jar. Since PF-229 it is javac, which a
+        // runtime without the jdk.compiler module does not have at all (the case below).
         List<String> boot = boot(app, 0, "-Dprecompiled=true", "-Xlog:class+load");
         assertThat(boot).as("the application started").anyMatch(line -> line.contains(LINE));
-        assertThat(boot.stream().filter(line -> line.contains(" org.eclipse.jdt.")).limit(5).toList())
-                .as("JDT classes loaded by a start that compiles nothing").isEmpty();
+        assertThat(boot.stream().filter(line -> line.contains(" com.sun.tools.javac.")
+                        || line.contains(" play.classloading.ApplicationCompiler")).limit(5).toList())
+                .as("compiler classes loaded by a start that compiles nothing").isEmpty();
+    }
+
+    @Test
+    public void precompiledProdBootStartsOnARuntimeWithoutTheJavaCompiler(@TempDir File app) throws Exception {
+        // PF-229: Play compiles with javac, from the jdk.compiler module, which a JRE or a jlink image
+        // need not carry. A precompiled application compiles nothing and must start without it.
+        scratchApp(app, "application.mode=dev");
+        boot(app, 0, "-Dprecompile=yes");
+
+        String withoutCompiler = "--limit-modules=" + modulesThatDoNotNeed("jdk.compiler");
+        List<String> boot = boot(app, 0, "-Dprecompiled=true", withoutCompiler);
+        assertThat(boot.stream().filter(line -> line.contains(LINE)).toList())
+                .as("console:%n%s", String.join("\n", boot)).hasSize(1);
+
+        // and the runtime has no compiler indeed: a start from the sources says so and stops
+        List<String> compiling = new ArrayList<>(List.of(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+            "-DPLAY_SECRET=boottimingstestsecretkey1234567890boottimingstestsecretkey123456",
+            "-Dapplication.path=" + app.getAbsolutePath(), "-Dplay.id=prod", withoutCompiler,
+            "-cp", System.getProperty("java.class.path"), Probe.class.getName(), "--http.port=0"));
+        Files.writeString(new File(app, "conf/application.conf").toPath(),
+            "application.name=boot-timings\napplication.secret=${PLAY_SECRET}\napplication.mode=prod\n");
+        Process p = new ProcessBuilder(compiling).redirectErrorStream(true).start();
+        String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        assertThat(p.waitFor(120, TimeUnit.SECONDS)).isTrue();
+        assertThat(out).contains("This Java runtime has no Java compiler (the jdk.compiler module)");
     }
 
     @Test
@@ -165,7 +192,7 @@ public class BootTimingsLineTest {
         // with the metrics off nothing else in this boot asks for it, and the line must not be what stops it
         scratchApp(app, "application.mode=prod", "metrics.enabled=false");
 
-        List<String> boot = boot(app, 0, "--limit-modules=" + modulesThatDoNotNeedJavaManagement());
+        List<String> boot = boot(app, 0, "--limit-modules=" + modulesThatDoNotNeed("java.management"));
         List<String> started = boot.stream().filter(line -> line.contains(LINE)).toList();
         assertThat(started).as("console:%n%s", String.join("\n", boot)).hasSize(1);
         assertThat(NO_UPTIME_PROD_LINE.matcher(started.get(0)).find())
@@ -228,10 +255,10 @@ public class BootTimingsLineTest {
         return out.lines().toList();
     }
 
-    /** Every module of this JDK but java.management and the ones that require it, as {@code --limit-modules} wants them. */
-    private static String modulesThatDoNotNeedJavaManagement() {
+    /** Every module of this JDK but the one named and the ones that require it, as {@code --limit-modules} wants them. */
+    private static String modulesThatDoNotNeed(String unwanted) {
         Set<ModuleReference> jdk = ModuleFinder.ofSystem().findAll();
-        Set<String> excluded = new HashSet<>(Set.of("java.management"));
+        Set<String> excluded = new HashSet<>(Set.of(unwanted));
         // to a fixed point: a module that requires an excluded one would bring it back
         boolean grew = true;
         while (grew) {

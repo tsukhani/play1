@@ -480,7 +480,7 @@ conf_value() {
 }
 
 # PF-183: the JVM flags application.conf asks for -- javaagent.path, agentlib,
-# jvm.memory, and the jmx.* keys -- a bash port of confJvmArgs() in
+# jvm.memory, the jmx.* keys and java.enablePreview -- a bash port of confJvmArgs() in
 # Play1Plugin.kt, which does this for the Gradle launch paths. Keep the two in
 # step (BundleLauncherTest compares their output): a bundle that skipped these
 # keys ran without options the app's own conf requests.
@@ -525,6 +525,10 @@ conf_jvm_args() {
             [ -z "$value" ] || CONF_JVM+=("-Dcom.sun.management.jmxremote.$name=$value")
         done
     fi
+    # PF-229: an application that sets java.enablePreview=true was compiled with
+    # --enable-preview, and the JVM loads such a class only when started with it
+    # too. The word true in any case, as Play reads it when it compiles.
+    case "$(conf_value java.enablePreview)" in [Tt][Rr][Uu][Ee]) CONF_JVM+=(--enable-preview) ;; esac
 }
 
 # PF-180: -XX:AOTCache for `run` and `start`, when aot-gen has left a cache.

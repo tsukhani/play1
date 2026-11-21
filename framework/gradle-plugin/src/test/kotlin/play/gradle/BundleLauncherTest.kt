@@ -652,7 +652,13 @@ class BundleLauncherTest {
             "jmx.port=9010\njmx.hostname=127.0.0.1\njmx.authenticate=ture\njmx.ssl=\n",
             "jmx.port=9010\njmx.hostname=10.0.0.5\njmx.ssl=true\n%prod.jmx.ssl=false\n" +
                 "jmx.password.file=conf/jmx.password\njmx.access.file=conf/jmx.access\n" +
-                "jmx.ssl.config.file=conf/jmx-ssl.properties\njvm.memory=-Xmx1g\njavaagent.path=bin/agent.jar\n"
+                "jmx.ssl.config.file=conf/jmx-ssl.properties\njvm.memory=-Xmx1g\njavaagent.path=bin/agent.jar\n",
+            // PF-229: --enable-preview for the classes Play compiled with it
+            "java.enablePreview=true\n",
+            "java.enablePreview = TRUE \njvm.memory=-Xmx1g\n",
+            "java.enablePreview=yes\n",
+            "java.enablePreview=true\n%staging.java.enablePreview=false\n",
+            "%prod.java.enablePreview=true\njmx.port=9010\njmx.hostname=127.0.0.1\n"
         )
         confs.forEachIndexed { i, conf ->
             val (bundle, stubs) = bundleWithConf(File(tmp, "case$i").apply { mkdirs() }, conf)

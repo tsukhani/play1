@@ -31,6 +31,20 @@ class ConfJvmArgsTest {
     }
 
     @Test
+    fun `java enablePreview set to true starts the JVM with --enable-preview, last`(@TempDir tmp: File) {
+        // PF-229: the classes Play compiles for such an application carry the preview mark,
+        // which the JVM refuses to load unless it was started with the flag.
+        assertEquals(listOf("--enable-preview"), flags(tmp, "java.enablePreview=true\n"))
+        assertEquals(listOf("-Xmx1g", "--enable-preview"), flags(tmp, "java.enablePreview = TRUE \njvm.memory=-Xmx1g\n"))
+        assertEquals(emptyList<String>(), flags(tmp, "java.enablePreview=false\n"))
+        // Play refuses the value when it compiles; the launchers just leave the flag off
+        assertEquals(emptyList<String>(), flags(tmp, "java.enablePreview=yes\n"))
+        // The play id's own entry decides, as it does in the configuration Play compiles with.
+        assertEquals(emptyList<String>(), flags(tmp, "java.enablePreview=true\n%prod.java.enablePreview=false\n"))
+        assertEquals(listOf("--enable-preview"), flags(tmp, "%prod.java.enablePreview=true\n"))
+    }
+
+    @Test
     fun `jmx port and hostname alone start an agent that demands a login and TLS`(@TempDir tmp: File) {
         // PF-183: both were hard-coded off, so the two keys meant an open agent.
         assertEquals(

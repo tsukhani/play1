@@ -36,6 +36,8 @@ import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
+import org.gradle.api.tasks.compile.JavaCompile
+import org.gradle.api.tasks.testing.Test
 import org.gradle.kotlin.dsl.create
 import org.gradle.kotlin.dsl.getByType
 import org.gradle.kotlin.dsl.register
@@ -125,6 +127,7 @@ class Play1Plugin : Plugin<Project> {
         }
 
         configureSourceSets(project, ext)
+        configurePreview(project)
         // After the build script, which sets frameworkPath and appManagedLibraries.
         project.afterEvaluate { alignWithFrameworkLib(project, ext) }
 
@@ -521,6 +524,26 @@ class Play1Plugin : Plugin<Project> {
         javaExt.sourceSets.named("test").configure {
             java.setSrcDirs(listOf("test"))
             compileClasspath += frameworkClasspath
+        }
+    }
+
+    /**
+     * PF-229: `java.enablePreview=true` in application.conf compiles the application with
+     * --enable-preview. Play's own javac, whose classes are the ones Play defines, reads the key
+     * itself; compileJava and compileTestJava, where an application's compiler plugins check the
+     * same sources, get the flag here, and Gradle's test task, which runs what they compile, its
+     * JVM option. The Play JVMs get the option from confJvmArgs. Read without a play id: Gradle
+     * compiles once for every one, and `play precompile`, in test mode, writes the classes that a
+     * production start loads. The configuration cache records the file as an input.
+     */
+    private fun configurePreview(project: Project) {
+        val conf = project.providers.fileContents(project.layout.projectDirectory.file("conf/application.conf")).asText
+        fun previewEnabled() = enablesPreview(conf.orNull?.let { activeValue(it, PREVIEW_KEY) })
+        project.tasks.withType(JavaCompile::class.java).configureEach {
+            if (previewEnabled()) options.compilerArgs.add(ENABLE_PREVIEW)
+        }
+        project.tasks.withType(Test::class.java).configureEach {
+            if (previewEnabled()) jvmArgs(ENABLE_PREVIEW)
         }
     }
 
@@ -1600,6 +1623,7 @@ internal fun aotCacheArg(appDir: File, userJvmArgs: List<String>): String? {
 //   - agentlib         -> -agentlib:<spec>
 //   - jvm.memory       -> whitespace-split into discrete JVM args
 //   - jmx.port + jmx.hostname (both required) -> JMX agent flags
+//   - java.enablePreview=true -> --enable-preview (PF-229; not in 1.12)
 //
 // The JMX agent demands a login and TLS unless the conf turns them off with
 // a literal jmx.authenticate=false / jmx.ssl=false (PF-183). The 1.12
@@ -1655,8 +1679,20 @@ internal fun confJvmArgs(appDir: File, playId: String): List<String> {
                 jmx(name)?.let { add("-Dcom.sun.management.jmxremote.$name=$it") }
             }
         }
+        // PF-229: the classes of an application that sets it are compiled with --enable-preview,
+        // and the JVM loads such a class only when it was started with the flag too.
+        if (enablesPreview(confValue(confText, PREVIEW_KEY, playId))) add(ENABLE_PREVIEW)
     }
 }
+
+// PF-229: the application.conf key that compiles the application with --enable-preview and
+// starts its JVMs with it: ApplicationCompiler.PREVIEW_KEY in the framework, conf_jvm_args in
+// bundle-play.sh. Only the word true, in any case, turns it on; Play refuses anything but true
+// or false when it compiles, so a typo stops the application rather than starting it without.
+internal const val PREVIEW_KEY = "java.enablePreview"
+internal const val ENABLE_PREVIEW = "--enable-preview"
+
+internal fun enablesPreview(value: String?): Boolean = value?.trim().equals("true", ignoreCase = true)
 
 // Read the env-var name from `application.secret=${VARNAME}`. Returns
 // PLAY_SECRET when the conf is missing or the line uses an unparseable form
