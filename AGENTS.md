@@ -134,6 +134,18 @@ Its own tests are gated by `ant test` via the `gradle-plugin-test` target (PF-17
 
 `play.server` receives HTTP → `Router` resolves URL to controller action → `ActionInvoker` invokes the static controller method → `Controller` base class provides thread-local `request`/`response`/`session`/`params` → template rendering via `GroovyTemplate`.
 
+### Per-request work
+
+Work that gives every request the same answer is done once (PF-237), and each shortcut answers exactly what the per-request code answered:
+- **Response headers:** `PlayHandler` formats the Date header once a second, and `encodeCookie` encodes the Set-Cookie header of a cookie with an empty value once a second. Play deletes its session, flash and errors cookies on every response that does not set them, and Netty's encoder built its thread-local map and a calendar on each request's new virtual thread. The kept header is keyed on every attribute `ServerCookieEncoder` reads, so an attribute that `addToResponse` starts to set joins the `EmptyCookie` key. A cookie with a value is encoded each time.
+- **Action lookup:** `ActionInvoker.getActionMethod` keeps what it found for an action name, with the class loader it found it in, in PROD only and for at most 1,024 names. DEV looks every time, because classes change there.
+- **Controller calls:** in PROD, `ActionInvoker.invoke(Method, ...)` calls a method through a method handle once a reflective call has reached it, so the Result every action throws is not wrapped in an InvocationTargetException whose stack trace is filled in. Only for a public method of a public class in the unnamed module, and only with arguments reflection would take without converting them; anything else goes through reflection, which also keeps a failing class initialiser failing as it did.
+- **Routes:** a `Router.Route` whose path pattern is plain text (letters, digits and `/ - _ ~ %`) compares the request's path with it, and a route without a host skips its `.*` host pattern and checks the domain for the line feed and carriage return that jregex's dot refuses.
+- **Request headers:** copied in one pass. A name that repeats, or one that lowercases otherwise in the default locale than in the root locale, takes the lookup by name.
+- **No JAMon monitor per request:** nothing has read them since `/@status` stopped printing them (PF-90), and `http_server_requests` times the requests. Jobs and templates keep theirs.
+
+Guarded by `ResponseHeadersPerSecondTest`, `ActionLookupCacheTest`, `ActionInvokeHandleTest`, `RouteMatchingTest`, `RequestHeadersTest`, `RemoteAddressTest` and `integration.RequestPathFunctionalTest`, which checks what a request through the real server is given.
+
 ### Key Packages (`framework/src/play/`)
 
 - **`mvc/`** — `Controller`, `Router`, `ActionInvoker`, `Http` (request/response/session objects)
