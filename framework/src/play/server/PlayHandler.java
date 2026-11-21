@@ -994,6 +994,25 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
     }
 
     protected static Map<String, Http.Header> getHeaders(HttpRequest nettyRequest) {
+        // PF-237: one pass over the headers. When each name appears once, which is what a
+        // request almost always has, every name gets its one value, as the lookup below gives it.
+        // A name that appears twice, in any case, or one that lowercases otherwise in the
+        // default locale than in the root locale, takes that lookup.
+        Map<String, Http.Header> headers = new HashMap<>(16);
+        for (Map.Entry<String, String> entry : nettyRequest.headers()) {
+            String key = entry.getKey();
+            String lower = key.toLowerCase();
+            if (headers.containsKey(lower) || !lower.equals(key.toLowerCase(Locale.ROOT))) {
+                return getHeadersByName(nettyRequest);
+            }
+            List<String> values = new ArrayList<>(1);
+            values.add(entry.getValue());
+            headers.put(lower, new Http.Header(lower, values));
+        }
+        return headers;
+    }
+
+    static Map<String, Http.Header> getHeadersByName(HttpRequest nettyRequest) {
         Map<String, Http.Header> headers = new HashMap<>(16);
         for (String key : nettyRequest.headers().names()) {
             String lower = key.toLowerCase();
