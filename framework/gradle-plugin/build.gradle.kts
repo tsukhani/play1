@@ -46,7 +46,29 @@ tasks.named<Test>("test") {
     dependsOn(timingTest)
 }
 
+// PF-227: the bash BundleLauncherTest runs the bundle launcher under, /bin/bash unless
+// -PlauncherBash names another. The launcher starts through #!/usr/bin/env bash, so without this
+// the first bash on the PATH ran it, and on Linux /bin/bash is bash 5 while a stock Mac runs a
+// bundle under bash 3.2.57; bash32/test.sh runs the class again under a bash 3.2.57 built for it.
+// A system property, so a change of bash reruns the suite rather than finding it up to date.
+// Windows starts the launcher through Git Bash and ignores it.
+val launcherBash = providers.gradleProperty("launcherBash").getOrElse("/bin/bash")
+val onWindows = System.getProperty("os.name").startsWith("Windows")
+
 tasks.withType<Test>().configureEach {
+    if (!onWindows) {
+        // A local, because the configuration cache cannot store an action holding the script.
+        val bash = launcherBash
+        systemProperty("play.test.launcherBash", bash)
+        doFirst {
+            val version = runCatching {
+                val probe = ProcessBuilder(bash, "-c", "echo \$BASH_VERSION").redirectErrorStream(true).start()
+                probe.inputStream.bufferedReader().readText().trim().takeIf { probe.waitFor() == 0 }
+            }.getOrNull()
+            if (version.isNullOrEmpty()) throw GradleException("launcherBash $bash does not run as a bash")
+            logger.lifecycle("BundleLauncherTest runs the bundle launcher under $bash, bash $version")
+        }
+    }
     // FrameworkBomsTest reads the repo's real lib-coordinates.properties, which `ant jar`
     // rewrites after every `ant resolve`; undeclared, the suite stayed UP-TO-DATE across a
     // dependency bump. inputs.files, not inputs.file: a checkout that has never run `ant jar`

@@ -16,6 +16,8 @@ import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import java.net.ServerSocket
 import java.net.Socket
+import java.nio.file.Files
+import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 import java.util.jar.Attributes
 import java.util.jar.JarEntry
@@ -40,6 +42,26 @@ import javax.tools.ToolProvider
  * it was skipped on Windows, and a launcher that broke only there went unseen.
  */
 class BundleLauncherTest {
+
+    companion object {
+        /**
+         * PF-227: the bash the launcher runs under off Windows, which the build passes from
+         * -PlauncherBash, /bin/bash by default. Before, the first bash on the PATH ran it: bash 5
+         * on Linux, or on a Mac with a newer bash first, though a stock Mac runs a bundle under
+         * bash 3.2.57. bash32/test.sh runs this class again under a bash 3.2.57 built for it.
+         */
+        private val launcherBash: String = System.getProperty("play.test.launcherBash") ?: "/bin/bash"
+
+        /** A directory holding only `bash`, a link to [launcherBash], for [launcherBashFirst]. */
+        private val launcherBashDir: File by lazy {
+            Files.createTempDirectory("launcher-bash").toFile().also { dir ->
+                dir.deleteOnExit()
+                val link = File(dir, "bash")
+                Files.createSymbolicLink(link.toPath(), Path.of(launcherBash))
+                link.deleteOnExit()
+            }
+        }
+    }
 
     private val fwVersion = "1.13.57"
     private val onWindows = OS.WINDOWS.isCurrentOs
@@ -84,6 +106,17 @@ class BundleLauncherTest {
     /** The command line that runs the bundle's `play` with [args]. */
     private fun play(vararg args: String): List<String> =
         if (onWindows) listOf(gitBash!!, "./play", *args) else listOf("./play", *args)
+
+    /**
+     * PF-227: put [launcherBash] ahead of the PATH, so that `./play`, which starts through
+     * `#!/usr/bin/env bash`, runs under it whatever bash the PATH has first. Stub directories
+     * put on PATH afterwards still come before it. Windows runs the launcher through Git Bash.
+     */
+    private fun ProcessBuilder.launcherBashFirst(): ProcessBuilder =
+        if (onWindows) this else pathFirst(launcherBashDir)
+
+    /** A process that runs the bundle's `play` with [args] under [launcherBash]. */
+    private fun launcher(vararg args: String): ProcessBuilder = ProcessBuilder(play(*args)).launcherBashFirst()
 
     /** The command line that runs [script] through a POSIX shell. */
     private fun shell(script: String, vararg args: String): List<String> =
@@ -155,7 +188,7 @@ class BundleLauncherTest {
 
     /** Run `./play run [args]` in [bundle] with [stubs] prepended to PATH; return java's argv. */
     private fun launcherArgv(bundle: File, stubs: File, vararg args: String): List<String> {
-        val proc = ProcessBuilder(play("run", *args))
+        val proc = launcher("run", *args)
             .directory(bundle)
             .redirectErrorStream(true)
             .pathFirst(stubs)
@@ -173,7 +206,7 @@ class BundleLauncherTest {
     private fun startLogConfigLine(bundle: File, stubs: File, vararg args: String): String {
         // The stub java from a previous start may not have exited yet.
         File(bundle, "server.pid").delete()
-        val proc = ProcessBuilder(play("start", *args))
+        val proc = launcher("start", *args)
             .directory(bundle)
             .redirectErrorStream(true)
             .pathFirst(stubs)
@@ -215,7 +248,7 @@ class BundleLauncherTest {
         path: List<File> = emptyList()
     ): Launch {
         val stderr = File(stubs, "stderr.txt")
-        val proc = ProcessBuilder(play(*args))
+        val proc = launcher(*args)
             .directory(bundle)
             .redirectError(stderr)
             .apply {
@@ -234,6 +267,19 @@ class BundleLauncherTest {
         if (args.firstOrNull() in setOf("start", "restart")) settle(bundle)
         fun lines(text: String) = text.split('\n').filter { it.isNotEmpty() }
         return Launch(exit, lines(stdout), lines(stderr.readText()))
+    }
+
+    /**
+     * PF-227: whether a pattern range in [bash] follows the collation of [locale]: a bash before 5,
+     * on a libc that collates by locale (macOS's does, musl's does not), with the locale installed.
+     * Probed with T, which Estonian collation leaves out of A-Z.
+     */
+    private fun rangesFollowCollation(bash: String, locale: String): Boolean {
+        val probe = ProcessBuilder(bash, "-c", "case T in [A-Z]) echo bytes;; *) echo collated;; esac")
+            .redirectError(ProcessBuilder.Redirect.DISCARD)
+            .apply { environment()["LC_ALL"] = locale }
+            .start()
+        return probe.inputStream.bufferedReader().readText().trim() == "collated"
     }
 
     /** A bundle under [tmp] whose certs/.env holds exactly [dotenv], and its stub directory. */
@@ -286,10 +332,9 @@ class BundleLauncherTest {
         writeBundle(bundle)
         val stubs = File(tmp, "bin")
         writeStubs(stubs, windows = false)
-        // Looked up before the stubs go first on PATH, so the stand-in cannot exec itself.
-        val hostBash = ProcessBuilder(shell("command -v bash")).start().inputStream.bufferedReader().readText().trim()
+        // Ahead of the bash under test on PATH (PF-227), which it hands the launcher on to.
         File(stubs, "bash").apply {
-            writeText("#!/bin/sh\nprintf '%s\\n' \"\$@\" > bash.args\nexec '$hostBash' \"\$@\"\n")
+            writeText("#!/bin/sh\nprintf '%s\\n' \"\$@\" > bash.args\nexec '$launcherBash' \"\$@\"\n")
             setExecutable(true)
         }
 
@@ -658,6 +703,7 @@ class BundleLauncherTest {
         writeStubs(stubs, windows = false)
 
         val proc = ProcessBuilder(shell("./play run --stacktrace 2>&-"))
+            .launcherBashFirst()
             .directory(bundle)
             .pathFirst(stubs)
             .start()
@@ -718,7 +764,7 @@ class BundleLauncherTest {
             try {
                 var exitedAt = 0L
                 val watcher = Thread { jvm.waitFor(); exitedAt = System.nanoTime() }.apply { start() }
-                val stop = ProcessBuilder(play("stop")).directory(bundle).redirectErrorStream(true).start()
+                val stop = launcher("stop").directory(bundle).redirectErrorStream(true).start()
                 var stoppedAt = 0L
                 val out = StringBuilder()
                 stop.inputStream.bufferedReader().forEachLine { line ->
@@ -776,7 +822,7 @@ class BundleLauncherTest {
         // for the value 2 under Git Bash on Windows CI (v1.13.104); a Windows command line built
         // from its quotes and globs is the likely cause, and a file avoids it either way.
         File(tmp, "stop-wait.sh").writeText("$function\nstop_wait_seconds\n")
-        val bash = if (onWindows) gitBash!! else "bash"
+        val bash = if (onWindows) gitBash!! else launcherBash
         fun launcherWait(value: String?): Long {
             val proc = ProcessBuilder(bash, "stop-wait.sh")
                 .directory(tmp)
@@ -933,6 +979,12 @@ class BundleLauncherTest {
         // Before bash 5 a pattern range such as A-Z follows the locale, and Estonian
         // collation leaves T to Y out of it -- PLAY_SECRET stopped being a name. Has
         // teeth only where that bash and that locale both exist (macOS /bin/bash 3.2).
+        // PF-227: elsewhere it would pass without testing anything, so it says so instead.
+        val bash = if (onWindows) gitBash!! else launcherBash
+        assumeTrue(
+            rangesFollowCollation(bash, "et_EE.UTF-8"),
+            "$bash leaves a pattern range to byte order under et_EE.UTF-8, so it cannot show the bug"
+        )
         val (bundle, stubs) = bundleWithDotEnv(tmp, "PF184_TUVWXY_tuvwxy=kept\n")
 
         val run = launch(
@@ -1586,7 +1638,7 @@ class BundleLauncherTest {
         val (bundle, stubs) = ssrBundle(tmp)
         val port = freePort()
         val out = File(tmp, "run.out")
-        val run = ProcessBuilder(play("run", "--http.port=$port", "-Dpf212.listen.delay=1500"))
+        val run = launcher("run", "--http.port=$port", "-Dpf212.listen.delay=1500")
             .directory(bundle)
             .redirectErrorStream(true)
             .redirectOutput(out)

@@ -46,6 +46,14 @@ The Gradle plugin builds from the repo root:
 ./gradlew :gradle-plugin:build
 ```
 
+Its tests run the bundle launcher (`bundle-play.sh`) under `/bin/bash`, which on Linux is bash 5. A stock Mac starts a bundle under bash 3.2.57, which lacks `declare -A`, `mapfile`, `${x,,}` and more. To run those tests under bash 3.2.57 as well, with nothing installed but Docker:
+
+```bash
+framework/gradle-plugin/bash32/test.sh
+```
+
+CI runs it too, as its own job.
+
 **Before opening a PR, run `ant test`.** That is exactly what CI runs (on Linux and Windows, JDK 25), so a local pass is a good predictor of a green check — with one important exception, below.
 
 ## Two things that will silently bite you

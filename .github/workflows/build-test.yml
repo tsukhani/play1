@@ -56,9 +56,31 @@ jobs:
             ./framework/gradle-plugin/build/reports/tests/
             ./framework/gradle-plugin/build/test-results/
 
+  # PF-227: BundleLauncherTest again, under bash 3.2.57, the bash a stock Mac starts a bundle with.
+  # The testing job runs it under bash 5, which is /bin/bash on ubuntu-latest and in Git Bash.
+  # The script is the one a developer runs, and needs only Docker.
+  launcher-bash32:
+    runs-on: ubuntu-latest
+    name: Bundle launcher tests / bash 3.2.57
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: BundleLauncherTest under bash 3.2.57
+        run: framework/gradle-plugin/bash32/test.sh
+
+      - name: Upload tests-results on failure
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: tests-results-launcher-bash32
+          if-no-files-found: ignore
+          path: ./framework/gradle-plugin/build/bash32/
+
   build:
     needs:
       - testing
+      - launcher-bash32
     runs-on: ubuntu-latest
     name: BUILD ${{ github.sha }}
     steps:
