@@ -1,5 +1,6 @@
 package play.db.jpa;
 
+import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -26,6 +27,13 @@ public class JPA {
     protected static final Map<String, EntityManagerFactory> emfs = new ConcurrentHashMap<>();
     public static final ThreadLocal<Map<String, JPAContext>> currentEntityManager = ThreadLocal.withInitial(ConcurrentHashMap::new);
     public static final String DEFAULT = "default";
+
+    /**
+     * PF-231: while {@link #withoutTransaction(String, F.Function0)} runs a block, what
+     * {@link #em(String)} adds to its failure to say how the block opens a transaction. Unset
+     * everywhere else, which leaves that failure as it was.
+     */
+    private static final ThreadLocal<String> withoutTransactionHint = new ThreadLocal<>();
 
     public static class JPAContext {
         public String dbName = JPA.DEFAULT;
@@ -130,8 +138,11 @@ public class JPA {
      */
     public static EntityManager em(String key) {
         JPAContext jpaContext = get(key);
-        if (jpaContext == null)
-            throw new JPAException("No active EntityManager for name [" + key + "], transaction not started?");
+        if (jpaContext == null) {
+            String hint = withoutTransactionHint.get();
+            throw new JPAException("No active EntityManager for name [" + key + "], transaction not started?"
+                    + (hint == null ? "" : " " + hint));
+        }
         if (!jpaContext.materialized) {
             materialize(jpaContext);
         }
@@ -429,6 +440,67 @@ public class JPA {
             }
         } else {
             return block.apply();
+        }
+    }
+
+    /**
+     * PF-231: run a block with no JPA transaction open on this thread. The contexts the thread
+     * holds, such as the transaction of the request or job it runs in, are set aside while the
+     * block runs and put back, untouched, when it ends. What the block saves goes through a
+     * transaction it opens itself with {@link #withTransaction(String, boolean, F.Function0)},
+     * which commits when it ends. An entity manager the block leaves open, with
+     * {@link #startTx(String, boolean)} and no {@link #closeTx(String)}, is rolled back and
+     * closed, so that its pooled connection goes back.
+     *
+     * @param hint
+     *            Added to the failure of {@link #em(String)} inside the block, to say how code
+     *            there opens a transaction
+     * @param block
+     *            Block of code to execute
+     * @param <T>
+     *            The type of the block's result
+     * @return The block's result
+     * @throws java.lang.Throwable
+     *             Whatever the block throws
+     */
+    public static <T> T withoutTransaction(String hint, F.Function0<T> block) throws Throwable {
+        Map<String, JPAContext> contexts = get();
+        Map<String, JPAContext> setAside = new HashMap<>(contexts);
+        String outerHint = withoutTransactionHint.get();
+        contexts.clear();
+        withoutTransactionHint.set(hint);
+        try {
+            return block.apply();
+        } finally {
+            if (outerHint == null) {
+                withoutTransactionHint.remove();
+            } else {
+                withoutTransactionHint.set(outerHint);
+            }
+            for (JPAContext leftOpen : contexts.values()) {
+                rollBackAndClose(leftOpen);
+            }
+            contexts.clear();
+            contexts.putAll(setAside);
+        }
+    }
+
+    private static void rollBackAndClose(JPAContext context) {
+        if (!context.materialized || !context.entityManager.isOpen()) {
+            return;
+        }
+        Logger.warn("JPA -> code run with no transaction around it left an entity manager open on [%s]; "
+                + "rolling it back", context.dbName);
+        try {
+            try {
+                if (context.entityManager.getTransaction().isActive()) {
+                    context.entityManager.getTransaction().rollback();
+                }
+            } finally {
+                context.entityManager.close();
+            }
+        } catch (RuntimeException e) {
+            Logger.warn(e, "JPA -> cannot close the entity manager left open on [%s]", context.dbName);
         }
     }
 
