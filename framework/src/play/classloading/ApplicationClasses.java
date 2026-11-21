@@ -374,6 +374,20 @@ public class ApplicationClasses {
             return compiled && javaClass != null;
         }
 
+        /**
+         * A nested name that the compile of its file, as the file is now, did not emit. javac emits every
+         * class a file declares, inner, local and anonymous ones included, and each goes to its own entry
+         * with its bytes, so such a name is no class of the file (PF-229).
+         */
+        boolean isNestedNameItsFileDoesNotDeclare() {
+            int dollar = name.indexOf('$');
+            if (dollar < 0 || javaFile == null || javaByteCode != null) {
+                return false;
+            }
+            ApplicationClass topLevel = Play.classes.classes.get(name.substring(0, dollar));
+            return topLevel != null && topLevel.javaByteCode != null && topLevel.timestamp >= javaFile.lastModified();
+        }
+
         public boolean isClass() {
             return isClass(this.name);
         }

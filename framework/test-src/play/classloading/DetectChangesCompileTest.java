@@ -1,6 +1,7 @@
 package play.classloading;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.File;
 import java.io.IOException;
@@ -104,6 +105,45 @@ class DetectChangesCompileTest {
 
         loader.detectChanges();
         assertThat(compiles).as("nothing changed since").hasSize(1);
+    }
+
+    @Test
+    void aNestedNameTheCompiledFileDoesNotDeclareIsNoClassAndCompilesNothing() throws Exception {
+        // Hibernate's ByteBuddy asks the loader for each proxy's name, models.Order$HibernateProxy$..., and
+        // getJava finds Order.java for it: the file was compiled again for every proxied entity at each start
+        source("models/Order.java", "package models;\npublic class Order {\n    public static class Line { }\n}\n");
+        ApplicationClassloader loader = new ApplicationClassloader();
+        Play.classloader = loader;
+        loader.loadClass("models.Order");
+        List<List<String>> compiles = countCompiles();
+
+        String proxy = "models.Order$HibernateProxy$Q2f8aT1x";
+        assertThat(loader.loadApplicationClass(proxy)).isNull();
+        assertThatThrownBy(() -> loader.loadClass(proxy)).isInstanceOf(ClassNotFoundException.class);
+        assertThat(loader.loadClass("models.Order$Line").getName()).isEqualTo("models.Order$Line");
+        assertThat(compiles).as("the file was compiled as it is").isEmpty();
+        assertThat(Play.classes.all()).extracting(c -> c.name).doesNotContain(proxy);
+
+        loader.detectChanges();
+        assertThat(compiles).as("no entry left for detectChanges to take for edited").isEmpty();
+
+        // once the file has changed since its compile, a name that compile did not emit may be a class it gained
+        edit("models/Order.java", "public static class Line { }", "public static class Line { }\n    public static class Fee { }");
+        assertThat(new ApplicationClasses.ApplicationClass("models.Order$Fee").isNestedNameItsFileDoesNotDeclare()).isFalse();
+    }
+
+    private List<List<String>> countCompiles() throws Exception {
+        List<List<String>> compiles = new CopyOnWriteArrayList<>();
+        Field compiler = ApplicationClasses.class.getDeclaredField("compiler");
+        compiler.setAccessible(true);
+        compiler.set(Play.classes, new ApplicationCompiler(Play.classes, ApplicationCompiler.options(Play.configuration)) {
+            @Override
+            public void compile(String[] classNames) {
+                compiles.add(List.of(classNames));
+                super.compile(classNames);
+            }
+        });
+        return compiles;
     }
 
     private static String text(Class<?> type) throws Exception {

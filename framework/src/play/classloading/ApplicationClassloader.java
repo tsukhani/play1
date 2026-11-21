@@ -182,6 +182,15 @@ public class ApplicationClassloader extends ClassLoader {
                     return loaded;
                 }
             }
+            // Hibernate's ByteBuddy asks for a proxy's name (models.Order$HibernateProxy$...) before it makes
+            // the proxy, and getJava gives any name of that shape Order.java. Compiling the file again for it
+            // emitted no such class, and cost a javac task per proxied entity at every start and restart,
+            // about 26 ms each in an application of 45 entities, where ECJ took about 1 (PF-229). Its entry
+            // goes too, which detectChanges would otherwise take for an edited class and compile once more.
+            if (applicationClass.isNestedNameItsFileDoesNotDeclare()) {
+                Play.classes.classes.remove(name);
+                return null;
+            }
             byte[] bc = BytecodeCache.getBytecode(name, applicationClass.javaSource);
 
             if (Logger.isTraceEnabled()) {
