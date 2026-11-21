@@ -28,10 +28,10 @@ import play.vfs.VirtualFile;
 public class ApplicationClasses {
 
     /**
-     * Reference to the eclipse compiler. Created when something is first compiled and not
-     * before: a precompiled application compiles nothing, and merely loading
-     * ApplicationCompiler pulls the JDT classes out of their signed jar, which took about
-     * 50 ms of every such start.
+     * Reference to the compiler, javac (PF-229). Created when something is first compiled and
+     * not before: a precompiled application compiles nothing, and needs no jdk.compiler module
+     * to start. (Merely loading ApplicationCompiler, when it was ECJ's, pulled the JDT classes
+     * out of their signed jar, which took about 50 ms of every such start.)
      */
     private volatile ApplicationCompiler compiler;
 

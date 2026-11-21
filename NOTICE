@@ -81,7 +81,6 @@ Apache License 2.0
     - jakarta.inject-api
 
 Eclipse Public License 2.0
-    - Eclipse JDT Core / ECJ (org.eclipse.jdt.core, ecj)
     - JUnit 5 Jupiter (api, engine, params)
     - Jakarta Activation API
     - Jakarta Mail

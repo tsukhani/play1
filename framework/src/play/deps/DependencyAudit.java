@@ -28,8 +28,8 @@ import java.util.stream.Collectors;
  * {@code transitiveDependencies: false}, so each one is there because a human listed it. Nothing
  * re-checks that the reason still holds: {@code org.eclipse.jdt.core} was added upstream in 2011,
  * became redundant in 2023 when {@code ecj} was listed beside it, and was still being re-resolved
- * and re-vendored on every JDT bump two years later. This target is the ratchet that stops the
- * next one lasting that long.
+ * and re-vendored on every JDT bump two years later (JDT left {@code lib/} altogether with PF-229,
+ * when javac replaced ECJ). This target is the ratchet that stops the next one lasting that long.
  *
  * <p><b>Why an allowlist rather than a bare "unused" report.</b> Static reachability alone is far
  * too blunt to act on: at the time of writing 40 of 136 jars are unreachable, and all but three

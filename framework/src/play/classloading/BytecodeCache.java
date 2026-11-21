@@ -170,7 +170,7 @@ public class BytecodeCache {
             }
             MessageDigest messageDigest = MessageDigest.getInstance("MD5");
             messageDigest.reset();
-            messageDigest.update((Play.version + plugins + text).getBytes(UTF_8));
+            messageDigest.update((Play.version + plugins + compiler() + text).getBytes(UTF_8));
             byte[] digest = messageDigest.digest();
             StringBuilder builder = new StringBuilder();
             for (int i = 0; i < digest.length; ++i) {
@@ -184,6 +184,16 @@ public class BytecodeCache {
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
+    }
+
+    /**
+     * PF-229: what decides the compiler's output besides the source: javac's version and the two
+     * settings that reach its options. A class compiled with another, by ECJ before PF-229 or
+     * without --enable-preview, is not one to load.
+     */
+    static String compiler() {
+        return "javac " + Runtime.version() + " java.source=" + Play.configuration.getProperty("java.source")
+                + " " + ApplicationCompiler.PREVIEW_KEY + "=" + Play.configuration.getProperty(ApplicationCompiler.PREVIEW_KEY);
     }
 
     /**

@@ -145,10 +145,6 @@
       groupName: "Jakarta APIs"
     },
     {
-      matchPackageNames: ["org.eclipse.jdt:**"],
-      groupName: "Eclipse JDT"
-    },
-    {
       matchPackageNames: ["com.aayushatharva.brotli4j:**"],
       groupName: "brotli4j (multi-platform native)"
     },

@@ -66,7 +66,7 @@ The @play new@ command creates a new directory @yabe/@ and populates it with a s
 
 p(note). Because **Play uses UTF-8** as single encoding, it’s very important that all text files hosted in these directories are encoded using this charset. Make sure to configure your text editor accordingly.
 
-Now if you’re a seasoned Java developer, you may wonder where all the .class files go. The answer is nowhere: Play doesn’t use any class files; instead it reads the Java source files directly. Under the hood we use the Eclipse compiler to compile Java sources on the fly. 
+Now if you’re a seasoned Java developer, you may wonder where all the .class files go. The answer is nowhere: Play doesn’t use any class files; instead it reads the Java source files directly. Under the hood Play compiles the Java sources on the fly with the JDK's own compiler, javac. 
 
 That allows two very important things in the development process. The first one is that Play will detect changes you make to any Java source file and automatically reload them at runtime. The second is that when a Java exception occurs, Play will create better error reports showing you the exact source code.
 
