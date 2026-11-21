@@ -1323,6 +1323,10 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
         // PF-238: at most this much of the queue goes out in one readChunk, which is one socket
         // write. 16 KiB is one TLS record and HTTP/2's default largest DATA frame.
         static final int MAX_DRAIN_BYTES = 16 * 1024;
+        // PF-238: true from the write that asks for a resumeTransfer until the event loop's next
+        // readChunk, so a burst of writes puts one task on the event loop, not one per write.
+        private final java.util.concurrent.atomic.AtomicBoolean resumePending =
+                new java.util.concurrent.atomic.AtomicBoolean();
 
         @Override
         @Deprecated
@@ -1339,6 +1343,9 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
          */
         @Override
         public ByteBuf readChunk(ByteBufAllocator allocator) throws Exception {
+            // Cleared before the poll: a write queued after this point asks for a resume of its
+            // own, and one queued before it is taken by this read.
+            resumePending.set(false);
             byte[] first = nextChunks.poll();
             if (first == null) {
                 return null;
@@ -1402,8 +1409,11 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
          *     the writer runs on an invoker virtual thread; false when it could be the Netty
          *     IO/event-loop thread, where parking would deadlock (the event loop is what drains the
          *     queue via readChunk). See the outer {@link PlayHandler#writeChunk}.
+         * @return whether the caller must resume the transfer: true for the first chunk queued
+         *     since the event loop's last readChunk, false while that resume is still pending
+         *     (PF-238). A chunk queued on an idle stream therefore always asks for one.
          */
-        public void writeChunk(Object chunk, boolean allowBlock) throws Exception {
+        public boolean writeChunk(Object chunk, boolean allowBlock) throws Exception {
             if (closed) {
                 throw new Exception("HTTP output stream closed");
             }
@@ -1419,7 +1429,7 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
             // Skip empty payloads — an empty chunk would round-trip as 0\r\n\r\n through the
             // encoder and prematurely terminate the chunked response.
             if (bytes.length == 0) {
-                return;
+                return false;
             }
 
             // PF-134: bound the queue. If the backlog is already over HIGH and we're on a VT (never
@@ -1443,6 +1453,8 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
 
             nextChunks.offer(bytes);
             queuedBytes.addAndGet(bytes.length);
+            // After the offer: a pending resume has not reached its readChunk yet, so it takes this chunk.
+            return resumePending.compareAndSet(false, true);
         }
     }
 
@@ -1475,9 +1487,11 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
             // channelRead. Parking there would deadlock the loop that drains the queue, so we gate on
             // inEventLoop() and skip the wait in that (non-SSE) case rather than risk a deadlock.
             boolean allowBlock = !ctx.executor().inEventLoop();
-            ((LazyChunkedInput) playResponse.direct).writeChunk(chunk, allowBlock);
-
-            resumeChunkedTransfer(ctx);
+            // PF-238: off the event loop each resume is a task on it, so only the first write
+            // before the next drain schedules one.
+            if (((LazyChunkedInput) playResponse.direct).writeChunk(chunk, allowBlock)) {
+                resumeChunkedTransfer(ctx);
+            }
         } catch (Exception e) {
             throw new UnexpectedException(e);
         }
