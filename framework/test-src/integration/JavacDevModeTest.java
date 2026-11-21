@@ -83,9 +83,10 @@ public class JavacDevModeTest {
         try (Running play = start(app)) {
             assertThat(get(play, "/").body()).isEqualTo("version one");
 
-            // a body: hot-swapped in place
+            // a body: hot-swapped in place, the signature checksum of javac's two classes being the same
             edit(app, "app/controllers/Application.java", "\"one\"", "\"two\"");
             assertThat(get(play, "/").body()).isEqualTo("version two");
+            assertThat(Files.readString(new File(app, "console.log").toPath())).doesNotContain("Restart:");
 
             // a class the controller calls, with a new method: the application restarts
             edit(app, "app/models/Greeting.java", "public class Greeting {",

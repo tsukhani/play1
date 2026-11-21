@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.File;
 import java.io.IOException;
+import java.lang.classfile.ClassFile;
+import java.lang.classfile.instruction.InvokeInstruction;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 import java.nio.charset.StandardCharsets;
@@ -129,6 +131,31 @@ class JavacEnhancersTest {
     }
 
     @Test
+    void aControllersThreadLocalFieldsAndAMailersStaticMethodsAreRewritten() throws Exception {
+        source("controllers/Orders.java", """
+            package controllers;
+            public class Orders extends play.mvc.Controller {
+                public static void show() {
+                    renderText(params.get("id"));
+                }
+            }
+            """);
+        source("notifiers/Mails.java", """
+            package notifiers;
+            public class Mails extends play.mvc.Mailer {
+                public static void welcome(String to) {
+                    addRecipient(to);
+                }
+            }
+            """);
+
+        // ControllersEnhancer reads params through Java.invokeStatic(type, "current"), so each request gets its own
+        assertThat(invokes(enhanced("controllers.Orders"), "show")).contains("play/utils/Java.invokeStatic");
+        // MailerEnhancer wraps the method in infos.set(...) and infos.remove()
+        assertThat(invokes(enhanced("notifiers.Mails"), "welcome")).contains("java/lang/ThreadLocal.set", "java/lang/ThreadLocal.remove");
+    }
+
+    @Test
     void theSignatureChecksumChangesWithASignatureOrALocalVariableNameAndNotWithABody() throws Exception {
         // A hot swap is tried only while the checksum holds; a checksum that moved with every compile
         // would restart the application on every change.
@@ -154,6 +181,23 @@ class JavacEnhancersTest {
         ApplicationClass pages = Play.classes.getApplicationClass("controllers.Pages");
         pages.enhance();
         return pages.sigChecksum;
+    }
+
+    private byte[] enhanced(String name) {
+        Play.classes.compiler().compile(new String[] { name });
+        ApplicationClass compiled = Play.classes.getApplicationClass(name);
+        compiled.enhance();
+        return compiled.enhancedByteCode;
+    }
+
+    /** The methods a method calls, as owner.name. */
+    private static List<String> invokes(byte[] bytecode, String method) {
+        return ClassFile.of().parse(bytecode).methods().stream()
+            .filter(m -> m.methodName().equalsString(method))
+            .flatMap(m -> m.code().orElseThrow().elementStream())
+            .filter(InvokeInstruction.class::isInstance).map(InvokeInstruction.class::cast)
+            .map(call -> call.owner().asInternalName() + "." + call.name().stringValue())
+            .toList();
     }
 
     private Class<?> compileAndEnhance(String name) throws Exception {
