@@ -71,8 +71,10 @@ The checkout's own Gradle wrapper builds all three applications; nothing else is
   - `--server-cpus LIST` and `--client-cpus LIST`: `taskset` lists for the servers under test and for oha, h2load and
     curl, for example `6-11,30-35` and `12-17,36-41`, two groups of cores that share no L3 cache;
   - `--guard-cpus LIST`: the CPUs on which each measurement records what other users' programs used, and measures
-    again when that is more than `--guard-max` cores' worth (0.5), at most `--guard-retries` times (2). The rows keep
-    the figure and the discarded attempts.
+    again when that is more than `--guard-max` cores' worth (0.5), at most `--guard-retries` times (2). Before each
+    retry it waits until a 5 s probe finds those CPUs quiet, for up to 30 minutes: a scheduled virus scan held one
+    core of them for longer than a cell takes, and retries made at once only measured it again. The rows keep the
+    figure and the discarded attempts.
 
 A full run takes about two hours, most of it the load step: six cells (four protocols, HTTP/2 at three depths) of
 five endpoints for each application. `--protocols h1` is the 40-minute run of PF-236.

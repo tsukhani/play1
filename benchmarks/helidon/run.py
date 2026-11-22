@@ -523,11 +523,28 @@ class Harness:
                                                                                    proof["oha"]))
         return proof
 
+    def wait_quiet(self):
+        """Before a retry: until a 5 s probe of the benchmark CPUs, with this user's work idle, finds other programs
+        under --guard-max, checked every 30 s for up to 30 minutes. Retrying at once only repeats a disturbance that
+        lasts, such as a scheduled virus scan."""
+        deadline = time.monotonic() + 1800
+        while True:
+            a = self.guard.snapshot()
+            time.sleep(5)
+            others = self.guard.cores(a, self.guard.snapshot())["others_cores"]
+            if others <= self.guard_max or time.monotonic() > deadline:
+                return others
+            self.log("  waiting: other programs use %.2f cores of the benchmark CPUs" % others)
+            time.sleep(25)
+
     def guarded(self, run):
         """run() under the guard: re-run while other users' programs used more than --guard-max cores of the
-        benchmark CPUs, at most --guard-retries times. Returns (result, guard figures, discarded attempts)."""
+        benchmark CPUs, at most --guard-retries times, each once the CPUs are quiet again. Returns (result, guard
+        figures, discarded attempts)."""
         discarded = []
         for attempt in range(1 + (self.guard_retries if self.guard else 0)):
+            if attempt:
+                self.wait_quiet()
             before = self.guard.snapshot() if self.guard else None
             result = run()
             figures = self.guard.cores(before, self.guard.snapshot()) if self.guard else None
