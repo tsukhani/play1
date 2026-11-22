@@ -307,11 +307,13 @@ Default: @false@
 
 h3(#application.session.sendOnlyIfChanged). application.session.sendOnlyIfChanged
 
-Avoid sending the session cookie if there were no changes to the session. For example:
+Avoid sending the session cookie if there were no changes to the session. With @false@, a session that holds data is sent on every response, changed or not. For example:
 
 bc. application.session.sendOnlyIfChanged=true
 
 Default: @false@
+
+Whatever this is set to, Play deletes the session, flash and errors cookies only in a response to a request that carried them: an empty session, or a flash or errors scope with nothing to keep, adds no @Set-Cookie@ for a client that sent no such cookie, since it has nothing to delete. Play 1.13.112 and earlier, with @false@, also sent a deletion of each of the three cookies in every response that did not set it.
 
 
 h3(#application.web_encoding). application.web_encoding

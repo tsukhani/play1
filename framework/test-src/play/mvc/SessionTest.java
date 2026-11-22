@@ -83,10 +83,31 @@ public class SessionTest {
 
         mockRequestAndResponse();
 
-        // Change nothing in the session
+        // Change nothing in an empty session: a request without the cookie has nothing to delete (PF-249)
         session = Session.restore();
         session.save();
-        assertNotNull(Response.current().cookies.get(Scope.COOKIE_PREFIX + "_SESSION"));
+        assertNull(Response.current().cookies.get(Scope.COOKIE_PREFIX + "_SESSION"));
+
+        // A non-empty session is sent on every response, changed or not
+        Play.secretKey = "0112358";
+        mockRequestAndResponse();
+        session = Session.restore();
+        session.put("username", "Bob");
+        session.save();
+        Cookie sent = Response.current().cookies.get(Scope.COOKIE_PREFIX + "_SESSION");
+        assertNotNull(sent);
+        boolean started = Play.started;
+        try {
+            Play.started = true;
+            mockRequestAndResponse();
+            Request.current().cookies.put(sent.name, sent);
+            session = Session.restore();
+            assertFalse(session.changed);
+            session.save();
+            assertEquals(sent.value, Response.current().cookies.get(Scope.COOKIE_PREFIX + "_SESSION").value);
+        } finally {
+            Play.started = started;
+        }
     }
 
     @Test

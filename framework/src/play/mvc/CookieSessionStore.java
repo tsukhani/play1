@@ -73,8 +73,9 @@ public class CookieSessionStore implements SessionStore {
             return;
         }
         if (session.isEmpty()) {
-            // The session is empty: delete the cookie
-            if (Http.Request.current().cookies.containsKey(COOKIE_PREFIX + "_SESSION") || !SESSION_SEND_ONLY_IF_CHANGED) {
+            // The session is empty: delete the cookie the request carried. A client that sent
+            // none has nothing to delete, whatever sendOnlyIfChanged says (PF-249).
+            if (Http.Request.current().cookies.containsKey(COOKIE_PREFIX + "_SESSION")) {
                 Http.Response.current().setCookie(COOKIE_PREFIX + "_SESSION", "", null, "/", 0, COOKIE_SECURE, SESSION_HTTPONLY);
                 Scope.applySameSite(COOKIE_PREFIX + "_SESSION");
             }

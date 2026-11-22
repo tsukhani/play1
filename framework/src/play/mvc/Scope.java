@@ -105,7 +105,8 @@ public class Scope {
                 return;
             }
             if (out.isEmpty()) {
-                if (Http.Request.current().cookies.containsKey(COOKIE_PREFIX + "_FLASH") || !SESSION_SEND_ONLY_IF_CHANGED) {
+                // Delete only the cookie the request carried: a client that sent none has nothing to delete (PF-249)
+                if (Http.Request.current().cookies.containsKey(COOKIE_PREFIX + "_FLASH")) {
                     Http.Response.current().setCookie(COOKIE_PREFIX + "_FLASH", "", null, "/", 0, COOKIE_SECURE, SESSION_HTTPONLY);
                     applySameSite(COOKIE_PREFIX + "_FLASH");
                 }

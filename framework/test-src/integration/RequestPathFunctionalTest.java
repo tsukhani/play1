@@ -25,9 +25,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * PF-237: what a plain request through the real server is given, now that its path no longer
  * repeats work for it. Each test covers a cut where the work it removed showed:
  * <ul>
- * <li>the Date header and the deletions of the session, flash and errors cookies, formatted and
- * encoded once per second, and the response headers no longer copied: each header once, with the
- * value it had;</li>
+ * <li>the Date header, formatted once per second, and the response headers no longer copied: each
+ * header once, with the value it had;</li>
+ * <li>PF-249: no Set-Cookie for a request without cookies, and a deletion of each of the session,
+ * flash and errors cookies that a request carried;</li>
  * <li>JAMon monitors, which nothing read since /@status stopped printing them: none is recorded;</li>
  * <li>the logging context, put in one step: its keys in the order the four puts gave them;</li>
  * <li>an empty query string, no longer parsed: a query string still binds, and an unknown charset
@@ -66,6 +67,17 @@ public class RequestPathFunctionalTest {
                 "x-frame-options", "referrer-policy", "x-xss-protection", "content-security-policy" }) {
             assertEquals(1, response.headers().allValues(name).size(), () -> name + ": " + response.headers().map());
         }
+
+        // PF-249: the request carried none of the scopes' cookies, so none is deleted
+        assertEquals(List.of(), response.headers().allValues("set-cookie"));
+    }
+
+    @Test
+    void theScopeCookiesARequestCarriedAreDeletedOnce() throws Exception {
+        HttpResponse<String> response = CLIENT.send(HttpRequest.newBuilder(URI.create(BASE + "/json"))
+                .header("Cookie", Scope.COOKIE_PREFIX + "_ERRORS=; " + Scope.COOKIE_PREFIX + "_FLASH=; "
+                        + Scope.COOKIE_PREFIX + "_SESSION=").build(), HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, response.statusCode());
 
         List<String> cookies = response.headers().allValues("set-cookie");
         assertEquals(3, cookies.size(), () -> "set-cookie: " + cookies);
