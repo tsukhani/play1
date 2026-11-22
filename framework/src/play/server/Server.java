@@ -4,6 +4,8 @@ import java.io.File;
 import java.lang.management.ManagementFactory;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.nio.channels.Selector;
+import java.nio.channels.ServerSocketChannel;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
@@ -463,16 +465,23 @@ public class Server {
     }
 
     /**
-     * PF-239: the Netty classes the bind and the first request initialize, in the order they
-     * do. Their static initializers read the platform (Unsafe, the direct memory limit, the
-     * selector provider, the network interfaces for a channel id) and none depends on Play.
-     * The handlers are the Netty ones of the default {@code play.netty.pipeline}
-     * ({@link HttpServerPipelineFactory#DEFAULT_PIPELINE}) and no others: initializing
-     * {@code HttpContentCompressor}, which that pipeline leaves out, extracted and loaded
-     * brotli4j's native library at every start, which PF-173 keeps off a deployment that does
-     * not compress, and the main thread stalled behind the load for up to 100 ms.
+     * PF-239: classes whose static initializers every start runs on its main thread, and which
+     * depend on nothing of Play's.
+     * <ul>
+     * <li>The Netty classes the bind and the first request initialize, in the order they do.
+     * Their initializers read the platform (Unsafe, the direct memory limit, the selector
+     * provider, the network interfaces for a channel id). The handlers are the Netty ones of the
+     * default {@code play.netty.pipeline} ({@link HttpServerPipelineFactory#DEFAULT_PIPELINE})
+     * and no others: initializing {@code HttpContentCompressor}, which that pipeline leaves out,
+     * extracted and loaded brotli4j's native library at every start, which PF-173 keeps off a
+     * deployment that does not compress, and the main thread stalled behind the load for up to
+     * 100 ms.</li>
+     * <li>{@code jregex.CharacterClass}, whose initializer and {@code jregex.Bitset}'s build
+     * jregex's Unicode tables when Router's first pattern is compiled: 12 to 14 ms of every
+     * start with an AOT cache, which cannot hold jregex's Java 1.1 classes.</li>
+     * </ul>
      */
-    static final String[] NETTY_PREINIT = {
+    static final String[] PREINIT = {
         "io.netty.util.internal.PlatformDependent",
         "io.netty.util.NetUtil",
         "io.netty.channel.DefaultChannelId",
@@ -489,32 +498,39 @@ public class Server {
         "io.netty.handler.codec.http.DefaultFullHttpResponse",
         "io.netty.handler.codec.http.HttpHeaderNames",
         "io.netty.handler.codec.http.HttpResponseStatus",
+        "jregex.CharacterClass",
     };
 
     /**
-     * PF-239: initialize {@link #NETTY_PREINIT} and allocate and free one direct buffer, which
-     * links Netty's native memory calls, on a daemon thread while the application starts. The
-     * bind and the first request did this on their own thread: 25 to 50 ms of the bind phase on
-     * the head-to-head's application, on a thread that is otherwise idle until then. A class
-     * initialized here is the one the server then uses; one that fails to initialize fails
-     * again, and is reported, where the server first uses it.
+     * PF-239: initialize {@link #PREINIT}, open and close a selector and a server socket
+     * channel, which sets up the JDK's NIO natives and socket options the bind needs, and
+     * allocate and free one direct buffer, which links Netty's native memory calls, on a daemon
+     * thread while the application starts. The bind and the first request did this on their own
+     * thread: 25 to 50 ms of the bind phase on the head-to-head's application, on a thread that
+     * is otherwise idle until then. A class initialized here is the one the server then uses;
+     * one that fails to initialize fails again, and is reported, where the server first uses it.
      */
-    static Thread preinitializeNetty() {
+    static Thread preinitialize() {
         Thread thread = new Thread(() -> {
             ClassLoader loader = Server.class.getClassLoader();
-            for (String name : NETTY_PREINIT) {
+            for (String name : PREINIT) {
                 try {
                     Class.forName(name, true, loader);
                 } catch (Throwable ignored) {
                     // the server reports it when it gets there
                 }
             }
+            try (Selector selector = Selector.open(); ServerSocketChannel channel = ServerSocketChannel.open()) {
+                // opened only to set the classes up
+            } catch (Throwable ignored) {
+                // as above
+            }
             try {
                 io.netty.buffer.Unpooled.directBuffer(1).release();
             } catch (Throwable ignored) {
                 // as above
             }
-        }, "play-netty-preinit");
+        }, "play-preinit");
         thread.setDaemon(true);
         thread.start();
         return thread;
@@ -532,7 +548,7 @@ public class Server {
             }
         }, "play-log4j-shutdown"));
         if (System.getProperty("precompile") == null) {
-            preinitializeNetty();
+            preinitialize();
         }
         try {
             File root = new File(System.getProperty("application.path", "."));

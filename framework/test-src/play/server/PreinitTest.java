@@ -13,23 +13,23 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 
 /**
- * PF-239: Server.main initializes the Netty classes of the bind and the first request on a
- * thread of its own. A class Netty renames would leave that thread with nothing to do and no
- * error, so every name it initializes must still be a class.
+ * PF-239: Server.main initializes the classes of the bind, the first request and the routes on
+ * a thread of its own. A class a library renames would leave that thread with nothing to do
+ * and no error, so every name it initializes must still be a class.
  */
-public class NettyPreinitTest {
+public class PreinitTest {
 
     @Test
     public void everyClassThePreinitializerNamesExists() {
         ClassLoader loader = Server.class.getClassLoader();
-        for (String name : Server.NETTY_PREINIT) {
+        for (String name : Server.PREINIT) {
             assertThatCode(() -> Class.forName(name, false, loader)).as(name).doesNotThrowAnyException();
         }
     }
 
     @Test
     public void thePreinitializerRunsOnADaemonThreadAndEnds() throws InterruptedException {
-        Thread thread = Server.preinitializeNetty();
+        Thread thread = Server.preinitialize();
         assertThat(thread.isDaemon()).isTrue();
         thread.join(30_000);
         assertThat(thread.isAlive()).isFalse();
@@ -44,7 +44,7 @@ public class NettyPreinitTest {
     public void everyHandlerThePreinitializerNamesIsInTheDefaultPipeline() throws ClassNotFoundException {
         List<String> pipeline = Arrays.asList(HttpServerPipelineFactory.DEFAULT_PIPELINE.split(","));
         ClassLoader loader = Server.class.getClassLoader();
-        for (String name : Server.NETTY_PREINIT) {
+        for (String name : Server.PREINIT) {
             if (ChannelHandler.class.isAssignableFrom(Class.forName(name, false, loader))) {
                 assertThat(pipeline).as("%s is a handler the default play.netty.pipeline does not use", name).contains(name);
             }
@@ -68,7 +68,7 @@ public class NettyPreinitTest {
     /** Runs the preinitializer in a JVM of its own, so nothing else has loaded a library yet. */
     public static class Probe {
         public static void main(String[] args) throws InterruptedException {
-            Thread thread = Server.preinitializeNetty();
+            Thread thread = Server.preinitialize();
             thread.join(30_000);
             System.out.println(thread.isAlive() ? "PREINIT STILL RUNNING" : "PREINIT DONE");
         }
