@@ -1,5 +1,6 @@
 package play.server;
 
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketException;
@@ -119,9 +120,12 @@ class HttpServerPipelineFactoryResetTest {
                             });
                         }
                     });
-            Channel server = b.bind(0).sync().channel();
-            int port = ((InetSocketAddress) server.localAddress()).getPort();
-            try (Socket s = new Socket("localhost", port)) {
+            // PF-248: bind and connect to one loopback address. bind(0) bound every interface, and on
+            // macOS another process may hold 127.0.0.1 on the same port beside it, so a client of
+            // "localhost" could reach that listener and be reset before the test ran.
+            Channel server = b.bind(InetAddress.getLoopbackAddress(), 0).sync().channel();
+            InetSocketAddress bound = (InetSocketAddress) server.localAddress();
+            try (Socket s = new Socket(bound.getAddress(), bound.getPort())) {
                 s.setKeepAlive(false);
                 assertTrue(childActive.await(2, TimeUnit.SECONDS),
                         "server child channel did not become active");

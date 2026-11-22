@@ -1,6 +1,7 @@
 package play.server.ssl;
 
 import java.io.File;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketException;
@@ -162,9 +163,12 @@ class SslHttpServerPipelineFactoryResetTest {
                             });
                         }
                     });
-            Channel server = b.bind(0).sync().channel();
-            int port = ((InetSocketAddress) server.localAddress()).getPort();
-            try (Socket s = new Socket("localhost", port)) {
+            // PF-248: bind and connect to one loopback address. bind(0) bound every interface, and on
+            // macOS another process may hold 127.0.0.1 on the same port beside it, so a client of
+            // "localhost" could reach that listener and be reset before the test ran.
+            Channel server = b.bind(InetAddress.getLoopbackAddress(), 0).sync().channel();
+            InetSocketAddress bound = (InetSocketAddress) server.localAddress();
+            try (Socket s = new Socket(bound.getAddress(), bound.getPort())) {
                 s.setKeepAlive(false);
                 assertTrue(childActive.await(2, TimeUnit.SECONDS),
                         "server child channel did not become active");
@@ -226,10 +230,11 @@ class SslHttpServerPipelineFactoryResetTest {
                             // is added below, once negotiation has finished.
                         }
                     });
-            Channel server = b.bind(0).sync().channel();
-            int port = ((InetSocketAddress) server.localAddress()).getPort();
+            // PF-248: one loopback address for the bind and the connect, as in the test above.
+            Channel server = b.bind(InetAddress.getLoopbackAddress(), 0).sync().channel();
+            InetSocketAddress bound = (InetSocketAddress) server.localAddress();
 
-            try (SSLSocket s = openH2TlsClient(port)) {
+            try (SSLSocket s = openH2TlsClient(bound)) {
                 // A real handshake, unlike the test above — only a completed handshake makes
                 // SslHandshakeExceptionSuppressor self-remove and makes Http2OrHttp1Negotiator
                 // install the h2 chain. That is precisely the state the bug report describes,
@@ -285,10 +290,10 @@ class SslHttpServerPipelineFactoryResetTest {
      * Hostname verification is off by default on {@link SSLSocket} (no
      * {@code endpointIdentificationAlgorithm} set), which is what we want for {@code localhost}.
      */
-    private static SSLSocket openH2TlsClient(int port) throws Exception {
+    private static SSLSocket openH2TlsClient(InetSocketAddress server) throws Exception {
         SSLContext clientCtx = SSLContext.getInstance("TLS");
         clientCtx.init(null, new TrustManager[]{TRUST_ALL}, new SecureRandom());
-        SSLSocket socket = (SSLSocket) clientCtx.getSocketFactory().createSocket("localhost", port);
+        SSLSocket socket = (SSLSocket) clientCtx.getSocketFactory().createSocket(server.getAddress(), server.getPort());
         SSLParameters params = socket.getSSLParameters();
         params.setApplicationProtocols(new String[]{"h2"});
         socket.setSSLParameters(params);
