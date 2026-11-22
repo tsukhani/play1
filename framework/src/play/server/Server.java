@@ -145,7 +145,7 @@ public class Server {
             if (httpPort != -1) {
                 // Boss only accepts; one thread per bound port suffices. Worker count honours
                 // play.netty.maxThreads if set (legacy Netty 3 toggle), otherwise a quarter of the
-                // cores (PF-240, see workerThreads). 0 / unset / unparseable → default.
+                // cores, at least 2 (PF-240, see workerThreads). 0 / unset / unparseable → default.
                 EventLoopGroup bossGroup = new NioEventLoopGroup(1);
                 EventLoopGroup workerGroup = new NioEventLoopGroup(workerThreads());
                 registerForShutdown(bossGroup, workerGroup);
@@ -351,18 +351,21 @@ public class Server {
     }
 
     /**
-     * PF-240: a quarter of the cores, rounded up, where Netty's own default is twice the cores.
+     * PF-240: a quarter of the cores, rounded up and at least 2, where Netty's own default is
+     * twice the cores.
      * The event loops only decode, encode and write: every action runs on a virtual thread of its
      * own. Each loop is a platform thread with its own stack and its own magazines in Netty's
      * adaptive allocator, every one of them holding direct chunks of at least 128 KiB that are
      * malloc'd outside the JVM's native memory tracking. On 14 cores the 28 loops held 17 to 26 MB
      * more than 4 did and served fewer requests, since a loop with two connections is woken for
-     * nearly every write. {@code -Dio.netty.eventLoopThreads}, Netty's own setting, still wins
-     * when it is given: 0 hands the choice to Netty, which reads it.
+     * nearly every write. Never fewer than 2: a JVM sized for 4 cores ran its lone loop at 98 to
+     * 100% of a core under the Helidon harness's load and served fewer requests, at a higher p99,
+     * than Netty's 8 did, where 2 served more than either. {@code -Dio.netty.eventLoopThreads},
+     * Netty's own setting, still wins when it is given: 0 hands the choice to Netty, which reads it.
      */
     static int defaultWorkerThreads(int cores) {
         if (System.getProperty("io.netty.eventLoopThreads") != null) return 0;
-        return Math.max(1, (cores + 3) / 4);
+        return Math.max(2, (cores + 3) / 4);
     }
 
     private static synchronized void registerForShutdown(EventLoopGroup... groups) {

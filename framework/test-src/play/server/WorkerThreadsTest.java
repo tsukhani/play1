@@ -6,9 +6,9 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * PF-240: the HTTP and HTTPS worker event loops default to a quarter of the cores, rounded up, where Netty's own
- * default is twice the cores; {@code play.netty.maxThreads} and Netty's {@code io.netty.eventLoopThreads} still decide
- * when they are set.
+ * PF-240: the HTTP and HTTPS worker event loops default to a quarter of the cores, rounded up and never fewer than 2,
+ * where Netty's own default is twice the cores; {@code play.netty.maxThreads} and Netty's
+ * {@code io.netty.eventLoopThreads} still decide when they are set.
  */
 public class WorkerThreadsTest {
 
@@ -19,13 +19,19 @@ public class WorkerThreadsTest {
 
     @Test
     public void theDefaultIsAQuarterOfTheCoresRoundedUp() {
-        assertThat(Server.defaultWorkerThreads(1)).isEqualTo(1);
-        assertThat(Server.defaultWorkerThreads(2)).isEqualTo(1);
-        assertThat(Server.defaultWorkerThreads(4)).isEqualTo(1);
-        assertThat(Server.defaultWorkerThreads(5)).isEqualTo(2);
+        assertThat(Server.defaultWorkerThreads(9)).isEqualTo(3);
         assertThat(Server.defaultWorkerThreads(14)).isEqualTo(4);
         assertThat(Server.defaultWorkerThreads(16)).isEqualTo(4);
         assertThat(Server.defaultWorkerThreads(64)).isEqualTo(16);
+    }
+
+    @Test
+    public void theDefaultIsNeverFewerThanTwoLoops() {
+        // A JVM sized for 4 cores pegged a lone loop at 98-100% of a core under the Helidon harness's 64 connections,
+        // where 2 loops served more requests at half the p99.
+        for (int cores = 1; cores <= 8; cores++) {
+            assertThat(Server.defaultWorkerThreads(cores)).as("%d cores", cores).isEqualTo(2);
+        }
     }
 
     @Test
