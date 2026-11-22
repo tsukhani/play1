@@ -125,6 +125,7 @@ Its own tests are gated by `ant test` via the `gradle-plugin-test` target (PF-17
   measured with this harness, before and after, in one session on one machine.
 - **Not part of the build:** it takes about 40 minutes and its figures depend on the machine, so `ant test` does not
   run it. It is excluded from the release zip (`benchmarks/**` in `build.xml`).
+- **Idle memory:** the fork's idle RSS stays about 10 MB above Helidon MP's with the JVM's default heap sizing on a 48 GB machine, and the cause is G1's sizing, not a retained object (PF-240). The fork's live heap after a full GC is within about 1 MB of MP's, and its RSS after one is below MP's. The heap is 8 MB regions there, G1 sizes it at the startup remarks from the survivor and old regions in use, and the fork's start holds four where MP's holds three, so G1 commits 112 MB of heap to MP's 80. Most of the difference in live heap at those remarks is the central directories of the larger classpath, which every jar keeps in the heap once a lookup has opened it, and a lookup that misses opens them all; dropping the 49 jars that supplied no class, 2.1 to 2.4 MB of live heap, still left 112 MB. So compare the live heap (`jcmd <pid> GC.run`, then `GC.heap_info`) as well as RSS before keeping a cut for its memory.
 - **Pitfalls it already handles:** its README lists them; MP's Hibernate logs two warnings per JPA request unless
   `SessionImpl` is silenced. Keep them handled when changing an application.
 
