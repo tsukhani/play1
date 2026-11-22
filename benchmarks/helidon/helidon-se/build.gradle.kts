@@ -10,6 +10,8 @@ dependencies {
     implementation(platform("io.helidon:helidon-dependencies:4.5.7"))
     implementation("io.helidon.webserver:helidon-webserver")
     implementation("io.helidon.webserver:helidon-webserver-sse")
+    // HTTP/2: over TLS through ALPN for run.py's TLS cells; Helidon finds the protocol on the classpath
+    runtimeOnly("io.helidon.webserver:helidon-webserver-http2")
     implementation("io.helidon.http.media:helidon-http-media-jackson")
     runtimeOnly("io.helidon.logging:helidon-logging-jul")
     // the versions of the fork's framework/lib, so both sides run the same pool and database

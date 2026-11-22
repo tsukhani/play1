@@ -1,5 +1,6 @@
 package bench;
 
+import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -10,10 +11,13 @@ import java.util.concurrent.ThreadLocalRandom;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 
+import io.helidon.common.configurable.Resource;
+import io.helidon.common.pki.Keys;
 import io.helidon.http.HeaderNames;
 import io.helidon.http.media.jackson.JacksonSupport;
 import io.helidon.logging.common.LogConfig;
 import io.helidon.webserver.WebServer;
+import io.helidon.webserver.WebServerConfig;
 import io.helidon.webserver.sse.SseSink;
 import io.helidon.http.sse.SseEvent;
 import io.helidon.common.media.type.MediaTypes;
@@ -48,9 +52,13 @@ public final class Main {
             }
         }
 
-        WebServer.builder()
+        WebServerConfig.Builder server = WebServer.builder()
                 .port(port)
                 .host("127.0.0.1")
+                // run.py's --helidon-writes; Helidon's own defaults (direct writes, Nagle on) when it gives none
+                .writeQueueLength(Integer.getInteger("write-queue-length", 0))
+                .smartAsyncWrites(Boolean.getBoolean("smart-async-writes"))
+                .connectionOptions(socket -> socket.tcpNoDelay(Boolean.getBoolean("tcp-no-delay")))
                 .mediaContext(media -> media.addMediaSupport(JacksonSupport.create()))
                 .routing(routing -> routing
                         .get("/plaintext", (req, res) -> {
@@ -79,8 +87,16 @@ public final class Main {
                                             .build());
                                 }
                             }
-                        }))
-                .build()
-                .start();
+                        }));
+        // run.py's TLS cells: the listener speaks TLS with the certificate run.py generates, HTTP/2 through ALPN
+        String cert = System.getProperty("tls.cert");
+        if (cert != null) {
+            Keys keys = Keys.builder()
+                    .pem(pem -> pem.key(Resource.create(Path.of(System.getProperty("tls.key"))))
+                            .certChain(Resource.create(Path.of(cert))))
+                    .build();
+            server.tls(tls -> tls.privateKey(keys).privateKeyCertChain(keys));
+        }
+        server.build().start();
     }
 }

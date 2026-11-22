@@ -16,6 +16,8 @@ dependencies {
     implementation("io.helidon.microprofile.bundles:helidon-microprofile-core")
     implementation("org.glassfish.jersey.media:jersey-media-json-binding")
     implementation("org.glassfish.jersey.media:jersey-media-sse")
+    // HTTP/2: over TLS through ALPN for run.py's TLS cells; Helidon finds the protocol on the classpath
+    runtimeOnly("io.helidon.webserver:helidon-webserver-http2")
     implementation("jakarta.persistence:jakarta.persistence-api")
     implementation("jakarta.transaction:jakarta.transaction-api")
     runtimeOnly("io.helidon.integrations.cdi:helidon-integrations-cdi-datasource-hikaricp")
