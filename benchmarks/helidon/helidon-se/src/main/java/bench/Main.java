@@ -5,6 +5,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -13,7 +14,9 @@ import com.zaxxer.hikari.HikariDataSource;
 
 import io.helidon.common.configurable.Resource;
 import io.helidon.common.pki.Keys;
+import io.helidon.http.Header;
 import io.helidon.http.HeaderNames;
+import io.helidon.http.HeaderValues;
 import io.helidon.http.media.jackson.JacksonSupport;
 import io.helidon.logging.common.LogConfig;
 import io.helidon.webserver.WebServer;
@@ -31,6 +34,16 @@ public final class Main {
     static final String TEXT = "Hello, World!";
     static final int ROWS = 10_000;
     static final int EVENTS = 200;
+    /** The fork's default security headers (its SecurityHeadersPolicy), with the same values, on every response. */
+    static final List<Header> SECURITY_HEADERS = List.of(
+            HeaderValues.createCached("X-Content-Type-Options", "nosniff"),
+            HeaderValues.createCached("X-Frame-Options", "DENY"),
+            HeaderValues.createCached("Referrer-Policy", "strict-origin-when-cross-origin"),
+            HeaderValues.createCached("X-XSS-Protection", "0"),
+            HeaderValues.createCached("Content-Security-Policy", "default-src 'self'"));
+    /** And the fork's HSTS, on a response over TLS. */
+    static final Header HSTS = HeaderValues.createCached(HeaderNames.STRICT_TRANSPORT_SECURITY,
+            "max-age=31536000; includeSubDomains");
 
     public static void main(String[] args) throws Exception {
         LogConfig.configureRuntime();
@@ -61,6 +74,14 @@ public final class Main {
                 .connectionOptions(socket -> socket.tcpNoDelay(Boolean.getBoolean("tcp-no-delay")))
                 .mediaContext(media -> media.addMediaSupport(JacksonSupport.create()))
                 .routing(routing -> routing
+                        // the security headers the fork sends, so that the three applications send the same (PF-249)
+                        .addFilter((chain, req, res) -> {
+                            SECURITY_HEADERS.forEach(res::header);
+                            if (req.isSecure()) {
+                                res.header(HSTS);
+                            }
+                            chain.proceed();
+                        })
                         .get("/plaintext", (req, res) -> {
                             res.header(HeaderNames.CONTENT_TYPE, "text/plain");
                             res.send(TEXT);

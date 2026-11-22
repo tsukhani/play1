@@ -20,6 +20,8 @@ The three applications have the same endpoints:
 - `helidon-mp/`: Helidon MP: CDI, JAX-RS on Jersey, JTA and Hibernate. It is what a port of an application with a JPA
   model would run on, so it is the comparison that counts.
 
+All three send the same security headers (below).
+
 ## Running it
 
 ```
@@ -168,6 +170,33 @@ streams per 41.7 ms (1,535 req/s), and its `/sse` at about 390 streams/s. The fo
 connection.
 
 
+## The headers each sends
+
+The three applications send the same security headers (PF-249), the ones a production application sends on either
+framework: the five that the fork's `SecurityHeadersPolicy` sends by default on every response, with its values, and
+its HSTS over TLS.
+
+| Header | Value |
+|---|---|
+| `X-Content-Type-Options` | `nosniff` |
+| `X-Frame-Options` | `DENY` |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` |
+| `X-XSS-Protection` | `0` |
+| `Content-Security-Policy` | `default-src 'self'` |
+| `Strict-Transport-Security`, over TLS only | `max-age=31536000; includeSubDomains` |
+
+Helidon SE adds them in a routing filter (`Main`), Helidon MP in a JAX-RS `ContainerResponseFilter`
+(`SecurityHeadersFilter`). MP's filter tells TLS by the request URI's scheme, because Helidon MP's
+`SecurityContext.isSecure()` is false on every request without Helidon Security.
+
+The rest still differs, and is what each ships: the fork sends `Server`, `Cache-Control: no-cache`, a charset in
+`Content-Type` and, over TLS, `Alt-Svc`; Helidon sends `Connection: keep-alive`. A plain-text response's header block
+is 353 bytes from the fork and 300 from either Helidon over HTTP/1.1, 449 and 364 over TLS; the first HTTP/2 HEADERS
+frame on a connection is 339 and 197 bytes, and each later one 13 and 40. Before PF-249 the fork also sent a deletion
+of each of the three scope cookies, 294 bytes more, to a client that carried none, and the Helidon applications sent
+none of the security headers.
+
+
 ## Results
 
 Each run writes these to `<out>/results/`:
@@ -222,8 +251,6 @@ from the same session, never with figures from elsewhere.
   default of a quarter of the client's CPUs for h2load, and the separate cores on Linux.
 - The fork binds HTTP/3 on the same port in UDP whenever it has an HTTPS port, and adds `Alt-Svc` to every TLS
   response. No client here uses it.
-- The fork's responses carry about 750 bytes of headers (three expiring `Set-Cookie`s, the security headers,
-  `Server`, `Alt-Svc` over TLS), Helidon's about 130. That is what each ships, so the harness leaves it.
 - Helidon refuses an HTTP/1.0 request: it closes the connection without an answer. nginx speaks HTTP/1.0 to an
   upstream unless `proxy_http_version 1.1` is set.
 - With `helidon-webserver-http2` on the classpath, Helidon also answers cleartext HTTP/2 with prior knowledge on its

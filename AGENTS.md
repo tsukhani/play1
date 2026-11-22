@@ -117,7 +117,9 @@ Its own tests are gated by `ant test` via the `gradle-plugin-test` target (PF-17
 
 `benchmarks/helidon/` (PF-236) measures the fork against Helidon 4.5.7 SE and MP:
 - **The applications:** three minimal applications with the same endpoints (plain text, JSON, JDBC, JPA and SSE), each
-  built by Gradle with the checkout's own wrapper.
+  built by Gradle with the checkout's own wrapper. They send the same security headers, the fork's defaults, which
+  the Helidon applications add in a filter (PF-249); the README lists them and what else each sends. Keep them the
+  same when the fork's defaults change.
 - **The driver:** `run.py --framework <a built checkout>`. It measures startup with and without each one's AOT cache,
   load with oha, memory, and the edit loop under Gradle.
 - **The load cells (PF-247):** HTTP/1.1 without TLS, kept-alive and with a new connection per request (what an
