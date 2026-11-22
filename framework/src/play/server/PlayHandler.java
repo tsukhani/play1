@@ -999,7 +999,12 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
         // PF-237: one pass over the headers. When each name appears once, which is what a
         // request almost always has, every name gets its one value, as the lookup below gives it.
         // A name that appears twice, in any case, or one that lowercases otherwise in the
-        // default locale than in the root locale, takes that lookup.
+        // default locale than in the root locale, takes that lookup. So does any headers class but
+        // Netty's plain one, which every built-in pipeline hands on: CombinedHttpHeaders iterates a
+        // name's values joined into one, which its lookup splits again.
+        if (nettyRequest.headers().getClass() != DefaultHttpHeaders.class) {
+            return getHeadersByName(nettyRequest);
+        }
         Map<String, Http.Header> headers = new HashMap<>(16);
         for (Map.Entry<String, String> entry : nettyRequest.headers()) {
             String key = entry.getKey();

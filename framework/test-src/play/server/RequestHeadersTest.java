@@ -1,5 +1,6 @@
 package play.server;
 
+import io.netty.handler.codec.http.DefaultHttpHeadersFactory;
 import io.netty.handler.codec.http.DefaultHttpRequest;
 import io.netty.handler.codec.http.HttpMethod;
 import io.netty.handler.codec.http.HttpRequest;
@@ -52,6 +53,18 @@ public class RequestHeadersTest {
     @Test
     public void noHeadersGiveAnEmptyMap() {
         assertThat(PlayHandler.getHeaders(request())).isEmpty();
+    }
+
+    @Test
+    public void headersThatCombineValuesGetWhatTheLookupGives() {
+        // A decoder configured to combine headers (a custom play.netty.pipeline) iterates a
+        // repeated name once, with its values joined, while the lookup by name splits them again
+        // and unquotes each; the one pass must not answer for such headers.
+        HttpRequest request = new DefaultHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.GET, "/",
+                DefaultHttpHeadersFactory.headersFactory().withCombiningHeaders(true));
+        request.headers().add("Accept", "a").add("accept", "b").add("X-Quoted", "\"q,r\"").add("Host", "h");
+        assertThat(view(PlayHandler.getHeaders(request))).isEqualTo(view(PlayHandler.getHeadersByName(request)))
+                .containsEntry("accept", "accept=[a, b]");
     }
 
     private static HttpRequest request(String... namesAndValues) {
