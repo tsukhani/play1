@@ -23,7 +23,8 @@ Load cells (--protocols, all of them by default; PF-247):
   h1-tls    HTTP/1.1 over TLS
   h2-tls    HTTP/2 over TLS through ALPN, at each of --h2-in-flight requests in flight per connection (1 4 16)
 The TLS cells use one self-signed certificate that the harness generates under <out>/tls with openssl. Before each
-TLS cell curl and oha --debug must show the protocol, and the 16-in-flight HTTP/2 cells are measured again with h2load.
+TLS cell curl and oha --debug must show the protocol, and the HTTP/2 cells at 4 and 16 in flight
+(--h2load-in-flight) are measured again with h2load.
 
 The checkout must be built: framework/play-<version>.jar (ant jar) and framework/gradle-plugin-repo (./gradlew
 :gradle-plugin:publishAllPublicationsToFrameworkLocalRepository). Needs JDK 25 as java on PATH or in JAVA_HOME, oha on
@@ -65,7 +66,6 @@ PROTOCOLS = {
     "h1-tls": "HTTP/1.1 over TLS",
     "h2-tls": "HTTP/2 over TLS",
 }
-H2LOAD_IN_FLIGHT = 16
 
 
 class Cell:
@@ -307,6 +307,7 @@ class Harness:
         self.client_prefix = ["taskset", "-c", args.client_cpus] if args.client_cpus else []
         client_cpus = len(cpu_list(args.client_cpus)) if args.client_cpus else os.cpu_count()
         self.h2load_threads = args.h2load_threads or max(2, client_cpus // 4)
+        self.h2load_in_flight = set(args.h2load_in_flight)
         self.guard = Guard(cpu_list(args.guard_cpus)) if args.guard_cpus else None
         self.guard_max, self.guard_retries = args.guard_max, args.guard_retries
         self.env = dict(os.environ, PLAY_SECRET=secrets.token_hex(32))
@@ -587,11 +588,11 @@ class Harness:
                      row["peak_rss_mb"], fmt_us(row["server_cpu_us"]), row["client_cores"],
                      "  others %.2f cores" % guard["others_cores"] if guard else "",
                      "  CLIENT OUT OF PORTS: %d connects refused" % row["ports_exhausted"] if row["ports_exhausted"] else ""))
-        if cell.h2 and cell.in_flight == H2LOAD_IN_FLIGHT and shutil.which("h2load"):
-            row["h2load"] = self.h2load(app, url, conns, cell, ep)
+        if cell.h2 and cell.in_flight in self.h2load_in_flight and shutil.which("h2load"):
+            row["h2load"] = self.h2load(app, pid, url, conns, cell, ep)
         return row
 
-    def h2load(self, app, url, conns, cell, ep):
+    def h2load(self, app, pid, url, conns, cell, ep):
         """The same cell measured with nghttp2's h2load, since oha's HTTP/2 client can become the limit. No
         --log-file: writing it cut h2load to a third of its rate. Its own latency columns give p50 and p99."""
         threads = max(1, min(conns, self.h2load_threads))
@@ -599,11 +600,11 @@ class Harness:
                                     "-D", str(self.measured), "--warm-up-time", str(self.h2load_warm), url]
 
         def run():
-            cpu0 = children_cpu()
+            cpu0, server0, t0 = children_cpu(), cpu_seconds(pid), time.monotonic()
             text = subprocess.run(cmd, capture_output=True, text=True).stdout
-            return text, children_cpu() - cpu0
+            return text, children_cpu() - cpu0, cpu_seconds(pid) - server0, time.monotonic() - t0
 
-        (text, cpu), guard, discarded = self.guarded(run)
+        (text, cpu, server_cpu, wall), guard, discarded = self.guarded(run)
         found = lambda pattern: (re.search(pattern, text) or [None, None])[1]
         columns = re.search(r"^\s+min\s+max.*$", text, re.M)
         # 1.71 prints median, p95 and p99 on a "request :" line; 1.59 only min, max, mean and sd on "time for request:"
@@ -619,14 +620,16 @@ class Harness:
                       protocol=found(r"Application protocol: (\S+)"), tls_protocol=found(r"TLS Protocol: (\S+)"),
                       cipher=found(r"Cipher: (\S+)"), threads=threads,
                       # h2load's CPU over its warm-up and measurement, per thread: near 1 means h2load was the limit
-                      cpu_per_thread=round(cpu / (self.measured + self.h2load_warm) / threads, 2), guard=guard,
+                      cpu_per_thread=round(cpu / wall / threads, 2), client_cores=round(cpu / wall, 2),
+                      server_cores=round(server_cpu / wall, 2), guard=guard,
                       discarded=[dict(guard=a["guard"]) for a in discarded])
         if result["protocol"] != "h2":
             raise RuntimeError("h2load: %s negotiated %r, not h2" % (url, result["protocol"]))
         self.log("  h2load %-4s %-12s %-9s %8.0f req/s  p50 %s  p99 %s  mean %s  %s of %s succeeded, %d threads at %.2f "
-                 "cores each" % (app, cell.name, ep, result["rps"], fmt_ms(result["p50_ms"]), fmt_ms(result["p99_ms"]),
-                                 fmt_ms(result["mean_ms"]), result["succeeded"], result["requests"], threads,
-                                 result["cpu_per_thread"]))
+                 "cores each, server %.1f cores" % (
+                     app, cell.name, ep, result["rps"], fmt_ms(result["p50_ms"]), fmt_ms(result["p99_ms"]),
+                     fmt_ms(result["mean_ms"]), result["succeeded"], result["requests"], threads,
+                     result["cpu_per_thread"], result["server_cores"]))
         return result
 
     def tls_info(self, app, port):
@@ -916,6 +919,8 @@ def main():
                         help="Helidon's listener writes: direct (its default), async:N (write-queue-length N) or "
                              "smart:N (and smart-async-writes), +nodelay for TCP_NODELAY (off by default), for se and "
                              "mp, or one of them with se= or mp=")
+    parser.add_argument("--h2load-in-flight", nargs="+", type=int, default=[4, 16], metavar="N",
+                        help="the HTTP/2 depths measured again with h2load (4 16)")
     parser.add_argument("--h2load-threads", type=int, metavar="N",
                         help="h2load's threads in the cross-check: a quarter of the client's CPUs, at least 2, by default")
     parser.add_argument("--server-cpus", help="Linux: taskset CPU list for the servers under test")

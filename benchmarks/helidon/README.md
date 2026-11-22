@@ -65,6 +65,7 @@ The checkout's own Gradle wrapper builds all three applications; nothing else is
   For example `--helidon-writes mp=async:32+nodelay se=direct+nodelay`. SE reads `-Dwrite-queue-length`,
   `-Dsmart-async-writes` and `-Dtcp-no-delay`; MP takes `server.write-queue-length`, `server.smart-async-writes` and
   `server.connection-options.tcp-no-delay`. The run's JSON and summary record the setting.
+- `--h2load-in-flight 4 16`: the HTTP/2 depths that h2load measures again (below).
 - `--h2load-threads N`: h2load's threads; a quarter of the client's CPUs, at least 2, by default (below).
 - On Linux, for a shared machine:
   - `--server-cpus LIST` and `--client-cpus LIST`: `taskset` lists for the servers under test and for oha, h2load and
@@ -133,9 +134,14 @@ HTTP/1.1 (the TLS version and the cipher), and the fork's provider from its `TLS
 version with a 200, and `oha --debug` with the cell's own client options must show it in the response. A fall-back to
 HTTP/1.1 stops the run.
 
-**The h2load cross-check.** oha's HTTP/2 client can become the limit, so the cells at 16 in flight run again with
-nghttp2's `h2load` (`-c 64 -m 16`), after 2 s of warm-up. The summary's second table gives h2load's figure beside
-oha's. h2load 1.71 prints p50 and p99; 1.59 only the mean. Its `cpu_per_thread` near 1 means h2load was the limit.
+**The h2load cross-check.** oha's HTTP/2 client can become the limit, so the cells at 4 and 16 in flight
+(`--h2load-in-flight`) run again with nghttp2's `h2load` (`-c 64 -m N`), after 2 s of warm-up. The summary's second
+table gives h2load's figure beside oha's. On the laptop, at 16 in flight, oha reported 9 to 15% fewer requests than
+h2load with a p99 several times higher, and used 5 to 6 cores, so it partly measured itself there. The rows record
+the cores each client and the server used. h2load prints p50 and p99 from 1.69 on; 1.59, a distribution's version,
+only the mean. Where the system has an older one, build 1.69 from nghttp2's release with `--enable-app` (it needs
+libev and c-ares, which build from source into the same prefix); 1.70 and later need GCC 14 for `<print>`. Its
+`cpu_per_thread` near 1 means h2load was the limit.
 
 ## Helidon's write settings
 
