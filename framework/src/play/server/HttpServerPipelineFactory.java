@@ -30,8 +30,10 @@ public class HttpServerPipelineFactory extends ChannelInitializer<Channel> {
      * bodies to disk past {@code play.netty.spoolThresholdBytes} (default 1 MB) and
      * enforcing the optional {@code play.netty.maxContentLength} hard cap.
      */
-    private final String pipelineConfig = Play.configuration.getProperty("play.netty.pipeline",
-            "io.netty.handler.codec.http.HttpRequestDecoder,play.server.StreamChunkAggregator,io.netty.handler.codec.http.HttpResponseEncoder,io.netty.handler.stream.ChunkedWriteHandler,play.server.PlayHandler");
+    static final String DEFAULT_PIPELINE =
+            "io.netty.handler.codec.http.HttpRequestDecoder,play.server.StreamChunkAggregator,io.netty.handler.codec.http.HttpResponseEncoder,io.netty.handler.stream.ChunkedWriteHandler,play.server.PlayHandler";
+
+    private final String pipelineConfig = Play.configuration.getProperty("play.netty.pipeline", DEFAULT_PIPELINE);
 
     /**
      * Fallback for stock {@link HttpObjectAggregator} if a user wires it explicitly.

@@ -466,6 +466,11 @@ public class Server {
      * PF-239: the Netty classes the bind and the first request initialize, in the order they
      * do. Their static initializers read the platform (Unsafe, the direct memory limit, the
      * selector provider, the network interfaces for a channel id) and none depends on Play.
+     * The handlers are the Netty ones of the default {@code play.netty.pipeline}
+     * ({@link HttpServerPipelineFactory#DEFAULT_PIPELINE}) and no others: initializing
+     * {@code HttpContentCompressor}, which that pipeline leaves out, extracted and loaded
+     * brotli4j's native library at every start, which PF-173 keeps off a deployment that does
+     * not compress, and the main thread stalled behind the load for up to 100 ms.
      */
     static final String[] NETTY_PREINIT = {
         "io.netty.util.internal.PlatformDependent",
@@ -478,9 +483,9 @@ public class Server {
         "io.netty.channel.socket.nio.NioServerSocketChannel",
         "io.netty.channel.socket.nio.NioSocketChannel",
         "io.netty.channel.DefaultChannelPipeline",
-        "io.netty.handler.codec.http.HttpServerCodec",
-        "io.netty.handler.codec.http.HttpObjectAggregator",
-        "io.netty.handler.codec.http.HttpContentCompressor",
+        "io.netty.handler.codec.http.HttpRequestDecoder",
+        "io.netty.handler.codec.http.HttpResponseEncoder",
+        "io.netty.handler.stream.ChunkedWriteHandler",
         "io.netty.handler.codec.http.DefaultFullHttpResponse",
         "io.netty.handler.codec.http.HttpHeaderNames",
         "io.netty.handler.codec.http.HttpResponseStatus",
