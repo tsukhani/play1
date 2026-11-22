@@ -120,11 +120,24 @@ Its own tests are gated by `ant test` via the `gradle-plugin-test` target (PF-17
   built by Gradle with the checkout's own wrapper.
 - **The driver:** `run.py --framework <a built checkout>`. It measures startup with and without each one's AOT cache,
   load with oha, memory, and the edit loop under Gradle.
+- **The load cells (PF-247):** HTTP/1.1 without TLS, kept-alive and with a new connection per request (what an
+  application behind a proxy gets), HTTP/1.1 over TLS, and HTTP/2 over TLS at 1, 4 and 16 requests in flight per
+  connection (what a browser served directly gets). The fork has no cleartext HTTP/2. The TLS cells use a self-signed
+  certificate that `run.py` makes under its output directory at run time; never commit one. Before each TLS cell curl
+  and oha must show the protocol, and h2load measures the HTTP/2 cells at 4 and 16 in flight again, since oha's own
+  client is the limit there.
+- **Helidon at its best:** `--helidon-writes` sets Helidon's `write-queue-length`, `smart-async-writes` and
+  `TCP_NODELAY`. Helidon leaves `TCP_NODELAY` off, and on Linux the delayed ACK then holds every HTTP/2 stream and SSE
+  event for 40 ms. With it on, Helidon's HTTP/2 is faster at 1 in flight and three to four times slower at 16 on the
+  laptop. Compare against the better setting per cell.
+- **Linux:** it runs there too. `--server-cpus` and `--client-cpus` pin with taskset, and `--guard-cpus` measures what
+  other users' programs used of the benchmark CPUs and measures again above half a core. The README says how to keep
+  Gradle out of the home directory and which h2load prints p99.
 - **The output:** a JSON file per run and a summary table to quote on a ticket.
 - **The target:** ADR 0003 keeps the fork on condition that it reaches Helidon MP's figures. PF-235's tasks are
   measured with this harness, before and after, in one session on one machine.
-- **Not part of the build:** it takes about 40 minutes and its figures depend on the machine, so `ant test` does not
-  run it. It is excluded from the release zip (`benchmarks/**` in `build.xml`).
+- **Not part of the build:** it takes about two hours (40 minutes with `--protocols h1`) and its figures depend on the
+  machine, so `ant test` does not run it. It is excluded from the release zip (`benchmarks/**` in `build.xml`).
 - **Idle memory:** the fork's idle RSS stays about 10 MB above Helidon MP's with the JVM's default heap sizing on a 48 GB machine, and the cause is G1's sizing, not a retained object (PF-240). The fork's live heap after a full GC is within about 1 MB of MP's, and its RSS after one is below MP's. The heap is 8 MB regions there, G1 sizes it at the startup remarks from the survivor and old regions in use, and the fork's start holds four where MP's holds three, so G1 commits 112 MB of heap to MP's 80. Most of the difference in live heap at those remarks is the central directories of the larger classpath, which every jar keeps in the heap once a lookup has opened it, and a lookup that misses opens them all; dropping the 49 jars that supplied no class, 2.1 to 2.4 MB of live heap, still left 112 MB. So compare the live heap (`jcmd <pid> GC.run`, then `GC.heap_info`) as well as RSS before keeping a cut for its memory.
 - **Pitfalls it already handles:** its README lists them; MP's Hibernate logs two warnings per JPA request unless
   `SessionImpl` is silenced. Keep them handled when changing an application.
