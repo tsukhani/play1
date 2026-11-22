@@ -189,7 +189,11 @@ from the same session, never with figures from elsewhere.
   `CONFIG_IRQ_TIME_ACCOUNTING` charges that time to the interrupted task as well; left out, the benchmark's own
   loopback traffic came out as up to six negative cores of other programs. `irq_cores` keeps it apart, and
   `ksoftirqd_cores` the time of those CPUs' `ksoftirqd` threads, which the guard counts as other programs although
-  they also carry the benchmark's own traffic when softirqs back up.
+  they also carry the benchmark's own traffic when softirqs back up. A run paced by a timer reads low, as much as
+  half a core below zero on average in Helidon's runs with Nagle on, whose every stream waits for the 40 ms delayed
+  ACK: the kernel samples a CPU's busy time at the tick (exact accounting needs `nohz_full`), while a process's own
+  CPU time is exact, and work woken just after a tick that sleeps before the next is never sampled. The guard can
+  then miss as much of other programs' use.
 - Under `taskset` the JVM sees only the CPUs in its list, and the fork's default number of event loops follows:
   max(2, ceil(CPUs / 4)), so 3 on 12 CPUs.
 

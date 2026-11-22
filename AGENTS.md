@@ -128,8 +128,8 @@ Its own tests are gated by `ant test` via the `gradle-plugin-test` target (PF-17
   client is the limit there.
 - **Helidon at its best:** `--helidon-writes` sets Helidon's `write-queue-length`, `smart-async-writes` and
   `TCP_NODELAY`. Helidon leaves `TCP_NODELAY` off, and on Linux the delayed ACK then holds every HTTP/2 stream and SSE
-  event for 40 ms. With it on, Helidon's HTTP/2 is faster at 1 in flight and three to four times slower at 16 on the
-  laptop. Compare against the better setting per cell.
+  event for 40 ms. With it on, Helidon's HTTP/2 is faster at 1 in flight and three (MP) to five (SE) times slower at
+  16 on the laptop. Compare against the better setting per cell.
 - **Linux:** it runs there too. `--server-cpus` and `--client-cpus` pin with taskset, and `--guard-cpus` measures what
   other users' programs used of the benchmark CPUs and measures again above half a core. The README says how to keep
   Gradle out of the home directory and which h2load prints p99.
