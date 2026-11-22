@@ -513,11 +513,13 @@ class Harness:
         curl = self.client_prefix + ["curl", "-k", "-s", "-o", "/dev/null", "-w", "%{http_version} %{http_code}",
                                      "--http2" if cell.h2 else "--http1.1", url]
         proof["curl"] = subprocess.run(curl, capture_output=True, text=True).stdout.strip()
-        # one request with the cell's own client options, which prints the request and the response it got
+        # one request with the cell's own client options, which prints the request and the response it got; without a
+        # response (a refused connect, a TLS server offering no h2) it prints only the request, at the version it asked
         debug = self.client_prefix + ["oha", "--debug", "--insecure"] + (["--http2"] if cell.h2 else []) + [url]
         text = subprocess.run(debug, capture_output=True, text=True).stdout
-        versions = re.findall(r"version: (HTTP/[\d.]+)", text.split("Response", 1)[-1])
-        proof["oha"] = versions[0] if versions else None
+        _, responded, response = text.partition("Response {")
+        version = re.search(r"version: (HTTP/[\d.]+)", response) if responded else None
+        proof["oha"] = version[1] if version else None
         if proof["curl"] != want + " 200" or proof["oha"] != ("HTTP/2.0" if cell.h2 else "HTTP/1.1"):
             raise RuntimeError("%s: %s is not served as HTTP/%s: curl %r, oha %r" % (cell.name, url, want, proof["curl"],
                                                                                    proof["oha"]))
@@ -867,7 +869,9 @@ def h2load_cell(row):
         return "-"
     h = row["h2load"]
     latency = "p99 %s" % fmt_ms(h["p99_ms"]) if h.get("p99_ms") is not None else "mean %s" % fmt_ms(h.get("mean_ms"))
-    return "%.0f req/s, %s (oha %.0f)" % (h["rps"], latency, row.get("ok_rps", row["rps"]))
+    # threads this busy may be the limit: more --h2load-threads tells whether they were
+    busy = ", h2load threads at %.2f cores each" % h["cpu_per_thread"] if h.get("cpu_per_thread", 0) >= 0.9 else ""
+    return "%.0f req/s, %s (oha %.0f)%s" % (h["rps"], latency, row.get("ok_rps", row["rps"]), busy)
 
 
 def summary_tables(results):

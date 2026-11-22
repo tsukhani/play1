@@ -44,6 +44,9 @@ It runs on macOS and on Linux.
 
 The checkout's own Gradle wrapper builds all three applications; nothing else is installed.
 
+`test_run.py` tests what no measurement checks, the protocol proof and the reading of h2load's output:
+`python3 -m unittest discover -s benchmarks/helidon`.
+
 **Options:**
 - `--out <dir>`: where the built copies and the results go. The default is `benchmarks/helidon/out/`, which git
   ignores.
@@ -142,8 +145,12 @@ table gives h2load's figure beside oha's. On the laptop, at 16 in flight, oha re
 h2load with a p99 several times higher, and used 5 to 6 cores, so it partly measured itself there. The rows record
 the cores each client and the server used. h2load prints p50 and p99 from 1.69 on; 1.59, a distribution's version,
 only the mean. Where the system has an older one, build 1.69 from nghttp2's release with `--enable-app` (it needs
-libev and c-ares, which build from source into the same prefix); 1.70 and later need GCC 14 for `<print>`. Its
-`cpu_per_thread` near 1 means h2load was the limit.
+libev and c-ares, which build from source into the same prefix); 1.70 and later need GCC 14 for `<print>`. When its
+`cpu_per_thread` is 0.9 or more, the summary prints it beside h2load's figure: h2load may then be the limit, and only
+a run with more `--h2load-threads` tells. On Linux at 16 in flight, with the default 3 threads on 12 client CPUs,
+Helidon SE's plain text rose from 390k to 448k req/s with 6 threads, its threads at 1.0 cores before. Helidon MP's
+fell from 246k to 233k, although its threads had been at 0.95, because its server was on 11.8 of its 12 CPUs; the
+fork's, at 0.6, went from 149k to 146k.
 
 ## Helidon's write settings
 
