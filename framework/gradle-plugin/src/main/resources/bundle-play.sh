@@ -10,7 +10,13 @@
 
 set -e
 # dirname's answer without running dirname (PF-239: every start paid for the process).
-case "$0" in */*) SCRIPT_DIR="${0%/*}" ;; *) SCRIPT_DIR=. ;; esac
+# A $0 with a backslash still goes to dirname: it is a Windows path handed to Git Bash
+# (bash.exe C:\apps\app\play), which Git Bash's dirname, like Cygwin's, cuts at a '\'.
+case "$0" in
+    *\\*) SCRIPT_DIR="$(dirname "$0")" ;;
+    */*) SCRIPT_DIR="${0%/*}" ;;
+    *) SCRIPT_DIR=. ;;
+esac
 SCRIPT_DIR="$(cd "${SCRIPT_DIR:-/}" && pwd)"
 cd "$SCRIPT_DIR"
 

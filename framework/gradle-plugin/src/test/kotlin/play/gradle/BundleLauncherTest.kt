@@ -426,6 +426,42 @@ class BundleLauncherTest {
     }
 
     @Test
+    fun `the launcher finds its bundle by whatever path it was started with`(@TempDir tmp: File) {
+        // PF-239 cut SCRIPT_DIR from $0 with a parameter expansion instead of dirname. A
+        // Windows path handed to Git Bash (bash.exe C:\apps\app\play start, as an installer
+        // or a service wrapper starts a bundle) has no '/', and Git Bash's dirname, like
+        // Cygwin's, cuts it at the last '\': the expansion took the working directory instead.
+        val bundle = File(tmp, "app").apply { mkdirs() }
+        writeBundle(bundle)
+        val stubs = File(tmp, "bin")
+        writeStubs(stubs, windows = false)
+        val elsewhere = File(tmp, "elsewhere").apply { mkdirs() }
+        val bash = if (onWindows) gitBash!! else launcherBash
+
+        fun applicationPath(dir: File, script: String): String {
+            val proc = ProcessBuilder(bash, script, "run").directory(dir).redirectErrorStream(true).pathFirst(stubs).start()
+            val out = proc.inputStream.bufferedReader().readText()
+            assertEquals(0, proc.waitFor(), "bash $script run, in $dir\n$out")
+            return File(hostPath(valueOf(out.lines().filter { it.isNotEmpty() }, "application.path"))).canonicalPath
+        }
+
+        // By its absolute path from another directory: on Windows that is the backslashed path itself
+        assertEquals(bundle.canonicalPath, applicationPath(elsewhere, File(bundle, "play").absolutePath))
+        // By its bare name from the bundle, where $0 has no directory at all
+        assertEquals(bundle.canonicalPath, applicationPath(bundle, "play"))
+        if (!onWindows) {
+            // Off Windows the backslashed $0 is a link named app\play, and dirname cuts it
+            // the way Git Bash's does
+            Files.createSymbolicLink(File(tmp, "app\\play").toPath(), File(bundle, "play").toPath())
+            File(stubs, "dirname").apply {
+                writeText("#!/bin/bash\np=\"\${1%[/\\\\]*}\"\n[ \"\$p\" != \"\$1\" ] || p=.\nprintf '%s\\n' \"\${p:-/}\"\n")
+                setExecutable(true)
+            }
+            assertEquals(bundle.canonicalPath, applicationPath(tmp, "app\\play"))
+        }
+    }
+
+    @Test
     fun `launcher bridges java util logging and lets the command line override it`(@TempDir tmp: File) {
         val bundle = File(tmp, "app").apply { mkdirs() }
         writeBundle(bundle)
