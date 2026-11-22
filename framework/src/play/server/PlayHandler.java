@@ -1355,11 +1355,12 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
             if (second == null || first.length + second.length > MAX_DRAIN_BYTES) {
                 drained = Unpooled.wrappedBuffer(first);
             } else {
-                // A heap buffer, as a lone chunk is, so the encoders, TLS and the transport get the
-                // kind of buffer they always did. queuedBytes counts a chunk only after it is
-                // queued, so it may lag what is here.
+                // A pooled direct buffer, which NIO writes without the copy it makes of a heap one.
+                // Not a pooled heap buffer: the allocator keeps heap chunks for every event loop
+                // that asks for one, which on plain HTTP nothing else does. queuedBytes counts a
+                // chunk only after it is queued, so it may lag what is here.
                 long estimate = Math.max(queuedBytes.get(), (long) first.length + second.length);
-                drained = allocator.heapBuffer((int) Math.min(estimate, MAX_DRAIN_BYTES), MAX_DRAIN_BYTES);
+                drained = allocator.ioBuffer((int) Math.min(estimate, MAX_DRAIN_BYTES), MAX_DRAIN_BYTES);
                 drained.writeBytes(first);
                 byte[] next;
                 while ((next = nextChunks.peek()) != null && drained.readableBytes() + next.length <= MAX_DRAIN_BYTES) {

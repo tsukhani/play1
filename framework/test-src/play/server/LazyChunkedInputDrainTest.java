@@ -1,6 +1,7 @@
 package play.server;
 
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.ByteBufAllocator;
 import io.netty.buffer.UnpooledByteBufAllocator;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelPipeline;
@@ -18,9 +19,12 @@ import java.util.concurrent.CompletableFuture;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -79,6 +83,25 @@ public class LazyChunkedInputDrainTest {
         assertThat(reads).isEqualTo(3); // 16 + 16 + 8 chunks
         assertThat(read.toByteArray()).isEqualTo(written.toByteArray());
         assertThat(input.progress()).isEqualTo((long) size * count);
+    }
+
+    /**
+     * The batch goes into an I/O buffer, pooled and direct under Netty's default allocator, which
+     * NIO writes without a copy. A pooled heap buffer would make the allocator keep heap chunks for
+     * every event loop that asks for one, which on plain HTTP nothing else does: 67 MB more heap
+     * after a full GC under the Helidon benchmark's /sse.
+     */
+    @Test
+    void aReadOfSeveralChunksTakesAnIoBufferAndNoHeapBuffer() throws Exception {
+        ByteBufAllocator allocator = mock(ByteBufAllocator.class);
+        when(allocator.ioBuffer(anyInt(), anyInt()))
+                .thenAnswer(call -> ALLOC.directBuffer(call.getArgument(0), call.getArgument(1)));
+        input.writeChunk(bytes("data: 1\n\n"), true);
+        input.writeChunk(bytes("data: 2\n\n"), true);
+
+        assertThat(text(input.readChunk(allocator))).isEqualTo("data: 1\n\ndata: 2\n\n");
+        verify(allocator).ioBuffer(anyInt(), eq(LazyChunkedInput.MAX_DRAIN_BYTES));
+        verifyNoMoreInteractions(allocator);
     }
 
     @Test
