@@ -148,6 +148,65 @@ public class SseStreamTest {
         assertThat(allWritten()).isEqualTo(": a\n: b\n: c\n\n");
     }
 
+    /** Writes its JSON raw, with line breaks, as a type adapter may: what the data-line split is there for. */
+    @com.google.gson.annotations.JsonAdapter(RawMultilineJson.Adapter.class)
+    static final class RawMultilineJson {
+        static final class Adapter extends com.google.gson.TypeAdapter<RawMultilineJson> {
+            @Override
+            public void write(com.google.gson.stream.JsonWriter out, RawMultilineJson value) throws java.io.IOException {
+                out.jsonValue("{\n\"a\":1\r\n}");
+            }
+
+            @Override
+            public RawMultilineJson read(com.google.gson.stream.JsonReader in) {
+                throw new UnsupportedOperationException();
+            }
+        }
+    }
+
+    @Test
+    void send_jsonWithRawLineBreaks_splitsAcrossDataLinesWithoutCarriageReturns() {
+        // PF-240: Gson now writes into the frame, and only JSON with a line break is split, as all of it was before.
+        newStream().send(new RawMultilineJson());
+        assertThat(allWritten()).isEqualTo("data: {\ndata: \"a\":1\ndata: }\n\n");
+    }
+
+    @Test
+    void sendEvent_jsonWithRawLineBreaks_splitsAcrossDataLines() {
+        newStream().sendEvent("multi", new RawMultilineJson());
+        assertThat(allWritten()).isEqualTo("event: multi\ndata: {\ndata: \"a\":1\ndata: }\n\n");
+    }
+
+    @Test
+    void sendEvent_stringWithNewline_staysOneDataLine() {
+        // Gson escapes a line break inside a string, so the JSON stays on one line.
+        newStream().sendEvent("t", "a\nb\rc");
+        assertThat(allWritten()).isEqualTo("event: t\ndata: \"a\\nb\\rc\"\n\n");
+    }
+
+    @Test
+    void sendEvent_nullData_emitsAnEmptyDataField() {
+        newStream().sendEvent("ping", null);
+        assertThat(allWritten()).isEqualTo("event: ping\ndata: \n\n");
+    }
+
+    @Test
+    void sendEvent_payloadLargerThanTheBuildersStartIsWritten() {
+        String big = "x".repeat(SseStream.FRAME_CAPACITY * 3);
+        newStream().sendEvent("big", java.util.Map.of("v", big));
+        assertThat(allWritten()).isEqualTo("event: big\ndata: {\"v\":\"" + big + "\"}\n\n");
+    }
+
+    @Test
+    void send_nonAsciiIsUtf8() {
+        // PF-240: an ASCII frame is copied straight out of the builder; any other goes through a string
+        newStream().send(java.util.Map.of("k", "\u00e9\u4e2d\ud83d\ude00"));
+        newStream().sendEvent("t", "ascii");
+        assertThat(chunks).hasSize(2);
+        assertThat(chunks.get(0)).isEqualTo("data: {\"k\":\"\u00e9\u4e2d\ud83d\ude00\"}\n\n".getBytes(StandardCharsets.UTF_8));
+        assertThat(chunks.get(1)).isEqualTo("event: t\ndata: \"ascii\"\n\n".getBytes(StandardCharsets.US_ASCII));
+    }
+
     // ------------------------------------------------------------------------
     // Lifecycle tests
     // ------------------------------------------------------------------------
