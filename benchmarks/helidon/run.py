@@ -242,6 +242,14 @@ class Guard:
         self.cpus = cpus
         self.hz = os.sysconf("SC_CLK_TCK")
         self.uid = os.getuid()
+        self.softirqd = set()
+        for name in os.listdir("/proc"):
+            try:
+                comm = open("/proc/%s/comm" % name).read().strip() if name.isdigit() else ""
+            except OSError:
+                continue
+            if comm.startswith("ksoftirqd/") and int(comm.split("/")[1]) in cpus:
+                self.softirqd.add(name)
 
     def snapshot(self):
         busy = irq = 0
@@ -253,23 +261,28 @@ class Guard:
                         # user nice system idle iowait irq softirq steal
                         busy += int(v[1]) + int(v[2]) + int(v[3]) + int(v[6]) + int(v[7]) + int(v[8])
                         irq += int(v[6]) + int(v[7])
-        own = 0
+        own = soft = 0
         for name in os.listdir("/proc"):
             if name.isdigit():
                 try:
                     if os.stat("/proc/" + name).st_uid != self.uid:
+                        # recorded apart, still counted as other programs: the kernel's softirq threads of these
+                        # CPUs, which also carry the benchmark's own loopback traffic when softirqs back up
+                        if name in self.softirqd:
+                            soft += proc_ticks(int(name)) or 0
                         continue
                 except OSError:
                     continue
                 own += proc_ticks(int(name)) or 0
-        return time.monotonic(), busy, irq, own, children_cpu()
+        return time.monotonic(), busy, irq, own, children_cpu(), soft
 
     def cores(self, a, b):
         elapsed = b[0] - a[0]
         busy = (b[1] - a[1]) / self.hz
         own = (b[3] - a[3]) / self.hz + (b[4] - a[4])
         return {"others_cores": round((busy - own) / elapsed, 3), "own_cores": round(own / elapsed, 3),
-                "irq_cores": round((b[2] - a[2]) / self.hz / elapsed, 3)}
+                "irq_cores": round((b[2] - a[2]) / self.hz / elapsed, 3),
+                "ksoftirqd_cores": round((b[5] - a[5]) / self.hz / elapsed, 3)}
 
 
 class Harness:

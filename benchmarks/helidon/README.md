@@ -172,7 +172,9 @@ from the same session, never with figures from elsewhere.
   user's processes over the same span: the live ones from `/proc/<pid>/stat`, and the ones that ended and the
   harness reaped from `getrusage`. Busy includes irq and softirq because a kernel without
   `CONFIG_IRQ_TIME_ACCOUNTING` charges that time to the interrupted task as well; left out, the benchmark's own
-  loopback traffic came out as up to six negative cores of other programs. `irq_cores` keeps it apart.
+  loopback traffic came out as up to six negative cores of other programs. `irq_cores` keeps it apart, and
+  `ksoftirqd_cores` the time of those CPUs' `ksoftirqd` threads, which the guard counts as other programs although
+  they also carry the benchmark's own traffic when softirqs back up.
 - Under `taskset` the JVM sees only the CPUs in its list, and the fork's default number of event loops follows:
   max(2, ceil(CPUs / 4)), so 3 on 12 CPUs.
 
