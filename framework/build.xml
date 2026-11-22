@@ -319,9 +319,21 @@
         <echo message="*****************" />
     </target>
 
-    <target name="test-single" depends="compile-tests" description="run a single test">
+    <target name="test-single" depends="compile-tests" description="run a single test class, unit or integration">
         <mkdir dir="tests-results" />
         <mkdir dir="${basedir}/tests-tmp" />
+        <!-- PF-246: an integration class (-Dtestclass=integration.<Class>) runs as integration-test
+             runs it: after the modules are built, on classpath.integration, which adds the jar of the
+             docviewer module the fixture mounts, and with its PLAY_SECRET and native access. On
+             classpath.test the fixture's runtime-compiled controllers failed to compile and the
+             class ran no test. A unit class runs as before. -->
+        <condition property="testclass.integration">
+            <matches string="${testclass}" pattern="^integration\." />
+        </condition>
+        <condition property="testsingle.classpath" value="classpath.integration" else="classpath.test">
+            <isset property="testclass.integration" />
+        </condition>
+        <antcall target="modules" if:set="testclass.integration" />
         <!-- Translate dotted FQN (e.g. play.mvc.RouterTest) to a slash path so the
              fileset 'includes' actually resolves to the .class file on disk. Without
              this, dots are treated as literal characters and the include matches no
@@ -335,12 +347,16 @@
             </filterchain>
         </loadresource>
         <junitlauncher haltonfailure="false" failureproperty="junit.failure" printSummary="true">
-            <classpath refid="classpath.test" />
+            <classpath refid="${testsingle.classpath}" />
             <testclasses>
                 <fileset dir="test-classes" includes="${testclass.path}.class" />
                 <fork>
                     <jvmarg value="-javaagent:${basedir}/play-${version}.jar" />
                     <jvmarg value="-javaagent:${bytebuddy.agent.jar}" />
+                    <!-- integration-test's own arguments, for an integration class only. -->
+                    <jvmarg value="-DPLAY_SECRET=integrationtestsecretkey1234567890integrationtest" if:set="testclass.integration" />
+                    <jvmarg value="--enable-native-access=ALL-UNNAMED" if:set="testclass.integration" />
+                    <jvmarg value="-Dsse.bench=true" if:set="sse.bench" />
                     <sysproperty key="tests-tmp" value="${basedir}/tests-tmp" />
                 </fork>
             </testclasses>
