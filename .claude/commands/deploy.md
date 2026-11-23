@@ -1,6 +1,6 @@
 ---
 name: "Deploy"
-description: Build, commit, push to both remotes, and update the GitHub release with the new zip
+description: Build, commit, push to both remotes, update the GitHub release with the new zip, and report GitHub's checks
 category: Workflow
 tags: [deploy, release]
 ---
@@ -190,9 +190,34 @@ Run the full Play Framework release deployment:
 
    Note: this step assumes strict semver tags like `v1.12.25`. Pre-release tags (`v1.12.25-rc1`) will break the patch regex — that is intentional, the script fails loudly so we re-think the policy when we add pre-releases.
 
-9. **Report**
+9. **Tell the dependent sessions, read GitHub's checks, and report**
 
-   Summarise:
+   First send the sessions from step 0 a second message: the version and release URL, that `play-<previous>.jar` is gone and `play-{VERSION}.jar` replaces it, what the release carries, that an application pinning the framework version in `.play-version` must move it to `{VERSION}` before its configure works against this checkout again, and whether any further rebuild there is coming. Send it before reading the checks below, so that nothing of theirs waits on GitHub.
+
+   Then read GitHub's checks for the pushed commit. Step 5's push to `main` started the `Check` workflow (`.github/workflows/build-test.yml`), whose test jobs run the suite on Ubuntu and Windows, which this machine's `ant test` does not: 1.13.113 and 1.13.114 went out while the Windows job failed, and nobody noticed. **The checks never hold a release back**, because GitHub sometimes has no runner to give a job; their result goes into the report instead. The test jobs are the two `Build / Tests` jobs and `Bundle launcher tests / bash 3.2.57`, and they take about ten minutes. `build-on-mac` (only `ant build`) and `BUILD` (packaging) are reported as they stand once the test jobs are done, not waited for. Run this in the background and wait for its notification:
+   ```bash
+   SHA="$(/usr/bin/git rev-parse HEAD)"; RUN=""
+   for i in $(seq 1 18); do
+     RUN="$(gh run list --repo tsukhani/play1 --workflow Check --event push --commit "$SHA" --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+     [ -n "$RUN" ] && break; sleep 10
+   done
+   [ -n "$RUN" ] || { echo "CI: no Check run for $SHA after 3 minutes"; exit 0; }
+   echo "CI: run $RUN for $SHA, https://github.com/tsukhani/play1/actions/runs/$RUN"
+   for i in $(seq 1 45); do
+     TESTS="$(gh run view "$RUN" --repo tsukhani/play1 --json jobs --jq '.jobs[] | select(.name | test("^(Build / Tests|Bundle launcher tests)")) | .status')"
+     if [ -n "$TESTS" ] && ! printf '%s\n' "$TESTS" | /usr/bin/grep -qv '^completed$'; then break; fi
+     sleep 60
+   done
+   gh run view "$RUN" --repo tsukhani/play1 --json jobs --jq '.jobs[] | "\(.status)/\(.conclusion) \(.databaseId) \(.name)"'
+   ```
+   Then work out what each job's result means for the report. **Only a job that ran and failed is a failure.** GitHub marks the whole run as failed when any job is cancelled, but a cancelled job ran no test and found nothing, so never report a cancelled job, or the run's red status on its account, as a failed build:
+   - **A job failed or timed out (`failure`, `timed_out`):** this is a failure, the only kind. Read its log with `gh api --allow-escape-sequences repos/tsukhani/play1/actions/jobs/<job id>/logs`, because `gh run view --log-failed` waits until the whole run has finished, including a macOS job that can queue for an hour. Name the failing test classes and their messages, and say whether AGENTS.md lists a class as timing-sensitive.
+   - **A job was cancelled, skipped or is still queued:** list it as not run, not as a failure, with GitHub's reason from its annotations (`gh api repos/tsukhani/play1/check-runs/<job id>/annotations`). "The job was not acquired by Runner of type hosted" means GitHub had no runner for it. Offer `gh run rerun <run id> --failed` for a job that should have run.
+   - **Test jobs still running after 45 minutes:** report them as running, with the run's URL.
+   - **A job missing from the list:** the list must hold a `Build / Tests` job for each OS in the `testing` matrix and the bash 3.2.57 job, or a renamed job is going unread. Report any that is missing.
+   - **What a failure changes:** nothing already published. Report it and leave the fix to the user.
+
+   Then summarise:
    - Version deployed
    - The `/public-check` results: the gate's starting point and commits scanned, and the zip scan's counts, both without findings
    - Whether a commit was made (and its hash)
@@ -200,6 +225,5 @@ Run the full Play Framework release deployment:
    - Tag SHA confirmed on local + origin + github
    - GitHub release URL
    - Number of old releases trimmed (if any)
+   - GitHub's checks for the pushed commit: the run's URL, whether any job failed (with its failing classes), and the jobs that did not run with GitHub's reason, apart from the failures
    - Which dependent sessions were told, before and after
-
-   Then send the sessions from step 0 a second message: the version and release URL, that `play-<previous>.jar` is gone and `play-{VERSION}.jar` replaces it, what the release carries, that an application pinning the framework version in `.play-version` must move it to `{VERSION}` before its configure works against this checkout again, and whether any further rebuild there is coming.
