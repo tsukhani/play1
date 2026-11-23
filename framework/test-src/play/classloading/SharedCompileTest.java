@@ -10,6 +10,7 @@ import java.io.InputStreamReader;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.PosixFileAttributeView;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -247,6 +248,10 @@ class SharedCompileTest {
     void aClassPathDirectoryThatCannotBeListedMeansACompileOfItsOwnNotAFailedStart() throws Exception {
         // the key walks the class path's directories; before the shared compile a start never failed on one
         sources();
+        // Windows file systems have no POSIX permissions (setPosixFilePermissions throws there), and a directory is
+        // made unlistable with an ACL instead
+        Assumptions.assumeTrue(Files.getFileStore(app.toPath()).supportsFileAttributeView(PosixFileAttributeView.class),
+                "the file system has no POSIX permissions");
         File classes = new File(app, "classes");
         File locked = new File(classes, "locked");
         assertThat(locked.mkdirs()).isTrue();
