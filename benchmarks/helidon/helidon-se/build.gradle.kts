@@ -7,7 +7,7 @@ plugins {
 repositories { mavenCentral() }
 
 dependencies {
-    implementation(platform("io.helidon:helidon-dependencies:4.5.7"))
+    implementation(platform("io.helidon:helidon-dependencies:27.0.2"))
     implementation("io.helidon.webserver:helidon-webserver")
     implementation("io.helidon.webserver:helidon-webserver-sse")
     // HTTP/2: over TLS through ALPN for run.py's TLS cells; Helidon finds the protocol on the classpath

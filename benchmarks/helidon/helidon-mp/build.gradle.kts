@@ -12,7 +12,7 @@ repositories { mavenCentral() }
 val jandex by configurations.creating
 
 dependencies {
-    implementation(platform("io.helidon:helidon-dependencies:4.5.7"))
+    implementation(platform("io.helidon:helidon-dependencies:27.0.2"))
     implementation("io.helidon.microprofile.bundles:helidon-microprofile-core")
     implementation("org.glassfish.jersey.media:jersey-media-json-binding")
     implementation("org.glassfish.jersey.media:jersey-media-sse")
@@ -26,7 +26,7 @@ dependencies {
     runtimeOnly("io.helidon.integrations.cdi:helidon-integrations-cdi-hibernate")
     runtimeOnly("com.h2database:h2:2.5.252")
     runtimeOnly("io.helidon.logging:helidon-logging-jul")
-    jandex(platform("io.helidon:helidon-dependencies:4.5.7"))
+    jandex(platform("io.helidon:helidon-dependencies:27.0.2"))
     jandex("io.smallrye:jandex")
 }
 
