@@ -156,6 +156,41 @@ closes its measured gaps to Helidon MP instead.
 - **The fork keeps its maintainers' cost:** security updates, Renovate, and
   the enhancers above. That is what trigger 4 watches.
 
+## Outcome (2026-11-23)
+
+PF-235 met its target, measured with the harness in `benchmarks/helidon` on a 24-core x86-64 Linux server:
+- the servers and the load generators each pinned to 12 CPUs of their own;
+- two alternated rounds, the fork, MP, MP, the fork;
+- the same security headers on both sides;
+- MP at its better write setting.
+
+Every benchmark of the epic's last stage ran there, as a laptop's other activity made its figures unreliable.
+
+| | Fork | Helidon MP |
+|---|---|---|
+| HTTP/1.1 kept-alive, req/s | 253k (JPA) to 309k (plain text) | 120k to 236k |
+| HTTP/1.1 kept-alive, p99 | 0.43 to 0.77 ms | 1.19 to 1.97 ms |
+| HTTP/2 over TLS, 16 in flight (h2load), req/s | 331k to 427k | 101k to 224k |
+| HTTP/2 over TLS, 16 in flight, p99 | 3.9 to 23.6 ms | 14.8 to 62.1 ms |
+| SSE, events/s | 64k to 87k | 650 to 3,900 |
+| Startup, no AOT cache | 1,255 ms | 1,750 ms |
+| Startup, with the AOT cache | 470 ms | 709 ms |
+| Edit to new response, DEV | 56 to 74 ms | 2,580 to 2,590 ms |
+| Memory idle | 307 to 310 MB | 278 to 294 MB |
+| Peak memory under load | 951 to 2,874 MB | 1,243 to 5,052 MB |
+
+- The fork leads on every throughput and latency row: by 30 to 112 percent on HTTP/1.1 kept-alive and 39 to 228 percent on HTTP/2 over TLS at 4 and 16 in flight, at a lower p99.
+- What closed the gap and then passed MP:
+  - the request path's cuts (PF-237);
+  - SSE writes coalesced (PF-238);
+  - the start-up work moved off the main thread (PF-239);
+  - HTTP/2 responses that share TLS records and socket writes (PF-244);
+  - event loops at half the cores, where a quarter had left most of a 12-CPU server idle (PF-244).
+- With a new connection per request the load generator was the limit, so that row has no verdict.
+- Idle memory stays 16 to 30 MB above MP's. Throughput and latency are the goals and memory may exceed MP's to reach them, so that gap is recorded, not pursued, and does not count under trigger 1.
+
+The comparison is against Helidon 4.5.7 on JDK 25, the full-stack MP. Quarkus, the full-stack framework most often reported fastest, is not measured yet.
+
 ## Re-evaluation triggers
 
 The question stays closed unless one of these changes.
