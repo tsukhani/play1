@@ -2,8 +2,15 @@ package play.classloading;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.io.BufferedReader;
+import java.io.DataOutputStream;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStreamReader;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
@@ -17,6 +24,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -68,6 +76,7 @@ class SharedCompileTest {
         Play.applicationPath = savedApplicationPath;
         Play.tmpDir = savedTmpDir;
         Play.readOnlyTmp = savedReadOnlyTmp;
+        SharedCompile.waitLimitMs = TimeUnit.SECONDS.toMillis(60);
     }
 
     @Test
@@ -232,6 +241,144 @@ class SharedCompileTest {
         first.join(10_000);
         second.join(10_000);
         assertThat(secondGotIt.get()).isGreaterThan(released.get());
+    }
+
+    @Test
+    void aClassPathDirectoryThatCannotBeListedMeansACompileOfItsOwnNotAFailedStart() throws Exception {
+        // the key walks the class path's directories; before the shared compile a start never failed on one
+        sources();
+        File classes = new File(app, "classes");
+        File locked = new File(classes, "locked");
+        assertThat(locked.mkdirs()).isTrue();
+        Files.writeString(new File(locked, "A.class").toPath(), "x");
+        File unreadable = new File(app, "unreadable-classes");
+        assertThat(unreadable.mkdirs()).isTrue();
+        Files.setPosixFilePermissions(locked.toPath(), PosixFilePermissions.fromString("---------"));
+        Files.setPosixFilePermissions(unreadable.toPath(), PosixFilePermissions.fromString("---------"));
+        try {
+            Assumptions.assumeFalse(Files.isReadable(locked.toPath()), "running as a user who reads anything");
+            List<ApplicationClass> all = sources("models.Order", "controllers.Home");
+            assertThat(SharedCompile.acquire(all, options(), classes.getPath())).as("an unreadable subdirectory").isNull();
+            SharedCompile.forgetTheStart();
+            assertThat(SharedCompile.acquire(all, options(), unreadable.getPath())).as("an unreadable directory").isNull();
+            SharedCompile.forgetTheStart();
+            try (SharedCompile shared = SharedCompile.acquire(all, options(), "")) {
+                assertThat(shared).as("this JVM's lock is free again").isNotNull();
+            }
+        } finally {
+            Files.setPosixFilePermissions(locked.toPath(), PosixFilePermissions.fromString("rwx------"));
+            Files.setPosixFilePermissions(unreadable.toPath(), PosixFilePermissions.fromString("rwx------"));
+        }
+    }
+
+    @Test
+    void anotherJvmHoldingTheLockIsWaitedForUntilItLetsGo() throws Exception {
+        sources();
+        List<ApplicationClass> all = sources("models.Order", "controllers.Home");
+        Process holder = holdTheLockInAnotherJvm(all, 1_500);
+        try {
+            long start = System.nanoTime();
+            try (SharedCompile shared = SharedCompile.acquire(all, options(), "")) {
+                long waited = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+                assertThat(shared).isNotNull();
+                assertThat(waited).as("waited for the other JVM, %d ms", waited).isGreaterThanOrEqualTo(1_000);
+            }
+        } finally {
+            holder.destroy();
+            holder.waitFor(10, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    void aJvmThatHoldsTheLockTooLongIsNotWaitedForForever() throws Exception {
+        // a JVM at a breakpoint, suspended or deadlocked while it holds the lock
+        sources();
+        List<ApplicationClass> all = sources("models.Order", "controllers.Home");
+        SharedCompile.waitLimitMs = 500;
+        Process holder = holdTheLockInAnotherJvm(all, 30_000);
+        try {
+            long start = System.nanoTime();
+            assertThat(SharedCompile.acquire(all, options(), "")).as("compiles on its own").isNull();
+            long waited = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+            assertThat(waited).isBetween(400L, 10_000L);
+            SharedCompile.forgetTheStart();
+            SharedCompile.waitLimitMs = 0;
+            assertThat(SharedCompile.acquire(all, options(), "")).as("this JVM's own lock was let go").isNull();
+        } finally {
+            holder.destroy();
+            holder.waitFor(10, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    void aDamagedLengthIsNotAllocated() throws Exception {
+        sources();
+        List<ApplicationClass> all = sources("models.Order", "controllers.Home");
+        String key = SharedCompile.key(all, options(), "");
+        File output = new File(Play.tmpDir, "javac/" + key + ".bin");
+        output.getParentFile().mkdirs();
+        try (DataOutputStream out = new DataOutputStream(Files.newOutputStream(output.toPath()))) {
+            out.writeInt(1);
+            out.writeInt(1);
+            out.writeUTF("models.Order");
+            out.writeUTF(new File(app, "app/models/Order.java").getAbsolutePath());
+            out.writeInt(Integer.MAX_VALUE - 8);
+        }
+        try (SharedCompile shared = SharedCompile.acquire(all, options(), "")) {
+            assertThat(shared.load(Play.classes)).isFalse();
+        }
+    }
+
+    @Test
+    void theOutputsAndLocksOfOtherKeysAnHourOldArePruned() throws Exception {
+        sources();
+        List<ApplicationClass> all = sources("models.Order", "controllers.Home");
+        File dir = new File(Play.tmpDir, "javac");
+        dir.mkdirs();
+        long twoHoursAgo = System.currentTimeMillis() - TimeUnit.HOURS.toMillis(2);
+        File oldBin = new File(dir, "0123456789abcdef0123456789abcdef.bin");
+        File oldLock = new File(dir, "0123456789abcdef0123456789abcdef.lock");
+        File recentLock = new File(dir, "fedcba9876543210fedcba9876543210.lock");
+        for (File f : List.of(oldBin, oldLock, recentLock)) {
+            Files.writeString(f.toPath(), "");
+        }
+        assertThat(oldBin.setLastModified(twoHoursAgo) && oldLock.setLastModified(twoHoursAgo)).isTrue();
+
+        String key = SharedCompile.key(all, options(), "");
+        try (SharedCompile shared = SharedCompile.acquire(all, options(), "")) {
+            Play.classes.compiler().compile(new String[] {"models.Order", "controllers.Home"});
+            shared.store(Play.classes);
+        }
+        assertThat(oldBin).doesNotExist();
+        assertThat(oldLock).doesNotExist();
+        assertThat(recentLock).as("not an hour old").exists();
+        assertThat(new File(dir, key + ".bin")).exists();
+        assertThat(new File(dir, key + ".lock")).exists();
+    }
+
+    /** Starts a JVM that takes the lock these sources' start would take, and returns once it holds it. */
+    private Process holdTheLockInAnotherJvm(List<ApplicationClass> all, long holdMs) throws Exception {
+        File lock = new File(Play.tmpDir, "javac/" + SharedCompile.key(all, options(), "") + ".lock");
+        lock.getParentFile().mkdirs();
+        Process process = new ProcessBuilder(new File(System.getProperty("java.home"), "bin/java").getPath(), "-cp",
+                System.getProperty("java.class.path"), HoldsTheLock.class.getName(), lock.getPath(),
+                Long.toString(holdMs)).redirectErrorStream(true).start();
+        BufferedReader out = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8));
+        assertThat(out.readLine()).as("the other JVM took the lock").isEqualTo("locked");
+        return process;
+    }
+
+    /** The other JVM: holds the lock file it is given for as long as it is told, with the API SharedCompile uses. */
+    public static final class HoldsTheLock {
+        public static void main(String[] args) throws Exception {
+            try (FileChannel channel = FileChannel.open(new File(args[0]).toPath(), StandardOpenOption.CREATE,
+                    StandardOpenOption.WRITE);
+                 FileLock lock = channel.lock()) {
+                System.out.println("locked");
+                System.out.flush();
+                Thread.sleep(Long.parseLong(args[1]));
+            }
+        }
     }
 
     private static List<String> options() {

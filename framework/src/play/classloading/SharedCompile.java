@@ -63,6 +63,13 @@ final class SharedCompile implements AutoCloseable {
 
     private static final int FORMAT = 1;
 
+    /** How long a start waits for another JVM's compile before it compiles on its own; the tests shorten it. */
+    static long waitLimitMs = TimeUnit.SECONDS.toMillis(60);
+
+    private static final long TELL_AFTER_MS = 3_000;
+
+    private static final long POLL_MS = 20;
+
     private final File output;
     private final FileChannel channel;
     private final FileLock lock;
@@ -78,24 +85,71 @@ final class SharedCompile implements AutoCloseable {
      * started before, the cache is off, tmp/ is read-only, or the lock cannot be taken.
      */
     static SharedCompile acquire(Collection<ApplicationClass> sources, List<String> options) {
+        return acquire(sources, options, System.getProperty("java.class.path", ""));
+    }
+
+    /** With this class path, which javac reads as the JVM's: the tests give one of their own. */
+    static SharedCompile acquire(Collection<ApplicationClass> sources, List<String> options, String classPath) {
         if (STARTED.getAndSet(true) || Play.tmpDir == null || Play.readOnlyTmp
                 || !"true".equals(Play.configuration.getProperty("play.bytecodeCache", "true"))) {
             return null;
         }
         File dir = new File(Play.tmpDir, "javac");
-        String key = key(sources, options, System.getProperty("java.class.path", ""));
+        String key;
+        try {
+            key = key(sources, options, classPath);
+        } catch (RuntimeException e) {
+            // a class path directory that cannot be listed, or one deleted while it is walked: javac may still
+            // compile, and before the shared compile a start never failed on it
+            Logger.debug("Compiling on its own, without the shared start compile: %s", e);
+            return null;
+        }
         IN_THIS_JVM.lock();
         FileChannel channel = null;
         try {
             Files.createDirectories(dir.toPath());
-            channel = FileChannel.open(new File(dir, key + ".lock").toPath(), StandardOpenOption.CREATE,
-                    StandardOpenOption.WRITE);
-            return new SharedCompile(new File(dir, key + ".bin"), channel, channel.lock());
+            File lockFile = new File(dir, key + ".lock");
+            channel = FileChannel.open(lockFile.toPath(), StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+            FileLock lock = waitFor(channel, lockFile);
+            if (lock != null) {
+                return new SharedCompile(new File(dir, key + ".bin"), channel, lock);
+            }
         } catch (IOException | RuntimeException e) {
             Logger.debug("Compiling on its own, without the shared start compile: %s", e);
-            closeQuietly(channel);
-            IN_THIS_JVM.unlock();
-            return null;
+        }
+        closeQuietly(channel);
+        IN_THIS_JVM.unlock();
+        return null;
+    }
+
+    /**
+     * The lock, once the JVM that holds it has done, or null after {@link #waitLimitMs}: a JVM stopped at a
+     * breakpoint, suspended or deadlocked while it holds the lock would otherwise hold up every other start with
+     * this key, where each used to compile on its own. An interrupt gives up too, and is kept.
+     */
+    private static FileLock waitFor(FileChannel channel, File lockFile) throws IOException {
+        long start = System.nanoTime();
+        boolean told = false;
+        while (true) {
+            FileLock lock = channel.tryLock();
+            if (lock != null) {
+                return lock;
+            }
+            long waited = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+            if (waited >= waitLimitMs) {
+                Logger.info("Another JVM has held %s for %d s: compiling on its own", lockFile, waited / 1000);
+                return null;
+            }
+            if (!told && waited >= TELL_AFTER_MS) {
+                Logger.info("Waiting for another JVM's compile of this application (%s)", lockFile);
+                told = true;
+            }
+            try {
+                Thread.sleep(POLL_MS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return null;
+            }
         }
     }
 
@@ -116,7 +170,12 @@ final class SharedCompile implements AutoCloseable {
             for (int i = 0; i < count; i++) {
                 String name = in.readUTF();
                 VirtualFile file = VirtualFile.open(new File(in.readUTF()));
-                byte[] code = new byte[in.readInt()];
+                int length = in.readInt();
+                if (length < 0 || length > in.available()) {
+                    // a damaged file: no length is taken that the file does not hold
+                    return false;
+                }
+                byte[] code = new byte[length];
                 in.readFully(code);
                 if (!file.exists()) {
                     return false;
@@ -196,15 +255,21 @@ final class SharedCompile implements AutoCloseable {
         }
     }
 
-    /** The outputs of other keys, an hour old: each holds every class of the application. Their empty locks stay. */
+    /**
+     * The outputs and locks of other keys, an hour old: an output holds every class of the application, and each
+     * source state leaves a lock. A lock deleted while a JVM still waits on it can only make two JVMs compile, never
+     * load a wrong class, as the output is written whole and keyed by its inputs.
+     */
     private void pruneOthers() {
-        File[] others = output.getParentFile().listFiles((dir, name) -> name.endsWith(".bin"));
+        String key = output.getName().substring(0, output.getName().length() - ".bin".length());
+        File[] others = output.getParentFile().listFiles(
+                (dir, name) -> (name.endsWith(".bin") || name.endsWith(".lock")) && !name.startsWith(key + "."));
         if (others == null) {
             return;
         }
         long before = System.currentTimeMillis() - KEEP_OTHERS_MS;
         for (File other : others) {
-            if (!other.equals(output) && other.lastModified() < before && !other.delete()) {
+            if (other.lastModified() < before && !other.delete()) {
                 Logger.debug("Could not delete %s", other);
             }
         }
