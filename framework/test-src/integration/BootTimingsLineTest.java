@@ -116,6 +116,28 @@ public class BootTimingsLineTest {
     }
 
     @Test
+    public void precompiledProdBootNeverLoadsTheGroovyCompiler(@TempDir File app) throws Exception {
+        scratchApp(app, "application.mode=dev");
+        // a routes file with template syntax, so the start renders it through GroovyTemplate, whose class init is
+        // what compiled the script; a plain routes file is read as it is and never initializes the class
+        write(app, "conf/routes", "*{ rendered through the template engine at start }*\nGET / Application.index\n");
+        boot(app, 0, "-Dprecompile=yes");
+
+        // PF-239: GroovyTemplate's class init compiled a one-line script to give String an if method, which loaded
+        // Groovy's parser and compiler, about 500 classes, into every start at the first template use, the routes
+        // file in a precompiled start, although such a start compiles no template.
+        List<String> boot = boot(app, 0, "-Dprecompiled=true", "-Xlog:class+load");
+        assertThat(boot).as("the application started").anyMatch(line -> line.contains(LINE));
+        assertThat(boot).as("the routes went through the template engine")
+                .anyMatch(line -> line.contains(" play.templates.GroovyTemplate "));
+        assertThat(boot.stream().filter(line -> line.contains(" org.apache.groovy.parser.")
+                        || line.contains(" groovyjarjarantlr4.")
+                        || line.contains(" org.codehaus.groovy.control.CompilationUnit ")
+                        || line.contains(" groovy.lang.GroovyShell ")).limit(5).toList())
+                .as("Groovy compiler classes loaded by a start that compiles nothing").isEmpty();
+    }
+
+    @Test
     public void precompiledProdBootStartsOnARuntimeWithoutTheJavaCompiler(@TempDir File app) throws Exception {
         // PF-229: Play compiles with javac, from the jdk.compiler module, which a JRE or a jlink image
         // need not carry. A precompiled application compiles nothing and must start without it.
