@@ -180,7 +180,7 @@ require:    &allDependencies
     - com.aayushatharva.brotli4j -> native-linux-x86_64 1.24.0
     - com.aayushatharva.brotli4j -> native-linux-riscv64 1.24.0
     - com.aayushatharva.brotli4j -> native-windows-x86_64 1.24.0
-    - org.postgresql -> postgresql 42.7.14
+    - org.postgresql -> postgresql 42.7.15
     - org.slf4j -> slf4j-api 2.0.20
     - org.apache.logging.log4j -> log4j-slf4j2-impl 2.26.1
     - org.yaml -> snakeyaml 2.7
