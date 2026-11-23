@@ -1172,7 +1172,7 @@ The number of event loop threads that serve the HTTP connections, and again the 
 
 bc. play.netty.maxThreads=8
 
-Default: a quarter of the cores, rounded up, and never fewer than 2 (2 on up to 8 cores, 4 on 14). Netty's own default, which this setting used to fall back to, is twice the cores: on 14 cores its 28 loops served about 10% fewer requests per second than 4 did, at a higher 99th percentile, and held more memory under load. A single loop is too few: with the JVM sized for 4 cores it ran at a full core under load and served fewer requests than Netty's 8, at twice the 99th percentile, where 2 served more than either. Netty's @-Dio.netty.eventLoopThreads@ is honoured when this setting is absent.
+Default: half the cores, rounded up, and never fewer than 2 (2 on up to 4 cores, 6 on 12, 7 on 14). A quarter of the cores, the default before, held a server whose CPUs nothing else shares to 4 or 5 of its 12: 6 loops served about 68% more plain-text requests per second there, at a lower 99th percentile. Netty's own default, which this setting used to fall back to, is twice the cores: on 14 cores its 28 loops served about 10% fewer requests per second than 4 did, at a higher 99th percentile, and held more memory under load. A single loop is too few: with the JVM sized for 4 cores it ran at a full core under load and served fewer requests than Netty's 8, at twice the 99th percentile, where 2 served more than either. Netty's @-Dio.netty.eventLoopThreads@ is honoured when this setting is absent.
 
 h3(#play.netty.spoolThresholdBytes). play.netty.spoolThresholdBytes
 

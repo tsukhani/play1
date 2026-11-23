@@ -351,21 +351,23 @@ public class Server {
     }
 
     /**
-     * PF-240: a quarter of the cores, rounded up and at least 2, where Netty's own default is
-     * twice the cores.
+     * Half the cores, rounded up and at least 2 (PF-244), where Netty's own default is twice the cores.
      * The event loops only decode, encode and write: every action runs on a virtual thread of its
      * own. Each loop is a platform thread with its own stack and its own magazines in Netty's
      * adaptive allocator, every one of them holding direct chunks of at least 128 KiB that are
      * malloc'd outside the JVM's native memory tracking. On 14 cores the 28 loops held 17 to 26 MB
      * more than 4 did and served fewer requests, since a loop with two connections is woken for
-     * nearly every write. Never fewer than 2: a JVM sized for 4 cores ran its lone loop at 98 to
-     * 100% of a core under the Helidon harness's load and served fewer requests, at a higher p99,
-     * than Netty's 8 did, where 2 served more than either. {@code -Dio.netty.eventLoopThreads},
-     * Netty's own setting, still wins when it is given: 0 hands the choice to Netty, which reads it.
+     * nearly every write (PF-240, which made a quarter of the cores the default). On a server whose
+     * CPUs nothing else shares, 12 of them, a quarter was the limit: 3 loops kept the server at 4 to 5
+     * of its CPUs and served 182k plain-text requests/s at p99 0.72 ms, where 6 served 305k at 0.43
+     * ms. Never fewer than 2: a JVM sized for 4 cores ran its lone loop at 98 to 100% of a core
+     * under the Helidon harness's load and served fewer requests, at a higher p99, than Netty's 8
+     * did, where 2 served more than either. {@code -Dio.netty.eventLoopThreads}, Netty's own
+     * setting, still wins when it is given: 0 hands the choice to Netty, which reads it.
      */
     static int defaultWorkerThreads(int cores) {
         if (System.getProperty("io.netty.eventLoopThreads") != null) return 0;
-        return Math.max(2, (cores + 3) / 4);
+        return Math.max(2, (cores + 1) / 2);
     }
 
     private static synchronized void registerForShutdown(EventLoopGroup... groups) {
