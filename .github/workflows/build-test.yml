@@ -20,6 +20,8 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     strategy:
+      # Each OS finishes its suite: a failure on one must not cancel, and so hide, the other's result
+      fail-fast: false
       matrix:
         jdk: [ 25 ]
         os: [ubuntu-latest, windows-latest]
