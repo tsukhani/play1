@@ -494,28 +494,49 @@ public class ApplicationClassloader extends ClassLoader {
 
             } else {
 
-                if (!Play.pluginCollection.compileSources()) {
+                // PF-234: JVMs that start the application from the same tmp/ at once compile it once. The lock is
+                // held until every class is defined here, so tmp/bytecode is written before the next JVM goes on.
+                SharedCompile shared = null;
+                try {
+                    if (!Play.pluginCollection.compileSources()) {
 
-                    List<ApplicationClass> all = new ArrayList<>();
+                        List<ApplicationClass> all = new ArrayList<>();
 
-                    for (VirtualFile virtualFile : Play.javaPath) {
-                        all.addAll(getAllClasses(virtualFile));
+                        for (VirtualFile virtualFile : Play.javaPath) {
+                            all.addAll(getAllClasses(virtualFile));
+                        }
+                        List<String> classNames = new ArrayList<>();
+                        for (ApplicationClass applicationClass : all) {
+                            if (applicationClass != null && !applicationClass.compiled && applicationClass.isClass()) {
+                                classNames.add(applicationClass.name);
+                            }
+                        }
+
+                        ApplicationCompiler compiler = Play.classes.compiler();
+                        shared = classNames.isEmpty() ? null : SharedCompile.acquire(all, compiler.options);
+                        if (shared == null || !shared.load(Play.classes)) {
+                            compiler.compile(classNames.toArray(new String[classNames.size()]));
+                            if (shared != null) {
+                                shared.store(Play.classes);
+                            }
+                        } else {
+                            // The JVM that compiled held the lock until javac's output and tmp/bytecode were both
+                            // written, so this one needs it no longer: the JVMs that wait go on together.
+                            shared.close();
+                            shared = null;
+                        }
+
                     }
-                    List<String> classNames = new ArrayList<>();
-                    for (ApplicationClass applicationClass : all) {
-                        if (applicationClass != null && !applicationClass.compiled && applicationClass.isClass()) {
-                            classNames.add(applicationClass.name);
+
+                    for (ApplicationClass applicationClass : Play.classes.all()) {
+                        Class<?> clazz = loadApplicationClass(applicationClass.name);
+                        if (clazz != null) {
+                            result.add(clazz);
                         }
                     }
-
-                    Play.classes.compiler().compile(classNames.toArray(new String[classNames.size()]));
-
-                }
-
-                for (ApplicationClass applicationClass : Play.classes.all()) {
-                    Class<?> clazz = loadApplicationClass(applicationClass.name);
-                    if (clazz != null) {
-                        result.add(clazz);
+                } finally {
+                    if (shared != null) {
+                        shared.close();
                     }
                 }
 

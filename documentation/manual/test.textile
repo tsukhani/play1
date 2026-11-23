@@ -225,6 +225,8 @@ bc. ./gradlew test -PtestJvms=8
 
 Each JVM starts the application once and has a heap of its own, so more JVMs take more memory. Gradle does not rerun the task when only the number changes; add @--rerun@ for that.
 
+The JVMs of a run compile the application once. The first to start compiles @app/@ and @test/@ and enhances the classes while the others wait, and they then take its classes from @tmp/@ instead of compiling them again, so a run of eight JVMs does not spend its first minute on eight identical compiles. This needs @tmp/@ to be writable and @play.bytecodeCache@ left on, its default; a DEV start shares the same way with the next start whose sources, JDK and classpath are unchanged.
+
 h3. One class, or one method
 
 bc. ./gradlew test --tests UserTest
