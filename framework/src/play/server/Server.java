@@ -144,8 +144,8 @@ public class Server {
         try {
             if (httpPort != -1) {
                 // Boss only accepts; one thread per bound port suffices. Worker count honours
-                // play.netty.maxThreads if set (legacy Netty 3 toggle), otherwise a quarter of the
-                // cores, at least 2 (PF-240, see workerThreads). 0 / unset / unparseable → default.
+                // play.netty.maxThreads if set (legacy Netty 3 toggle), otherwise half the cores, at
+                // least 2 (PF-244, see workerThreads). 0 / unset / unparseable → default.
                 EventLoopGroup bossGroup = new NioEventLoopGroup(1);
                 EventLoopGroup workerGroup = new NioEventLoopGroup(workerThreads());
                 registerForShutdown(bossGroup, workerGroup);

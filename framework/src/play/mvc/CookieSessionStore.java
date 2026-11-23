@@ -73,9 +73,13 @@ public class CookieSessionStore implements SessionStore {
             return;
         }
         if (session.isEmpty()) {
-            // The session is empty: delete the cookie the request carried. A client that sent
-            // none has nothing to delete, whatever sendOnlyIfChanged says (PF-249).
-            if (Http.Request.current().cookies.containsKey(COOKIE_PREFIX + "_SESSION")) {
+            // The session is empty: delete the cookie the request carried, whatever sendOnlyIfChanged
+            // says (PF-249). An action that changed the session, a logout's clear() for one, deletes it
+            // whether the request carried it or not: a browser withholds a SameSite cookie from a
+            // cross-site POST, and from any cross-site navigation when it is Strict, yet takes a
+            // deletion in the response to a top-level navigation. A single logout posted by an
+            // identity provider is one, and the client would keep its session.
+            if (session.changed || Http.Request.current().cookies.containsKey(COOKIE_PREFIX + "_SESSION")) {
                 Http.Response.current().setCookie(COOKIE_PREFIX + "_SESSION", "", null, "/", 0, COOKIE_SECURE, SESSION_HTTPONLY);
                 Scope.applySameSite(COOKIE_PREFIX + "_SESSION");
             }

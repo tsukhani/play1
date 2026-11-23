@@ -95,12 +95,26 @@ public class ScopeCookieDeletionTest {
 
     @ParameterizedTest(name = "sendOnlyIfChanged={0}")
     @ValueSource(booleans = { false, true })
-    public void aClearedSessionTheRequestDidNotCarryIsNotSent(boolean onlyIfChanged) throws Exception {
+    public void aClearedSessionIsDeletedEvenWhenTheRequestDidNotCarryIt(boolean onlyIfChanged) throws Exception {
+        // A browser withholds a SameSite cookie from a cross-site POST (and a Strict one from any cross-site
+        // navigation) yet takes a deletion in the response: an identity provider's single logout posted to the
+        // application is such a request, and its clear() has to reach the browser.
         Scope.SESSION_SEND_ONLY_IF_CHANGED = onlyIfChanged;
         request(Map.of());
         Session session = Session.restore();
-        session.put("username", "Alice");
         session.clear();
+        session.save();
+
+        assertDeleted(SESSION);
+    }
+
+    @ParameterizedTest(name = "sendOnlyIfChanged={0}")
+    @ValueSource(booleans = { false, true })
+    public void anUntouchedSessionTheRequestDidNotCarryIsNotSent(boolean onlyIfChanged) throws Exception {
+        Scope.SESSION_SEND_ONLY_IF_CHANGED = onlyIfChanged;
+        request(Map.of());
+        Session session = Session.restore();
+        session.get("username");
         session.save();
 
         assertNull(Response.current().cookies.get(SESSION));
