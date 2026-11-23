@@ -4,6 +4,7 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelPipeline;
 import io.netty.handler.codec.http2.Http2FrameCodecBuilder;
 import io.netty.handler.codec.http2.Http2MultiplexHandler;
+import io.netty.handler.flush.FlushConsolidationHandler;
 import io.netty.handler.ssl.ApplicationProtocolNames;
 import io.netty.handler.ssl.ApplicationProtocolNegotiationHandler;
 import play.Logger;
@@ -56,7 +57,15 @@ public class Http2OrHttp1Negotiator extends ApplicationProtocolNegotiationHandle
             // than assigned from a fresh Http2Settings so Netty's builder defaults
             // (maxHeaderListSize, maxConcurrentStreams) survive.
             codecBuilder.initialSettings().connectProtocolEnabled(true);
+            // PF-244: the streams of a connection write their responses from their own virtual threads, and each
+            // writeAndFlush reached SslHandler as a flush of its own: one TLS record and one socket write per
+            // response. Flushes that arrive in one turn of the event loop now leave as one, so SslHandler wraps
+            // the responses written meanwhile together. A lone flush is only moved to a task in the same turn, so
+            // nothing waits as it does under Nagle's algorithm. It sits after SslHandler for that reason: at the
+            // head of the pipeline it would batch the socket writes but not the records.
             ctx.pipeline()
+                    .addLast("h2-flush-consolidation", new FlushConsolidationHandler(
+                            FlushConsolidationHandler.DEFAULT_EXPLICIT_FLUSH_AFTER_FLUSHES, true))
                     .addLast("h2-frame-codec", codecBuilder.build())
                     .addLast("h2-multiplex", new Http2MultiplexHandler(new Http2StreamInitializer()));
             return;

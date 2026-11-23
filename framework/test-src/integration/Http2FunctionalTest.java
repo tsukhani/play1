@@ -6,6 +6,10 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.security.cert.X509Certificate;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManager;
@@ -93,6 +97,27 @@ public class Http2FunctionalTest {
                 "Alt-Svc must advertise h3 endpoint at the configured port; got: " + altSvc);
         assertTrue(altSvc.contains("ma="),
                 "Alt-Svc must include max-age (ma=) for client-side caching; got: " + altSvc);
+    }
+
+    @Test
+    void manyStreamsInFlightOnOneConnectionAreAllAnswered() throws Exception {
+        // PF-244: the flushes of a connection's streams are consolidated per turn of its event loop. A flush that
+        // never left would hold its response until the stream timed out, so each request gets a deadline. One
+        // HttpClient keeps one HTTP/2 connection to the host and sends these requests as streams of it.
+        HttpClient client = client(HttpClient.Version.HTTP_2);
+        String expected = client.send(HttpRequest.newBuilder(URI.create(BASE + "/json")).build(),
+                HttpResponse.BodyHandlers.ofString()).body();
+        List<CompletableFuture<HttpResponse<String>>> inFlight = new ArrayList<>();
+        for (int i = 0; i < 64; i++) {
+            inFlight.add(client.sendAsync(HttpRequest.newBuilder(URI.create(BASE + "/json")).build(),
+                    HttpResponse.BodyHandlers.ofString()).orTimeout(10, TimeUnit.SECONDS));
+        }
+        for (CompletableFuture<HttpResponse<String>> f : inFlight) {
+            HttpResponse<String> response = f.get();
+            assertEquals(HttpClient.Version.HTTP_2, response.version());
+            assertEquals(200, response.statusCode());
+            assertEquals(expected, response.body());
+        }
     }
 
     private static HttpClient client(HttpClient.Version version) throws Exception {
