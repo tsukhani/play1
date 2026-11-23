@@ -52,6 +52,10 @@ public class CookieSessionStore implements SessionStore {
                 // timestamp in the new cookie
                 if (COOKIE_EXPIRE != null) {
                     session.put(TS_KEY, (System.currentTimeMillis() + expiration));
+                    // The stamp is no change the action made: save() deletes an empty session's cookie
+                    // when the action changed the session, and every request without the cookie would
+                    // otherwise get that deletion back with application.session.maxAge set (PF-249).
+                    session.changed = false;
                 }
             }
 
