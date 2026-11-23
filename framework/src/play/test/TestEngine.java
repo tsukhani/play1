@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.platform.engine.TestExecutionResult;
 import org.junit.platform.launcher.Launcher;
 import org.junit.platform.launcher.LauncherDiscoveryRequest;
+import org.junit.platform.engine.support.descriptor.ClassSource;
 import org.junit.platform.launcher.TestExecutionListener;
 import org.junit.platform.launcher.TestIdentifier;
 import org.junit.platform.launcher.core.LauncherDiscoveryRequestBuilder;
@@ -24,6 +25,7 @@ import org.junit.platform.launcher.core.LauncherFactory;
 
 import play.Logger;
 import play.Play;
+import play.classloading.ApplicationClasses.ApplicationClass;
 import play.exceptions.UnexpectedException;
 import play.libs.F;
 import play.mvc.Http.Request;
@@ -201,6 +203,14 @@ public class TestEngine {
                 launcher.execute(request);
                 return null;
             });
+            // PF-241: a class none of whose tests ran is not a passed class
+            if (testResults.results.isEmpty()) {
+                TestResult none = new TestResult();
+                none.name = testClass.getSimpleName();
+                none.passed = false;
+                none.error = "No test ran: JUnit found no test in " + testClass.getName();
+                testResults.add(none);
+            }
 
         } catch (ClassNotFoundException e) {
             Logger.error(e, "Test not found %s", name);
@@ -242,7 +252,8 @@ public class TestEngine {
 
         @Override
         public void executionSkipped(TestIdentifier testIdentifier, String reason) {
-            if (testIdentifier.isTest()) {
+            // PF-241: a disabled class is reported as skipped, not as a class with nothing in it
+            if (testIdentifier.isTest() || isClass(testIdentifier)) {
                 current = new TestResult();
                 current.name = testIdentifier.getDisplayName();
                 current.time = 0;
@@ -257,40 +268,71 @@ public class TestEngine {
         public void executionFinished(TestIdentifier testIdentifier, TestExecutionResult testExecutionResult) {
             if (testIdentifier.isTest()) {
                 current.time = System.currentTimeMillis() - current.time;
-                TestExecutionResult.Status status = testExecutionResult.getStatus();
-                if (status == TestExecutionResult.Status.SUCCESSFUL) {
-                    current.passed = true;
-                } else if (status == TestExecutionResult.Status.ABORTED) {
-                    current.passed = true;
-                    current.skipped = true;
-                    Throwable ex = testExecutionResult.getThrowable().orElse(null);
-                    current.error = ex != null ? "Skipped: " + ex.getMessage() : "Skipped";
+                record(current, testExecutionResult);
+                results.add(current);
+            } else if (testExecutionResult.getStatus() != TestExecutionResult.Status.SUCCESSFUL) {
+                // PF-241: the class itself, a nested class or the engine failed or was aborted: a @BeforeAll or
+                // @AfterAll that threw, a class initialiser, an extension's beforeAll, a nested class Jupiter could
+                // not create. Before, only tests were recorded, so a class none of whose tests ran passed.
+                TestResult container = new TestResult();
+                container.name = testIdentifier.getDisplayName() + " (the class's setup or teardown)";
+                record(container, testExecutionResult);
+                results.add(container);
+            }
+        }
+
+        private void record(TestResult result, TestExecutionResult testExecutionResult) {
+            TestExecutionResult.Status status = testExecutionResult.getStatus();
+            if (status == TestExecutionResult.Status.SUCCESSFUL) {
+                result.passed = true;
+            } else if (status == TestExecutionResult.Status.ABORTED) {
+                result.passed = true;
+                result.skipped = true;
+                Throwable ex = testExecutionResult.getThrowable().orElse(null);
+                result.error = ex != null ? "Skipped: " + ex.getMessage() : "Skipped";
+            } else {
+                result.passed = false;
+                Throwable ex = testExecutionResult.getThrowable().orElse(null);
+                if (ex == null) {
+                    result.error = "A failure with no exception";
+                    return;
+                }
+                if (ex instanceof AssertionError) {
+                    result.error = "Failure, " + ex.getMessage();
                 } else {
-                    current.passed = false;
-                    Throwable ex = testExecutionResult.getThrowable().orElse(null);
-                    if (ex != null) {
-                        if (ex instanceof AssertionError) {
-                            current.error = "Failure, " + ex.getMessage();
-                        } else {
-                            current.error = "A " + ex.getClass().getName() + " has been caught, " + ex.getMessage();
-                        }
-                        current.trace = getStackTrace(ex);
-                        for (StackTraceElement stackTraceElement : ex.getStackTrace()) {
-                            if (stackTraceElement.getClassName().equals(className)) {
-                                // Play.classes.getApplicationClass may need adaptation for source info
-                                current.sourceInfos = "In " + Play.classes.getApplicationClass(className).javaFile.relativePath() + ", line " + stackTraceElement.getLineNumber();
-                                String[] lines = Play.classes.getApplicationClass(className).javaSource.split("\n");
-                                if (stackTraceElement.getLineNumber() - 1 < lines.length) {
-                                    current.sourceCode = lines[stackTraceElement.getLineNumber() - 1];
-                                }
-                                current.sourceFile = Play.classes.getApplicationClass(className).javaFile.relativePath();
-                                current.sourceLine = stackTraceElement.getLineNumber();
-                            }
+                    result.error = "A " + ex.getClass().getName() + " has been caught, " + ex.getMessage();
+                }
+                result.trace = getStackTrace(ex);
+                ApplicationClass source = Play.classes == null ? null : Play.classes.getApplicationClass(className);
+                if (source == null || source.javaFile == null) {
+                    return;
+                }
+                // the class's own frame nearest the test, as before; a class initialiser that threw is only in the
+                // cause of the ExceptionInInitializerError, so the causes are looked at when the exception has none
+                for (Throwable cause = ex; cause != null; cause = cause.getCause() == cause ? null : cause.getCause()) {
+                    StackTraceElement frame = null;
+                    for (StackTraceElement stackTraceElement : cause.getStackTrace()) {
+                        String frameClass = stackTraceElement.getClassName();
+                        if (frameClass.equals(className) || frameClass.startsWith(className + "$")) {
+                            frame = stackTraceElement;
                         }
                     }
+                    if (frame != null) {
+                        result.sourceInfos = "In " + source.javaFile.relativePath() + ", line " + frame.getLineNumber();
+                        String[] lines = source.javaSource.split("\n");
+                        if (frame.getLineNumber() > 0 && frame.getLineNumber() - 1 < lines.length) {
+                            result.sourceCode = lines[frame.getLineNumber() - 1];
+                        }
+                        result.sourceFile = source.javaFile.relativePath();
+                        result.sourceLine = frame.getLineNumber();
+                        return;
+                    }
                 }
-                results.add(current);
             }
+        }
+
+        private static boolean isClass(TestIdentifier testIdentifier) {
+            return testIdentifier.getSource().map(ClassSource.class::isInstance).orElse(false);
         }
 
         private String getStackTrace(Throwable throwable) {
