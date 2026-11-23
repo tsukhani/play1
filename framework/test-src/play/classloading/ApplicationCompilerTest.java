@@ -332,6 +332,122 @@ class ApplicationCompilerTest {
         return model.methods().stream().filter(method -> method.methodName().equalsString(name)).findFirst().orElseThrow();
     }
 
+    @Test
+    void aMethodReferenceToAnEntitysInheritedFinderIsACompileErrorAtItsLine() throws Exception {
+        // PF-242: the method handle names GenericModel, whose finder throws, so the reference is refused here
+        book();
+        source("controllers/Shelf.java", """
+            package controllers;
+            import java.util.List;
+            import java.util.function.LongSupplier;
+            public class Shelf {
+                public static List<Object> byIds(List<Long> ids) {
+                    return ids.stream().map(models.Book::findById).toList();
+                }
+            }
+            """);
+
+        assertThatThrownBy(() -> compile("controllers.Shelf"))
+            .isInstanceOfSatisfying(CompilationException.class, e -> {
+                assertThat(e.getSourceFile()).isEqualTo("/app/controllers/Shelf.java");
+                assertThat(e.getLineNumber()).isEqualTo(6);
+                assertThat(e.getErrorDescription()).contains("models.Book::findById",
+                        "Write a lambda instead: id -> models.Book.findById(id)");
+            });
+    }
+
+    @Test
+    void everyPlaceholderFinderIsRefusedWithTheLambdaThatCallsIt() throws Exception {
+        book();
+        Map<String, String> references = Map.of(
+                "java.util.function.LongSupplier r = Book::count;", "() -> Book.count()",
+                "java.util.function.Supplier<java.util.List<Book>> r = Book::findAll;", "() -> Book.findAll()",
+                "java.util.function.Supplier<Object> r = Book::all;", "() -> Book.all()",
+                "java.util.function.IntSupplier r = Book::deleteAll;", "() -> Book.deleteAll()",
+                "java.util.function.BiFunction<String, Object[], Object> r = Book::find;",
+                        "(query, params) -> Book.find(query, params)",
+                "java.util.function.BiFunction<String, Object[], Integer> r = Book::delete;",
+                        "(query, params) -> Book.delete(query, params)",
+                "java.util.function.BiFunction<String, Object[], Long> r = Book::count;",
+                        "(query, params) -> Book.count(query, params)",
+                "java.util.function.BiFunction<String, play.mvc.Scope.Params, Object> r = Book::create;",
+                        "(name, params) -> Book.create(name, params)",
+                "java.util.function.LongSupplier r = play.db.jpa.GenericModel::count;",
+                        "() -> play.db.jpa.GenericModel.count()");
+        int n = 0;
+        for (Map.Entry<String, String> reference : references.entrySet()) {
+            String name = "Ref" + n++;
+            Play.classes = new ApplicationClasses();
+            source("controllers/" + name + ".java", "package controllers;\nimport models.Book;\npublic class " + name
+                    + " {\n    static void use() {\n        " + reference.getKey() + "\n    }\n}\n");
+            assertThatThrownBy(() -> compile("controllers." + name)).as(reference.getKey())
+                .isInstanceOfSatisfying(CompilationException.class, e -> {
+                    assertThat(e.getLineNumber()).isEqualTo(5);
+                    assertThat(e.getErrorDescription()).contains("Write a lambda instead: " + reference.getValue());
+                });
+        }
+    }
+
+    @Test
+    void aLambdaAnEntitysOwnStaticMethodAndOtherMethodReferencesCompileAsBefore() throws Exception {
+        book();
+        source("models/Shelf.java", """
+            package models;
+            import java.util.List;
+            import java.util.regex.Matcher;
+            @jakarta.persistence.Entity
+            public class Shelf extends play.db.jpa.Model {
+                public static Shelf create(String name) {
+                    return new Shelf();
+                }
+                public static List<Object> byIds(List<Long> ids) {
+                    return ids.stream().map(id -> (Object) Book.findById(id)).toList();
+                }
+                public static List<Shelf> named(List<String> names) {
+                    return names.stream().map(Shelf::create).toList();
+                }
+                public static long found(List<Matcher> matchers) {
+                    return matchers.stream().filter(Matcher::find).map(String::valueOf).count();
+                }
+                public static Object real(java.util.function.Function<Object, Object> f) {
+                    return f.apply(null);
+                }
+            }
+            """);
+
+        compile("models.Shelf");
+
+        assertThat(Play.classes.getApplicationClass("models.Shelf").javaByteCode).isNotNull();
+    }
+
+    @Test
+    void aFileWithTwoTopLevelClassesReportsItsReferenceOnce() throws Exception {
+        book();
+        source("controllers/Twice.java", """
+            package controllers;
+            public class Twice {
+                static Object first() {
+                    return ((java.util.function.LongSupplier) models.Book::count).getAsLong();
+                }
+            }
+            class Second {
+            }
+            """);
+
+        assertThatThrownBy(() -> compile("controllers.Twice"))
+            .isInstanceOfSatisfying(CompilationException.class, e -> assertThat(e.getLineNumber()).isEqualTo(4));
+    }
+
+    private void book() throws IOException {
+        source("models/Book.java", """
+            package models;
+            @jakarta.persistence.Entity
+            public class Book extends play.db.jpa.Model {
+                public String title;
+            }
+            """);
+    }
+
     private void compile(String... classNames) {
         Play.classes.compiler().compile(classNames);
     }

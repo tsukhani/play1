@@ -306,7 +306,12 @@ public class ApplicationCompiler {
             }
 
             DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
-            boolean succeeded = onJavacThread(javac.getTask(null, fileManager, diagnostics, options, null, units));
+            JavaCompiler.CompilationTask task = javac.getTask(null, fileManager, diagnostics, options, null, units);
+            if (task instanceof com.sun.source.util.JavacTask javacTask) {
+                // PF-242: a method reference to an entity's inherited finder is an error here, not when it runs
+                FinderReferenceCheck.addTo(javacTask);
+            }
+            boolean succeeded = onJavacThread(task);
             for (Diagnostic<? extends JavaFileObject> diagnostic : diagnostics.getDiagnostics()) {
                 if (diagnostic.getKind() == Diagnostic.Kind.ERROR) {
                     throw compilationError(diagnostic);

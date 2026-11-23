@@ -85,7 +85,7 @@ h2. <a name="finding">Finding objects</a>
 
 The @play.db.jpa.Model@ gives you several ways to find data. For example:
 
-Call the finders on the entity class, as below, and not through a method reference such as @Post::findById@. Play adds the finders to each entity class when it enhances it, but a method reference names the class that declares the method, @GenericModel@, so it reaches @GenericModel@'s placeholder, which throws an @UnsupportedOperationException@ that says so. Write a lambda instead: @ids.stream().map(id -> Post.findById(id))@.
+Call the finders on the entity class, as below, and not through a method reference such as @Post::findById@. Play adds the finders to each entity class when it enhances it, but a method reference names the class that declares the method, @GenericModel@, so it would reach @GenericModel@'s placeholder, which throws. Play's compile therefore refuses such a reference, in DEV on the error page at its line and in @play precompile@ as a failed build, and names the lambda to write instead: @ids.stream().map(id -> Post.findById(id))@. Gradle's own @compileJava@ does not check it, so an IDE shows no error there; the placeholder's exception, which says the same, is what a class Play did not compile would meet. A reference to an entity's own static method, or to an instance method such as @Post::save@, is not affected.
 
 h3. Find by ID
 
