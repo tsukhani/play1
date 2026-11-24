@@ -23,7 +23,9 @@ import play.libs.F;
  * Jupiter's own {@code SEPARATE_THREAD} timeouts hand one to another thread. The interrupt status
  * goes with the call, as if it ran on JUnit's thread: an interrupt of the waiting thread, a
  * same-thread timeout's for one, or the status it hands a call over with, reaches the code, and
- * the waiting thread leaves the call with the status the code left. The job's thread is cleared
+ * the waiting thread leaves the call with the status the code left. The status it hands over is
+ * set on the call before the job's thread can see the call, so the code starts with it (PF-254).
+ * The job's thread is cleared
  * after every call. So JUnit clears a status a test leaves set when the test ends, as it clears
  * its own thread under {@code /@tests}, and a status left set never reaches the job's wait for
  * the next call, where it would end the job and fail the class's remaining tests.
@@ -31,6 +33,13 @@ import play.libs.F;
 final class TestClassJob {
 
     private static final Call<Void> END = new Call<>(null);
+
+    /**
+     * Test-only hook (PF-254): run on the calling thread right after a call is queued and before it
+     * is waited for, so a test can let the job's thread run the call first, as it does when the
+     * scheduler sets the calling thread aside there.
+     */
+    static Runnable afterQueue;
 
     private final BlockingQueue<Call<?>> calls = new LinkedBlockingQueue<>();
     private final F.Promise<Void> job;
@@ -59,7 +68,16 @@ final class TestClassJob {
      */
     <T> T run(F.Function0<T> code) throws Throwable {
         Call<T> call = new Call<>(code);
+        // PF-254: hand the status over before the job's thread can take the call. Handed over by
+        // the wait below, it reached a call the job's thread had already started, or finished,
+        // whenever this thread was set aside after the add, and the code ran without it.
+        if (Thread.interrupted()) {
+            call.interrupt();
+        }
         calls.add(call);
+        if (afterQueue != null) {
+            afterQueue.run();
+        }
         while (true) {
             try {
                 if (call.done.await(50, TimeUnit.MILLISECONDS)) {
