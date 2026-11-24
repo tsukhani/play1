@@ -787,7 +787,7 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
             throws Exception {
         if (Logger.isTraceEnabled()) {
             Logger.trace("parseRequest: begin");
-            Logger.trace("parseRequest: URI = " + nettyRequest.uri());
+            Logger.trace("parseRequest: URI = %s", nettyRequest.uri());
         }
 
         String uri = nettyRequest.uri();

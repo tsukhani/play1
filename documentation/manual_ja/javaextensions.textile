@@ -107,7 +107,7 @@ bc. ${1275910970000.asdate('dd MMMM yyyy hh:mm:ss')}
 07 June 2010 01:42:50
 
 
-h3. <a name="asdate-language">asdate(format, language)</a
+h3. <a name="asdate-language">asdate(format, language)</a>
 
 タイムスタンプを与えられた言語における日付としてフォーマットします。返却型: @String@ - フォーマットされた日付
 
@@ -164,7 +164,7 @@ bc. ${42.format('000.00')}
 042.00
 
 
-h3. <a name="number-formatCurrency">formatCurrency(currencyCode)</a
+h3. <a name="number-formatCurrency">formatCurrency(currencyCode)</a>
 
 与えられた通貨コード、例えば **EUR** で数字を通貨としてフォーマットします。返却型: @String@
 

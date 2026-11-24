@@ -108,6 +108,24 @@ public class DocViewerFunctionalTest {
     }
 
     /**
+     * PF-253: navigation.js builds the Contents sidebar into {@code toc} from the headings inside
+     * {@code pageContent}, and its links from {@code #pageContent > div > ol > li > a}. The
+     * Tailwind restyle dropped that element from both page templates, and the Contents list of
+     * every page stayed empty without an error. The script's own output needs a browser, which
+     * this suite has not: it was compared over every manual page when it was rewritten.
+     */
+    @Test
+    public void manualAndReleasePagesCarryWhatTheContentsListIsBuiltFrom() {
+        for (String path : new String[] { "/@docs/en/libs", "/@docs/en/releases/releases" }) {
+            Response response = followRedirects(path, null);
+            assertIsOk(response);
+            assertContentMatch("id=\"toc\"", response);
+            assertContentMatch("id=\"pageContent\"[^>]*>\\s*<div class=\"wikistyle\">", response);
+            assertContentMatch("src=\"/public/playmanual/navigation\\.js\"", response);
+        }
+    }
+
+    /**
      * Walks a redirect chain to its first non-302 response, failing rather than hanging if the
      * chain does not terminate. FunctionalTest.GET(url, true) follows exactly one hop and drops
      * the query string, neither of which suits an assertion about termination.

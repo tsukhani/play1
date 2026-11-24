@@ -1,9 +1,19 @@
 document.addEventListener('DOMContentLoaded', function() {
 
+    // A link to the given href whose text is the given text. Built as elements, not as HTML, so a
+    // heading's text stays text: a heading such as "Option<T>" must not be parsed as markup (PF-253).
+    function link(href, text) {
+        var a = document.createElement('a');
+        a.setAttribute('href', href);
+        a.textContent = text;
+        return a;
+    }
+
     // Construct an OL of this page's H2/H3
-    var navigation = '<ol class="navigation">';
-    var h2index = 0;
-    var h3index = 0;
+    var navigation = document.createElement('ol');
+    navigation.className = 'navigation';
+    var h2Item = null;  // the LI of the last H2, which the H3s after it are nested in
+    var nested = null;  // the UL of the H3s since the last H2
 
     var elements = document.querySelectorAll('#pageContent h2, #pageContent h3, #pageContent > div > ol > li > a');
     elements.forEach(function(el) {
@@ -11,47 +21,36 @@ document.addEventListener('DOMContentLoaded', function() {
         // In each heading, construct an in-page link from its id, or the nested a[name]
         var anchorEl = el.querySelector('a[name]');
         var anchor = anchorEl ? anchorEl.getAttribute('name') : el.getAttribute('id');
-        var link = '<a href="#' + anchor + '">' + el.textContent + '</a>';
-        if (el.tagName === 'A') {
-            link = '<a href="' + el.getAttribute('href') + '">' + el.textContent + '</a>';
-        }
+        var href = el.tagName === 'A' ? el.getAttribute('href') : '#' + anchor;
 
         if (el.tagName === 'H2') {
-            // Close a nested UL list for the previous H3.
-            if (h3index > 0) {
-                navigation += '</ul>';
-            }
-            h3index = 0;
-
-            // Close the LI for the previous H2.
-            if (h2index > 0) {
-                navigation += '</li>';
-            }
-            h2index++;
-
-            // Output LI start tag and body for this H2.
-            navigation += '<li>' + link;
+            // An LI for this H2; the H3s that follow it go into a new nested UL.
+            h2Item = document.createElement('li');
+            h2Item.appendChild(link(href, el.textContent));
+            navigation.appendChild(h2Item);
+            nested = null;
         }
 
         // Output a nested LI for this H3.
         var linkHasNestedList = (el.tagName === 'A' && el.closest('li') && el.closest('li').querySelector('li'));
         if (el.tagName === 'H3' || linkHasNestedList || el.classList.contains('navigation')) {
-            h3index++;
 
             // Start a new nested UL for the first H3.
-            if (h3index === 1) {
-                navigation += '<ul>';
+            if (nested === null) {
+                nested = document.createElement('ul');
+                (h2Item || navigation).appendChild(nested);
             }
 
-            navigation += '<li>' + link + '</li>';
+            var item = document.createElement('li');
+            item.appendChild(link(href, el.textContent));
+            nested.appendChild(item);
         }
     });
 
-    // Close the LI for the last H2, and close the outer list.
-    navigation += '</li></ol>';
     var toc = document.getElementById('toc');
     if (toc) {
-        toc.innerHTML = navigation;
+        toc.textContent = '';
+        toc.appendChild(navigation);
     }
 
     // Next link
@@ -60,7 +59,7 @@ document.addEventListener('DOMContentLoaded', function() {
         var gotoc = document.getElementById('gotoc');
         if (gotoc) {
             var li = document.createElement('li');
-            li.innerHTML = '<a href="' + nextLinkEl.getAttribute('href') + '">Next: ' + nextLinkEl.textContent + '</a>';
+            li.appendChild(link(nextLinkEl.getAttribute('href'), 'Next: ' + nextLinkEl.textContent));
             gotoc.parentNode.insertBefore(li, gotoc.nextSibling);
         }
     }

@@ -102,7 +102,9 @@ public class DevErrorPagesTest {
 
             HttpResponse<String> welcome = get("/welcome");
             assertThat(welcome.statusCode()).as("body:%n%s", welcome.body()).isEqualTo(200);
-            assertThat(welcome.body()).contains(LINK, SCRIPT, LOGO, "Your new application is ready!");
+            // PF-253: the script builds the Contents list into toc from the headings in pageContent
+            assertThat(welcome.body()).contains(LINK, SCRIPT, LOGO, "Your new application is ready!",
+                    "id=\"toc\"", "id=\"pageContent\"");
 
             assertThat(get("/public/stylesheets/play-tailwind.css").statusCode()).as("the link resolves").isEqualTo(200);
         } finally {
