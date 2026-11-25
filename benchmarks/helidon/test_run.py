@@ -78,5 +78,44 @@ class H2loadTest(unittest.TestCase):
         self.assertNotIn("cores each", run.h2load_cell(idle))
 
 
+class QuarkusCommandTest(unittest.TestCase):
+    def harness(self, threads="worker", tls="boringssl"):
+        h = harness(out="/out", server_prefix=[], quarkus_threads=threads, quarkus_tls=tls)
+        h.certificate = lambda: ("/tls/cert.pem", "/tls/key.pem")
+        return h
+
+    def test_tls_opens_the_https_listener_alone_on_the_chosen_engine(self):
+        cwd, line = self.harness().command("quarkus", 8443, tls=True)
+        self.assertEqual(cwd, "/out/quarkus-worker")
+        self.assertEqual(line, ["java", "-Dquarkus.profile=tls", "-Dquarkus.http.ssl-port=8443",
+                                "-Dquarkus.tls.key-store.pem.0.cert=/tls/cert.pem",
+                                "-Dquarkus.tls.key-store.pem.0.key=/tls/key.pem", "-Dquarkus.tls.ssl-engine=openssl",
+                                "-jar", "quarkus-run.jar"])
+        self.assertIn("-Dquarkus.tls.ssl-engine=jdkssl", self.harness(tls="jdk").command("quarkus", 1, tls=True)[1])
+
+    def test_the_training_run_records_the_cache_and_ends_on_the_harness_signal(self):
+        cwd, line = self.harness("virtual").command("quarkus", 9000, "train")
+        self.assertEqual(cwd, "/out/quarkus-aot-virtual")
+        self.assertEqual(line, ["java", "-XX:AOTCacheOutput=app.aot", "-Dquarkus.http.port=9000", "-jar",
+                                "quarkus-run.jar"])
+        self.assertEqual(self.harness().command("quarkus", 9000, "use")[1][1], "-XX:AOTCache=app.aot")
+
+    def test_only_the_virtual_build_sets_the_execution_model(self):
+        self.assertEqual(self.harness().quarkus_flags(), [])
+        self.assertEqual(self.harness().quarkus_flags("virtual"), [run.QUARKUS_VIRTUAL])
+
+    def test_an_engine_other_than_the_one_asked_for_stops_the_run(self):
+        probe = {"version": "TLSv1.3", "cipher": "TLS_AES_128_GCM_SHA256", "alpn": "h2"}
+        for tls, loaded in (("boringssl", False), ("jdk", True)):
+            with mock.patch.object(run, "tls_probe", return_value=probe), \
+                    mock.patch.object(run, "listener", return_value=1), \
+                    mock.patch.object(run, "tcnative_loaded", return_value=loaded):
+                with self.assertRaises(RuntimeError):
+                    self.harness(tls=tls).tls_info("quarkus", 8443)
+        with mock.patch.object(run, "tls_probe", return_value=probe), mock.patch.object(run, "listener", return_value=1), \
+                mock.patch.object(run, "tcnative_loaded", return_value=True):
+            self.assertEqual(self.harness().tls_info("quarkus", 8443)["provider"], run.QUARKUS_TLS["boringssl"][1])
+
+
 if __name__ == "__main__":
     unittest.main()

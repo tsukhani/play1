@@ -1,16 +1,17 @@
-# The fork against Helidon
+# The fork against Helidon and Quarkus
 
-A head-to-head of this fork with Helidon 4.5.7 SE and MP (PF-236). It measures the work of PF-235: each of the fork's
-metrics at or better than Helidon MP's. The reasons for that target are in
-[ADR 0003](../../docs/adr/0003-stay-on-the-fork-over-helidon.md).
+A head-to-head of this fork with Helidon 4.5.7 SE and MP (PF-236) and with Quarkus 4.0.1 (PF-252). It measures the
+work of PF-235: each of the fork's metrics at or better than Helidon MP's. The reasons for that target are in
+[ADR 0003](../../docs/adr/0003-stay-on-the-fork-over-helidon.md). Quarkus is the full-stack Java framework most often
+reported fastest, so PF-252 measures the fork against it with PF-235's method and decision rule.
 
-The three applications have the same endpoints:
+The four applications have the same endpoints:
 
 | Endpoint | What it does |
 |---|---|
 | `/plaintext` | `Hello, World!` |
 | `/json` | `{"message":"Hello, World!"}` |
-| `/db` | one random row of 10,000 in in-memory H2 2.5.252, through HikariCP 7.1.0 with a pool of 30, over JDBC |
+| `/db` | one random row of 10,000 in in-memory H2 2.5.252, through a pool of 30 (HikariCP 7.1.0; Agroal, Quarkus's own, on Quarkus), over JDBC |
 | `/jpa` | the same row as an entity, in a transaction (not on SE, which has no JPA) |
 | `/sse` | 200 events named `token`, each a small JSON object, then the end of the stream |
 
@@ -19,8 +20,19 @@ The three applications have the same endpoints:
 - `helidon-se/`: Helidon SE, its WebServer with routing set up by hand.
 - `helidon-mp/`: Helidon MP: CDI, JAX-RS on Jersey, JTA and Hibernate. It is what a port of an application with a JPA
   model would run on, so it is the comparison that counts.
+- `quarkus/`: Quarkus 4.0.1 in JVM mode, its own full stack, built with Quarkus's Gradle plugin:
+  - Quarkus REST with blocking endpoints, and Jackson for JSON;
+  - Agroal for JDBC;
+  - Hibernate ORM through an injected `EntityManager` in a JTA transaction (Narayana). The Hibernate is 8.0.0.CR2,
+    what Quarkus 4.0.1 ships;
+  - H2 2.5.252, the fork's version, in memory;
+  - `/sse` through the same JAX-RS `SseEventSink` as MP's, its element type declared with Quarkus's
+    `@RestStreamElementType`.
 
-All three send the same security headers (below).
+  It runs from its fast-jar (`build/quarkus-app`, `java -jar quarkus-run.jar`) and, for the edit loop, under
+  `./gradlew quarkusDev`. Native image is out, as ADR 0001 rejects it for the fork.
+
+All four send the same security headers (below).
 
 ## Running it
 
@@ -54,7 +66,7 @@ The checkout's own Gradle wrapper builds all three applications; nothing else is
   ignores.
 - `--steps build startup load aot dev`: a subset of the steps. `build` must have run in the same `--out` before the
   others.
-- `--apps fork se mp`: a subset of the applications.
+- `--apps fork se mp quarkus`: a subset of the applications. The build step builds only these.
 - `--quick`: short runs to check that everything works, every cell included. Not for the record.
 - `--protocols h1 h1-close h1-tls h2-tls`: a subset of the load cells (below). All four by default.
 - `--h2-in-flight 1 4 16`: the requests each HTTP/2 connection keeps in flight, one cell per value.
@@ -70,6 +82,18 @@ The checkout's own Gradle wrapper builds all three applications; nothing else is
   For example `--helidon-writes mp=async:32+nodelay se=direct+nodelay`. SE reads `-Dwrite-queue-length`,
   `-Dsmart-async-writes` and `-Dtcp-no-delay`; MP takes `server.write-queue-length`, `server.smart-async-writes` and
   `server.connection-options.tcp-no-delay`. The run's JSON and summary record the setting.
+- `--quarkus-threads worker|virtual`: where Quarkus REST runs the blocking endpoints:
+  - `worker`: its worker pool, Quarkus's default;
+  - `virtual`: a virtual thread per request, which is `@RunOnVirtualThread` on every endpoint. It is the build-time
+    property `quarkus.rest.blocking.signatures.execution.mode=virtual-thread`, so the build step builds Quarkus twice,
+    into `<out>/quarkus-worker` and `<out>/quarkus-virtual`, and the option needs no new build.
+
+  PF-252 judges Quarkus at the better of the two in each cell, as PF-235 judged Helidon at its better write setting.
+- `--quarkus-tls boringssl|jdk`: Quarkus's TLS engine, `quarkus.tls.ssl-engine`:
+  - `boringssl`: the default, `openssl`, through the fork's own `netty-tcnative-boringssl-static` 2.0.86, which the
+    application carries. This is the TLS the fork runs. Quarkus's own netty-tcnative, which its TLS guide describes, is
+    for Linux only and links the system's OpenSSL through libapr;
+  - `jdk`: `jdkssl`, the JDK's SSLEngine, Quarkus's own default.
 - `--h2load-in-flight 4 16`: the HTTP/2 depths that h2load measures again (below).
 - `--h2load-threads N`: h2load's threads; a quarter of the client's CPUs, at least 2, by default (below).
 - On Linux, for a shared machine:
@@ -81,13 +105,14 @@ The checkout's own Gradle wrapper builds all three applications; nothing else is
     core of them for longer than a cell takes, and retries made at once only measured it again. The rows keep the
     figure and the discarded attempts.
 
-A full run takes about two hours, most of it the load step: six cells (four protocols, HTTP/2 at three depths) of
-five endpoints for each application. `--protocols h1` is the 40-minute run of PF-236.
+A full run takes about 40 minutes for each application, most of it the load step: six cells (four protocols, HTTP/2 at
+three depths) of five endpoints. `--protocols h1` takes about a third of that.
 
 ## What it measures
 
 - **startup:** from launching the server to the first 200 on `/plaintext`, the median of 5, and the server JVM's RSS
-  right after. The fork starts from its bundle with the bundle's launcher; Helidon with `java -cp lib/*`.
+  right after. The fork starts from its bundle with the bundle's launcher; Helidon with `java -cp lib/*`; Quarkus with
+  `java -jar quarkus-run.jar`.
 - **load:** per cell and endpoint, 10 s of warm-up and then 20 s measured with oha, at 64 connections (16 for
   `/sse`). It records:
   - requests answered with a 2xx per second (`ok_rps`), and oha's own figure (`rps`), which also counts failed
@@ -98,14 +123,22 @@ five endpoints for each application. `--protocols h1` is the 40-minute run of PF
   - the server JVM's CPU per request, and the CPU the server and oha used, in cores.
 - **aot:** each application's own AOT training, then startup again from the cache:
   - the fork: the bundle's `./play aot-gen`;
-  - Helidon: `java -XX:AOTCacheOutput` with `-Dexit.on.started=!`, which makes the server exit once it has started.
+  - Helidon: `java -XX:AOTCacheOutput` with `-Dexit.on.started=!`, which makes the server exit once it has started;
+  - Quarkus: a build with its `aot-jar` packaging, which hands all class loading to the JDK's loaders as an AOT cache
+    needs, then the route its AOT guide gives for generating the file by hand: `java -XX:AOTCacheOutput=app.aot` until
+    the first answer on `/plaintext`, then SIGTERM, as the fork's `aot-gen` does. The harness waits for the JVM to
+    remove its `app.aot.config` recording, as `aot-gen` does. The guide's `quarkus.package.jar.aot.enabled` trains
+    during the Gradle build instead, but on 4.0.1 the JVM refuses that cache (Pitfalls, below).
 - **dev:** from saving an edit to the first response that carries it, the median of 10 after 3 warm-ups, for:
   - a method-body edit;
   - a new method.
 
-  The fork runs in DEV mode under `./gradlew playRun` and reloads inside the running JVM. Helidon reloads nothing in a
-  running JVM, so under Gradle each edit is an incremental `./gradlew classes` and then a new JVM. Helidon's own dev
-  loop, `helidon dev`, supports Maven only, and this fork's applications build with Gradle, so it is not measured.
+  The fork runs in DEV mode under `./gradlew playRun` and reloads inside the running JVM. Quarkus runs under
+  `./gradlew quarkusDev`: on the first request after a change, its live reload compiles the change and restarts the
+  application in the same JVM. Its first request is timed from the launch, Gradle included, since Quarkus starts the
+  application before it listens. Helidon reloads nothing in a running JVM, so under Gradle each edit is an incremental
+  `./gradlew classes` and then a new JVM. Helidon's own dev loop, `helidon dev`, supports Maven only, and this fork's
+  applications build with Gradle, so it is not measured.
 
 Before each step the harness waits up to two minutes for the load average to drop under 3. It then times a fixed
 amount of work on one core. A calibration well above the usual figure means a busy or throttled machine; repeat the
@@ -132,10 +165,18 @@ application again, with TLS on its one listener:
 - Helidon SE: `-Dtls.cert` and `-Dtls.key`, read by `Main`;
 - Helidon MP: `-Dserver.tls.private-key.pem.key.resource.path` and `...cert-chain.resource.path`;
 - both Helidon applications carry `helidon-webserver-http2`, which Helidon finds on the classpath. Their TLS is the
-  JDK's.
+  JDK's;
+- Quarkus: the `tls` profile of its `application.properties` (`-Dquarkus.profile=tls`), which opens the HTTPS listener
+  alone (`quarkus.http.insecure-requests=disabled`) and offers TLS 1.3 and 1.2, as the fork and Helidon do. The harness
+  passes `quarkus.http.ssl-port`, the certificate as `quarkus.tls.key-store.pem.0.cert` and `.key`, and
+  `quarkus.tls.ssl-engine` (`--quarkus-tls`). Its HTTP/2 is Vert.x's, on by default.
 
 The load step logs, and the summary tables, what each side negotiated with a client offering h2 and with one offering
-HTTP/1.1 (the TLS version and the cipher), and the fork's provider from its `TLS provider:` log line.
+HTTP/1.1 (the TLS version and the cipher), and the fork's provider from its `TLS provider:` log line. Quarkus's
+engine is proved too: its server process must have netty-tcnative's native library mapped with `--quarkus-tls
+boringssl` and must not with `jdk`, or the run stops. A mapped library means OpenSSL engines: a class histogram of the
+running server showed one `io.netty.handler.ssl.OpenSslEngine` per connection with `openssl`, and one
+`sun.security.ssl.SSLEngineImpl` with `jdkssl`.
 
 **The protocol is proved, not assumed.** Before every TLS cell, `curl --http2` (or `--http1.1`) must report that
 version with a 200, and `oha --debug` with the cell's own client options must show it in the response. A fall-back to
@@ -172,8 +213,8 @@ connection.
 
 ## The headers each sends
 
-The three applications send the same security headers (PF-249), the ones a production application sends on either
-framework: the five that the fork's `SecurityHeadersPolicy` sends by default on every response, with its values, and
+The four applications send the same security headers (PF-249), the ones a production application sends on any of the
+frameworks: the five that the fork's `SecurityHeadersPolicy` sends by default on every response, with its values, and
 its HSTS over TLS.
 
 | Header | Value |
@@ -187,12 +228,15 @@ its HSTS over TLS.
 
 Helidon SE adds them in a routing filter (`Main`), Helidon MP in a JAX-RS `ContainerResponseFilter`
 (`SecurityHeadersFilter`). MP's filter tells TLS by the request URI's scheme, because Helidon MP's
-`SecurityContext.isSecure()` is false on every request without Helidon Security.
+`SecurityContext.isSecure()` is false on every request without Helidon Security. Quarkus sets them in its
+configuration (`quarkus.http.header."<name>".value`), which Vert.x adds to every response, and HSTS in the `tls`
+profile, which only the TLS cells start.
 
 The rest still differs, and is what each ships: the fork sends `Server`, `Cache-Control: no-cache`, a charset in
-`Content-Type` and, over TLS, `Alt-Svc`; Helidon sends `Connection: keep-alive`. A plain-text response's header block
-is 353 bytes from the fork and 300 from either Helidon over HTTP/1.1, 449 and 364 over TLS; the first HTTP/2 HEADERS
-frame on a connection is 339 and 197 bytes, and each later one 13 and 40. Before PF-249 the fork also sent a deletion
+`Content-Type` and, over TLS, `Alt-Svc`; Helidon sends `Connection: keep-alive`; Quarkus sends a charset in
+`Content-Type`, and no `Date`, `Server` or `Connection`. A plain-text response's header block is 353 bytes from the
+fork, 300 from either Helidon and 251 from Quarkus over HTTP/1.1, and 449, 364 and 315 over TLS; the first HTTP/2
+HEADERS frame on a connection is 339, 197 and 240 bytes, and each later one 13, 40 and 14. Before PF-249 the fork also sent a deletion
 of each of the three scope cookies, 294 bytes more, to a client that carried none, and the Helidon applications sent
 none of the security headers.
 
@@ -204,7 +248,7 @@ Each run writes these to `<out>/results/`:
 - `summary-<stamp>.md` and `summary-<stamp>.jira`: the table for a PF-235 ticket;
 - one log per application.
 
-The figures are comparisons between the three applications on one machine in one run. Compare a change with a run
+The figures are comparisons between the applications on one machine in one run. Compare a change with a run
 from the same session, never with figures from elsewhere.
 
 ## On Linux
@@ -224,7 +268,8 @@ from the same session, never with figures from elsewhere.
   CPU time is exact, and work woken just after a tick that sleeps before the next is never sampled. The guard can
   then miss as much of other programs' use.
 - Under `taskset` the JVM sees only the CPUs in its list, and the fork's default number of event loops follows:
-  max(2, ceil(CPUs / 4)), so 3 on 12 CPUs.
+  max(2, ceil(CPUs / 2)), so 6 on 12 CPUs (PF-244). Quarkus's Vert.x event loops and its worker pool follow the CPUs
+  it sees too, at Quarkus's defaults.
 
 ## Pitfalls this setup already handles
 
@@ -251,6 +296,18 @@ from the same session, never with figures from elsewhere.
   default of a quarter of the client's CPUs for h2load, and the separate cores on Linux.
 - The fork binds HTTP/3 on the same port in UDP whenever it has an HTTPS port, and adds `Alt-Svc` to every TLS
   response. No client here uses it.
+- **Quarkus's Gradle AOT build trains a cache that the JVM refuses.** `quarkusBuild -Dquarkus.package.jar.aot.enabled=true`
+  writes `app.aot` in `build/quarkus-build/gen/quarkus-app`, whose H2 jar Quarkus has filtered (it drops
+  `META-INF/native-image/reflect-config.json`), but assembles `build/quarkus-app` from the unfiltered jar in
+  `build/quarkus-build/dep`. The JVM then refuses the cache: "This file is not the one used while building the AOT
+  cache: 'lib/main/com.h2database.h2-2.5.252.jar', size has changed", then "shared class paths mismatch". Hence the
+  training run the harness makes itself (above).
+- Quarkus's TLS registry offers TLS 1.3 alone by default, and oha on macOS, which links Security.framework, speaks
+  1.2 at most: every TLS request failed with "bad protocol version". The `tls` profile offers 1.3 and 1.2, as the fork
+  and Helidon do; a client that speaks 1.3 still gets it.
+- `quarkusDev` opens a debugger on port 5005 unless given `-Ddebug=false`, which the harness passes.
+- An SSE event built with `.mediaType(APPLICATION_JSON_TYPE)` carries a `content-type:application/json` line in each
+  frame on Quarkus REST. Declaring the type once with `@RestStreamElementType` gives the same frames as the others'.
 - Helidon refuses an HTTP/1.0 request: it closes the connection without an answer. nginx speaks HTTP/1.0 to an
   upstream unless `proxy_http_version 1.1` is set.
 - With `helidon-webserver-http2` on the classpath, Helidon also answers cleartext HTTP/2 with prior knowledge on its

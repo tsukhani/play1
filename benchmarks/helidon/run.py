@@ -1,21 +1,25 @@
 #!/usr/bin/env python3
-"""The fork against Helidon 4.5.7 SE and MP, one application at a time, on one JDK and one machine (PF-235, PF-236).
+"""The fork against Helidon 4.5.7 SE and MP and Quarkus 4.0.1, one application at a time, on one JDK and one machine
+(PF-235, PF-236, PF-252).
 
     python3 run.py --framework <a built checkout of this repository> [--out <dir>] [--steps ...] [--apps ...] [--quick]
                    [--protocols ...] [--h2-in-flight ...] [--endpoints ...] [--helidon-writes ...]
+                   [--quarkus-threads worker|virtual] [--quarkus-tls boringssl|jdk]
                    [--server-cpus LIST --client-cpus LIST --guard-cpus LIST]
 
 Steps, all of them unless --steps names some:
-  build    copies fork, helidon-se and helidon-mp into the output directory, gives each the checkout's Gradle wrapper,
-           builds the fork's bundle (playBundle) and the Helidon applications (installDist)
+  build    copies the applications --apps names (fork, helidon-se, helidon-mp, quarkus) into the output directory, gives
+           each the checkout's Gradle wrapper, and builds the fork's bundle (playBundle), the Helidon applications
+           (installDist) and Quarkus (quarkusBuild) twice, once for its worker pool and once for virtual threads
   startup  launch to the first 200 on /plaintext, the median of 5, and the server JVM's RSS right after
   load     per protocol cell and endpoint, warm-up and then a measured run with oha (64 connections, 16 for /sse):
            requests per second, p50 and p99, success rate, the server JVM's peak RSS and its CPU per request
   aot      each application's own AOT training (the bundle's aot-gen; java -XX:AOTCacheOutput with -Dexit.on.started=!
-           for Helidon), then startup again from the cache
+           for Helidon; Quarkus's aot-jar packaging and java -XX:AOTCacheOutput through its first answer), then startup
+           again from the cache
   dev      from saving an edit to the first response that carries it: the fork in DEV mode under ./gradlew playRun,
-           Helidon under Gradle as an incremental compile and a new JVM, since Helidon reloads nothing in a running JVM
-           and its own dev loop supports Maven only
+           Quarkus under ./gradlew quarkusDev, Helidon under Gradle as an incremental compile and a new JVM, since
+           Helidon reloads nothing in a running JVM and its own dev loop supports Maven only
 
 Load cells (--protocols, all of them by default; PF-247):
   h1        HTTP/1.1 without TLS over kept-alive connections
@@ -52,14 +56,24 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HELIDON = "4.5.7"
-APPS = ("fork", "se", "mp")
+QUARKUS = "4.0.1"
+APPS = ("fork", "se", "mp", "quarkus")
 ENDPOINTS = {
     "fork": ["plaintext", "json", "db", "jpa", "sse"],
     "se": ["plaintext", "json", "db", "sse"],
     "mp": ["plaintext", "json", "db", "jpa", "sse"],
+    "quarkus": ["plaintext", "json", "db", "jpa", "sse"],
 }
 ALL_ENDPOINTS = ("plaintext", "json", "db", "jpa", "sse")
-LABELS = {"fork": "Fork", "se": "Helidon SE", "mp": "Helidon MP"}
+LABELS = {"fork": "Fork", "se": "Helidon SE", "mp": "Helidon MP", "quarkus": "Quarkus"}
+# Quarkus REST's execution model for blocking endpoints, a build-time property: its worker pool by default, or a
+# virtual thread per request, which is @RunOnVirtualThread on every endpoint
+QUARKUS_THREADS = {"worker": "worker pool", "virtual": "virtual threads"}
+QUARKUS_VIRTUAL = "-Dquarkus.rest.blocking.signatures.execution.mode=virtual-thread"
+# Quarkus's TLS engine, a runtime property: BoringSSL through the fork's netty-tcnative-boringssl-static, as the fork
+# runs, or the JDK's SSLEngine, Quarkus's default
+QUARKUS_TLS = {"boringssl": ("openssl", "BoringSSL (netty-tcnative-boringssl-static)"),
+               "jdk": ("jdkssl", "JDK SSLEngine")}
 PROTOCOLS = {
     "h1": "HTTP/1.1, kept-alive",
     "h1-close": "HTTP/1.1, new connection per request",
@@ -177,6 +191,14 @@ def owned(pid):
         return os.stat("/proc/%d" % pid).st_uid == os.getuid()
     out = subprocess.run(["ps", "-o", "uid=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
     return out == str(os.getuid())
+
+
+def tcnative_loaded(pid):
+    """Whether the process has netty-tcnative's native library mapped: /proc on Linux, lsof elsewhere."""
+    if os.path.exists("/proc/%d/maps" % pid):
+        return "netty_tcnative" in open("/proc/%d/maps" % pid).read()
+    out = subprocess.run(["lsof", "-p", str(pid)], capture_output=True, text=True).stdout
+    return "netty_tcnative" in out
 
 
 def rss_mb(pid):
@@ -303,6 +325,8 @@ class Harness:
                       for n in (args.h2_in_flight if p == "h2-tls" else [1])]
         self.endpoints = args.endpoints
         self.writes = helidon_writes(args.helidon_writes)
+        self.quarkus_threads = args.quarkus_threads
+        self.quarkus_tls = args.quarkus_tls
         self.server_prefix = ["taskset", "-c", args.server_cpus] if args.server_cpus else []
         self.client_prefix = ["taskset", "-c", args.client_cpus] if args.client_cpus else []
         client_cpus = len(cpu_list(args.client_cpus)) if args.client_cpus else os.cpu_count()
@@ -315,7 +339,9 @@ class Harness:
         environment = self.environment()
         environment.update(protocols=[c.name for c in self.cells], server_cpus=args.server_cpus,
                            client_cpus=args.client_cpus, guard_cpus=args.guard_cpus,
-                           helidon_writes={a: writes_label(v) for a, v in self.writes.items()})
+                           helidon_writes={a: writes_label(v) for a, v in self.writes.items()},
+                           quarkus_threads=QUARKUS_THREADS[self.quarkus_threads],
+                           quarkus_tls=QUARKUS_TLS[self.quarkus_tls][1])
         self.results = {"started": self.stamp, "quick": self.quick, "environment": environment,
                         "startup": {}, "load": {}, "dev": {}}
 
@@ -337,7 +363,8 @@ class Harness:
         cpus = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else os.cpu_count()
         return {"java": java[0] if java else None, "os": "%s %s" % (platform.system(), platform.release()),
                 "arch": platform.machine(), "cores": os.cpu_count(), "cpus_usable": cpus, "memory_gb": memory,
-                "oha": oha, "h2load": h2load, "framework": "%s (%s)" % (version, commit), "helidon": HELIDON}
+                "oha": oha, "h2load": h2load, "framework": "%s (%s)" % (version, commit), "helidon": HELIDON,
+                "quarkus": QUARKUS}
 
     def log(self, msg):
         line = time.strftime("%H:%M:%S ") + msg
@@ -369,21 +396,41 @@ class Harness:
         subprocess.run(["./gradlew", "-q", "--console=plain", *tasks], cwd=cwd, env=self.env, check=True)
 
     def build(self):
-        fork = self.copy_app("fork")
-        with open(os.path.join(fork, "gradle.properties"), "w") as f:
-            f.write("benchFramework=%s\n" % self.framework)
-        # playBundle ships what git ls-files lists
-        subprocess.run(["git", "init", "-q"], cwd=fork, check=True)
-        subprocess.run(["git", "add", "-A"], cwd=fork, check=True)
-        self.gradle(fork, "playBundle")
-        bundle_dir = os.path.join(self.out, "fork-bundle")
-        if os.path.exists(bundle_dir):
-            shutil.rmtree(bundle_dir)
-        os.makedirs(bundle_dir)
-        archive = [n for n in os.listdir(os.path.join(fork, "dist")) if n.endswith("-bundle.zip")][0]
-        subprocess.run(["unzip", "-q", os.path.join(fork, "dist", archive)], cwd=bundle_dir, check=True)
-        for name in ("helidon-se", "helidon-mp"):
-            self.gradle(self.copy_app(name), "installDist")
+        """Builds the applications --apps names."""
+        if "fork" in self.apps:
+            fork = self.copy_app("fork")
+            with open(os.path.join(fork, "gradle.properties"), "w") as f:
+                f.write("benchFramework=%s\n" % self.framework)
+            # playBundle ships what git ls-files lists
+            subprocess.run(["git", "init", "-q"], cwd=fork, check=True)
+            subprocess.run(["git", "add", "-A"], cwd=fork, check=True)
+            self.gradle(fork, "playBundle")
+            bundle_dir = os.path.join(self.out, "fork-bundle")
+            if os.path.exists(bundle_dir):
+                shutil.rmtree(bundle_dir)
+            os.makedirs(bundle_dir)
+            archive = [n for n in os.listdir(os.path.join(fork, "dist")) if n.endswith("-bundle.zip")][0]
+            subprocess.run(["unzip", "-q", os.path.join(fork, "dist", archive)], cwd=bundle_dir, check=True)
+        for app, name in (("se", "helidon-se"), ("mp", "helidon-mp")):
+            if app in self.apps:
+                self.gradle(self.copy_app(name), "installDist")
+        if "quarkus" in self.apps:
+            quarkus = self.copy_app("quarkus")
+            for threads in QUARKUS_THREADS:
+                self.gradle(quarkus, "quarkusBuild", *self.quarkus_flags(threads))
+                self.quarkus_copy("quarkus-" + threads)
+
+    def quarkus_flags(self, threads=None):
+        """The build-time properties of a Quarkus build for the worker pool or for virtual threads."""
+        return [QUARKUS_VIRTUAL] if (threads or self.quarkus_threads) == "virtual" else []
+
+    def quarkus_copy(self, name):
+        """Copies the Quarkus build's build/quarkus-app, which the next quarkusBuild replaces, to <out>/<name>."""
+        target = os.path.join(self.out, name)
+        if os.path.exists(target):
+            shutil.rmtree(target)
+        shutil.copytree(os.path.join(self.out, "quarkus", "build", "quarkus-app"), target)
+        return target
 
     def certificate(self):
         """One self-signed ECDSA P-256 certificate for localhost and 127.0.0.1, made once per output directory."""
@@ -414,6 +461,19 @@ class Harness:
                 shutil.copy(cert, os.path.join(cwd, "certs", "bench.cert"))
                 shutil.copy(key, os.path.join(cwd, "certs", "bench.key"))
             return cwd, self.server_prefix + ["./play", "run", "--%prod", ("--https.port=%d" if tls else "--http.port=%d") % port]
+        if app == "quarkus":
+            cwd = os.path.join(self.out, "quarkus-%s%s" % ("aot-" if aot else "", self.quarkus_threads))
+            if tls:
+                # the tls profile of application.properties opens the HTTPS listener alone and adds HSTS
+                cert, key = self.certificate()
+                flags = ["-Dquarkus.profile=tls", "-Dquarkus.http.ssl-port=%d" % port,
+                         "-Dquarkus.tls.key-store.pem.0.cert=" + cert, "-Dquarkus.tls.key-store.pem.0.key=" + key,
+                         "-Dquarkus.tls.ssl-engine=" + QUARKUS_TLS[self.quarkus_tls][0]]
+            else:
+                flags = ["-Dquarkus.http.port=%d" % port]
+            # the training run ends with the harness's SIGTERM after its first answer (quarkus_aot)
+            cache = {None: [], "train": ["-XX:AOTCacheOutput=app.aot"], "use": ["-XX:AOTCache=app.aot"]}[aot]
+            return cwd, self.server_prefix + ["java", *cache, *flags, "-jar", "quarkus-run.jar"]
         name = {"se": "helidon-se", "mp": "helidon-mp"}[app]
         cwd = os.path.join(self.out, name, "build", "install", "bench-" + name)
         flags = [("-Dport=%d" if app == "se" else "-Dserver.port=%d") % port]
@@ -656,6 +716,14 @@ class Harness:
         if app == "fork":
             lines = [l for l in open(self.output(app + "-load-tls")) if "TLS provider:" in l]
             info["provider"] = lines[-1].split("TLS provider:", 1)[1].strip() if lines else None
+        elif app == "quarkus":
+            # proved, not assumed: the server's process has netty-tcnative's native library mapped only when its
+            # engines are OpenSSL ones, and Quarkus leaves a platform it has no native library for on the JDK's
+            loaded = tcnative_loaded(listener(port))
+            if loaded != (self.quarkus_tls == "boringssl"):
+                raise RuntimeError("Quarkus was to run TLS on %s, but netty-tcnative is %sloaded" % (
+                    QUARKUS_TLS[self.quarkus_tls][1], "" if loaded else "not "))
+            info["provider"] = QUARKUS_TLS[self.quarkus_tls][1]
         else:
             info["provider"] = "JDK SSLEngine (Helidon has no other)"
         self.log("tls  %-4s h2: %s %s; http/1.1: %s %s; provider %s" % (
@@ -701,11 +769,39 @@ class Harness:
             self.startup("fork", "fork-aot")
             os.remove(os.path.join(cwd, "app.aot"))
             return
+        if app == "quarkus":
+            self.quarkus_aot()
+            return
         port = free_port()
         cwd, train = self.command(app, port, "train")
         subprocess.run(train, cwd=cwd, env=self.env, stdout=open(os.path.join(
             self.results_dir, "%s-train-%s.out" % (app, self.stamp)), "w"), stderr=subprocess.STDOUT)
         self.startup(app, app + "-aot", cmd_for=lambda port: self.command(app, port, "use"))
+        os.remove(os.path.join(cwd, "app.aot"))
+
+    def quarkus_aot(self):
+        """Quarkus's aot-jar packaging, which hands all class loading to the JDK's loaders as the AOT cache needs, and
+        a training run as the fork's aot-gen makes one: start, the first answer on /plaintext, SIGTERM. Quarkus's
+        quarkus.package.jar.aot.enabled trains during the Gradle build instead, but on 4.0.1 it trains against the H2
+        jar its build has filtered and ships the unfiltered one, so the JVM refuses that cache ("size has changed")."""
+        self.gradle(os.path.join(self.out, "quarkus"), "quarkusBuild", "-Dquarkus.package.jar.type=aot-jar",
+                    *self.quarkus_flags())
+        cwd = self.quarkus_copy("quarkus-aot-" + self.quarkus_threads)
+        port = free_port()
+        p, _ = self.start("quarkus", port, self.command("quarkus", port, "train"), "quarkus-train")
+        os.kill(p.pid, signal.SIGTERM)
+        # the JVM assembles the cache in a child process at exit and removes its recording once that is done
+        try:
+            p.wait(300)
+        except subprocess.TimeoutExpired:
+            self.stop(p, port)
+            raise RuntimeError("Quarkus's training run did not end within 300 s of its SIGTERM")
+        if not os.path.exists(os.path.join(cwd, "app.aot")) or os.path.exists(os.path.join(cwd, "app.aot.config")):
+            raise RuntimeError("Quarkus's training run left no complete AOT cache in %s" % cwd)
+        for name in os.listdir(self.pid_dir):
+            if name.endswith("-%d.pid" % port):
+                os.remove(os.path.join(self.pid_dir, name))
+        self.startup("quarkus", "quarkus-aot", cmd_for=lambda port: self.command("quarkus", port, "use"))
         os.remove(os.path.join(cwd, "app.aot"))
 
     def edit_loop(self, label, port, source, text_from, sig_marker, sig_line, start_proc, after_edit, stop_proc):
@@ -765,6 +861,32 @@ class Harness:
             self.edit_loop("fork", port, os.path.join(cwd, "app/controllers/Bench.java"), 'renderText("Hello, World!")',
                            "    public static void plaintext() {",
                            "    public static void extra%d() { renderText(\"%d\"); }\n", start_proc, lambda p: p,
+                           lambda p: self.stop(p, port))
+            return
+        if app == "quarkus":
+            cwd = os.path.join(self.out, "quarkus")
+
+            def start_proc():
+                # from the launch, Gradle's included: Quarkus starts the application before it listens. -Ddebug=false
+                # keeps quarkusDev's debugger off port 5005, which two runs on one machine would share
+                f = open(os.path.join(self.results_dir, "quarkus-dev-%s.out" % self.stamp), "a")
+                t0 = time.perf_counter()
+                p = subprocess.Popen(["./gradlew", "quarkusDev", "-Dquarkus.http.port=%d" % port, "-Ddebug=false",
+                                      *self.quarkus_flags(), "--console=plain"], cwd=cwd, env=self.env, stdout=f,
+                                     stderr=subprocess.STDOUT, start_new_session=True)
+                while get(port, timeout=1.0)[0] != 200:
+                    if p.poll() is not None:
+                        raise RuntimeError("quarkusDev exited")
+                    if time.perf_counter() > t0 + 300:
+                        self.stop(p, port)
+                        raise RuntimeError("quarkusDev did not answer within 300 s")
+                    time.sleep(0.05)
+                return p, (time.perf_counter() - t0) * 1000
+
+            # live reload: the first request after a change compiles it and restarts the application in the same JVM
+            self.edit_loop("quarkus", port, os.path.join(cwd, "src/main/java/bench/BenchResource.java"),
+                           'TEXT = "Hello, World!"', '    @GET\n    @Path("plaintext")',
+                           "    static String extra%d() { return \"%d\"; }\n", start_proc, lambda p: p,
                            lambda p: self.stop(p, port))
             return
         name = {"se": "helidon-se", "mp": "helidon-mp"}[app]
@@ -846,9 +968,11 @@ def describe(results):
     pinned = "; server on CPUs %s, client on %s" % (e["server_cpus"], e["client_cpus"]) if e.get("server_cpus") else ""
     writes = "; Helidon writes: %s" % ", ".join("%s %s" % (LABELS[a], w) for a, w in e["helidon_writes"].items()) \
         if e.get("helidon_writes") else ""
-    return "%s; %s %s, %s cores, %s GB; %s; %s; framework %s; Helidon %s%s%s; run %s%s" % (
+    quarkus = "; Quarkus %s on its %s, TLS %s" % (e["quarkus"], e["quarkus_threads"], e["quarkus_tls"]) \
+        if e.get("quarkus") else ""
+    return "%s; %s %s, %s cores, %s GB; %s; %s; framework %s; Helidon %s%s%s%s; run %s%s" % (
         e["java"], e["os"], e["arch"], e["cores"], e["memory_gb"], e["oha"], e.get("h2load"), e["framework"],
-        e["helidon"], writes, pinned, results["started"], " (quick: not for the record)" if results["quick"] else "")
+        e["helidon"], writes, quarkus, pinned, results["started"], " (quick: not for the record)" if results["quick"] else "")
 
 
 def load_row(results, app, protocol, in_flight, ep):
@@ -940,6 +1064,13 @@ def main():
                         help="Helidon's listener writes: direct (its default), async:N (write-queue-length N) or "
                              "smart:N (and smart-async-writes), +nodelay for TCP_NODELAY (off by default), for se and "
                              "mp, or one of them with se= or mp=")
+    parser.add_argument("--quarkus-threads", choices=list(QUARKUS_THREADS), default="worker",
+                        help="where Quarkus REST runs the blocking endpoints: worker, its worker pool (its default), or "
+                             "virtual, a virtual thread per request (@RunOnVirtualThread on every endpoint); the build "
+                             "step builds both")
+    parser.add_argument("--quarkus-tls", choices=list(QUARKUS_TLS), default="boringssl",
+                        help="Quarkus's TLS engine: boringssl, the fork's BoringSSL through netty-tcnative "
+                             "(quarkus.tls.ssl-engine=openssl), or jdk, the JDK's SSLEngine, Quarkus's default")
     parser.add_argument("--h2load-in-flight", nargs="+", type=int, default=[4, 16], metavar="N",
                         help="the HTTP/2 depths measured again with h2load (4 16)")
     parser.add_argument("--h2load-threads", type=int, metavar="N",
