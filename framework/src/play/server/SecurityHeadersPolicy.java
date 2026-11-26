@@ -1,6 +1,8 @@
 package play.server;
 
+import io.netty.handler.codec.http.DefaultHttpHeadersFactory;
 import io.netty.handler.codec.http.HttpHeaders;
+import io.netty.util.AsciiString;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -65,20 +67,45 @@ public final class SecurityHeadersPolicy {
         if (includeSubDomains) hsts.append("; includeSubDomains");
         if (preload) hsts.append("; preload");
 
-        return new SecurityHeadersPolicy(true, Map.copyOf(staticHeaders), hstsEnabled, hsts.toString());
+        return new SecurityHeadersPolicy(true, staticHeaders, hstsEnabled, hsts.toString());
     }
+
+    private static final AsciiString HSTS = AsciiString.cached("Strict-Transport-Security");
 
     private final boolean enabled;
     private final Map<String, String> staticHeaders;
     private final boolean hstsEnabled;
     private final String hstsValue;
+    /**
+     * PF-255: the static headers, names and values, validated once, in configuration order. A
+     * response that sets none of them (nearly every one) takes them in one copy, which Netty makes
+     * without validating again, since a response's headers and these come from the same
+     * {@link DefaultHttpHeadersFactory}. Validating the five names and values on every response,
+     * after a {@code contains} with a name hashed each time, was 8.6% of a plain-text request's
+     * CPU on its virtual thread.
+     */
+    private final AsciiString[] names;
+    private final AsciiString[] values;
+    private final HttpHeaders validated;
+    private final AsciiString hstsAscii;
 
     private SecurityHeadersPolicy(boolean enabled, Map<String, String> staticHeaders,
                                   boolean hstsEnabled, String hstsValue) {
         this.enabled = enabled;
-        this.staticHeaders = staticHeaders;
+        this.staticHeaders = Map.copyOf(staticHeaders);
         this.hstsEnabled = hstsEnabled;
         this.hstsValue = hstsValue;
+        this.names = new AsciiString[staticHeaders.size()];
+        this.values = new AsciiString[staticHeaders.size()];
+        this.validated = DefaultHttpHeadersFactory.headersFactory().newHeaders();
+        int i = 0;
+        for (Map.Entry<String, String> e : staticHeaders.entrySet()) {
+            names[i] = new AsciiString(e.getKey());
+            values[i] = new AsciiString(e.getValue());
+            validated.add(names[i], values[i]);
+            i++;
+        }
+        this.hstsAscii = new AsciiString(hstsValue);
     }
 
     /** Apply policy to a Netty response's headers. Both {@code contains} and {@code set} are
@@ -86,13 +113,24 @@ public final class SecurityHeadersPolicy {
      *  of casing. */
     public void applyTo(HttpHeaders nettyHeaders, boolean secure) {
         if (!enabled || nettyHeaders == null) return;
-        for (Map.Entry<String, String> e : staticHeaders.entrySet()) {
-            if (!nettyHeaders.contains(e.getKey())) {
-                nettyHeaders.set(e.getKey(), e.getValue());
+        boolean anySet = false;
+        for (AsciiString name : names) {
+            if (nettyHeaders.contains(name)) {
+                anySet = true;
+                break;
             }
         }
-        if (hstsEnabled && secure && !nettyHeaders.contains("Strict-Transport-Security")) {
-            nettyHeaders.set("Strict-Transport-Security", hstsValue);
+        if (!anySet) {
+            nettyHeaders.add(validated);
+        } else {
+            for (int i = 0; i < names.length; i++) {
+                if (!nettyHeaders.contains(names[i])) {
+                    nettyHeaders.set(names[i], values[i]);
+                }
+            }
+        }
+        if (hstsEnabled && secure && !nettyHeaders.contains(HSTS)) {
+            nettyHeaders.set(HSTS, hstsAscii);
         }
     }
 

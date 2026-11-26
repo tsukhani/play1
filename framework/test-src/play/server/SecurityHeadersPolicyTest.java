@@ -1,7 +1,10 @@
 package play.server;
 
 import io.netty.handler.codec.http.DefaultHttpHeaders;
+import io.netty.handler.codec.http.DefaultHttpResponse;
 import io.netty.handler.codec.http.HttpHeaders;
+import io.netty.handler.codec.http.HttpResponseStatus;
+import io.netty.handler.codec.http.HttpVersion;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -182,6 +185,37 @@ public class SecurityHeadersPolicyTest {
         policy.applyTo(headers, true);
 
         assertThat(headers.get("Strict-Transport-Security")).isEqualTo("max-age=0");
+    }
+
+    /** PF-255: a response that sets none of them gets the five in one copy, in configuration order. */
+    @Test
+    public void aResponseWithNoneOfThemGetsAllFiveInConfigurationOrder() {
+        SecurityHeadersPolicy policy = SecurityHeadersPolicy.fromConfig(new Properties());
+        HttpHeaders headers = new DefaultHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.OK).headers();
+        headers.set("Content-Type", "text/plain");
+
+        policy.applyTo(headers, false);
+
+        assertThat(headers.names()).containsExactly("Content-Type", "X-Content-Type-Options", "X-Frame-Options",
+                "Referrer-Policy", "X-XSS-Protection", "Content-Security-Policy");
+        assertThat(headers.get("Content-Security-Policy")).isEqualTo("default-src 'self'");
+    }
+
+    /** The copy is the response's own: changing one response's header leaves the policy and the others alone. */
+    @Test
+    public void eachResponseGetsItsOwnCopy() {
+        SecurityHeadersPolicy policy = SecurityHeadersPolicy.fromConfig(new Properties());
+        HttpHeaders first = new DefaultHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.OK).headers();
+        policy.applyTo(first, false);
+        first.set("X-Frame-Options", "SAMEORIGIN");
+        first.remove("Referrer-Policy");
+
+        HttpHeaders second = new DefaultHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.OK).headers();
+        policy.applyTo(second, false);
+
+        assertThat(second.get("X-Frame-Options")).isEqualTo("DENY");
+        assertThat(second.get("Referrer-Policy")).isEqualTo("strict-origin-when-cross-origin");
+        assertThat(policy.getHeader("X-Frame-Options")).isEqualTo("DENY");
     }
 
     @Test
