@@ -19,6 +19,7 @@ import play.exceptions.UnexpectedException;
 import play.i18n.Lang;
 import play.libs.F;
 import play.libs.F.Promise;
+import play.utils.PlayThreadLocal;
 import play.utils.VirtualThreadScheduledExecutor;
 
 /**
@@ -204,7 +205,7 @@ public class Invoker {
      */
     public static class InvocationContext {
 
-        public static final ThreadLocal<InvocationContext> current = new ThreadLocal<>();
+        public static final ThreadLocal<InvocationContext> current = new PlayThreadLocal<>();
         private final List<Annotation> annotations;
         private final String invocationType;
 

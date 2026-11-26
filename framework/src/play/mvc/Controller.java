@@ -59,6 +59,7 @@ import play.templates.Template;
 import play.templates.TemplateLoader;
 import play.utils.Default;
 import play.utils.Java;
+import play.utils.PlayThreadLocal;
 import play.vfs.VirtualFile;
 
 /**
@@ -1214,7 +1215,7 @@ public class Controller implements PlayController, ControllerSupport, LocalVaria
     /**
      * Don't use this directly if you don't know why
      */
-    public static final ThreadLocal<ActionDefinition> _currentReverse = new ThreadLocal<>();
+    public static final ThreadLocal<ActionDefinition> _currentReverse = new PlayThreadLocal<>();
 
     /**
      * @play.todo TODO - this "Usage" example below doesn't make sense.

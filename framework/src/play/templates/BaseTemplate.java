@@ -15,6 +15,7 @@ import play.exceptions.TemplateExecutionException;
 import play.exceptions.TemplateExecutionException.DoBodyException;
 import play.libs.Codec;
 import play.libs.IO;
+import play.utils.PlayThreadLocal;
 
 public abstract class BaseTemplate extends Template {
 
@@ -91,9 +92,9 @@ public abstract class BaseTemplate extends Template {
     }
 
     protected abstract Throwable cleanStackTrace(Throwable e);
-    public static final ThreadLocal<BaseTemplate> layout = new ThreadLocal<>();
-    public static final ThreadLocal<Map<Object, Object>> layoutData = new ThreadLocal<>();
-    public static final ThreadLocal<BaseTemplate> currentTemplate = new ThreadLocal<>();
+    public static final ThreadLocal<BaseTemplate> layout = new PlayThreadLocal<>();
+    public static final ThreadLocal<Map<Object, Object>> layoutData = new PlayThreadLocal<>();
+    public static final ThreadLocal<BaseTemplate> currentTemplate = new PlayThreadLocal<>();
 
     public static final class RawData {
 

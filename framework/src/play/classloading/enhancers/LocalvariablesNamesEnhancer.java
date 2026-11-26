@@ -17,6 +17,7 @@ import javassist.bytecode.LocalVariableAttribute;
 import javassist.bytecode.Opcode;
 import play.Logger;
 import play.classloading.ApplicationClasses.ApplicationClass;
+import play.utils.PlayThreadLocal;
 
 /**
  * Track names of local variables ...
@@ -178,7 +179,7 @@ public class LocalvariablesNamesEnhancer extends Enhancer {
      */
     public static class LocalVariablesNamesTracer {
 
-        static final ThreadLocal<Deque<Map<String, Object>>> localVariables = new ThreadLocal<>();
+        static final ThreadLocal<Deque<Map<String, Object>>> localVariables = new PlayThreadLocal<>();
 
         public static void checkEmpty() {
             if (localVariables.get() != null && !localVariables.get().isEmpty()) {

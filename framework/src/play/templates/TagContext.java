@@ -3,13 +3,14 @@ package play.templates;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Stack;
+import play.utils.PlayThreadLocal;
 
 /**
  * Tag Context (retrieve who call you)
  */
 public class TagContext {
     
-    private static final ThreadLocal<Stack<TagContext>> currentStack = new ThreadLocal<>();
+    private static final ThreadLocal<Stack<TagContext>> currentStack = new PlayThreadLocal<>();
     
     public final String tagName;
     public final Map<String, Object> data = new HashMap<>();

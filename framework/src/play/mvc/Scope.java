@@ -13,6 +13,7 @@ import play.i18n.Messages;
 import play.inject.Injector;
 import play.libs.Codec;
 import play.libs.Crypto;
+import play.utils.PlayThreadLocal;
 import play.utils.Utils;
 
 import java.lang.annotation.Annotation;
@@ -121,7 +122,7 @@ public class Scope {
             }
         } // ThreadLocal access
 
-        public static final ThreadLocal<Flash> current = new ThreadLocal<>();
+        public static final ThreadLocal<Flash> current = new PlayThreadLocal<>();
 
         public static Flash current() {
             return current.get();
@@ -212,7 +213,7 @@ public class Scope {
 
         final Map<String, String> data = new HashMap<>(); // ThreadLocal access
         boolean changed = false;
-        public static final ThreadLocal<Session> current = new ThreadLocal<>();
+        public static final ThreadLocal<Session> current = new PlayThreadLocal<>();
 
         public static Session current() {
             return current.get();
@@ -316,7 +317,7 @@ public class Scope {
     public static class Params {
         // ThreadLocal access
 
-        public static final ThreadLocal<Params> current = new ThreadLocal<>();
+        public static final ThreadLocal<Params> current = new PlayThreadLocal<>();
 
         public static Params current() {
             return current.get();
@@ -545,7 +546,7 @@ public class Scope {
     public static class RenderArgs {
 
         public final Map<String, Object> data = new HashMap<>(); // ThreadLocal access
-        public static final ThreadLocal<RenderArgs> current = new ThreadLocal<>();
+        public static final ThreadLocal<RenderArgs> current = new PlayThreadLocal<>();
 
         public static RenderArgs current() {
             return current.get();
@@ -576,7 +577,7 @@ public class Scope {
     public static class RouteArgs {
 
         public final Map<String, Object> data = new HashMap<>(); // ThreadLocal access
-        public static final ThreadLocal<RouteArgs> current = new ThreadLocal<>();
+        public static final ThreadLocal<RouteArgs> current = new PlayThreadLocal<>();
 
         public static RouteArgs current() {
             return current.get();

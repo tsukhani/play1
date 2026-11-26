@@ -10,6 +10,7 @@ import play.libs.CronExpression;
 import play.libs.Expression;
 import play.libs.Time;
 import play.mvc.Http.Request;
+import play.utils.PlayThreadLocal;
 import play.utils.VirtualThreadScheduledExecutor;
 
 import java.io.PrintWriter;
@@ -39,7 +40,7 @@ public class JobsPlugin extends PlayPlugin {
     // inversion that deadlocked shutdown against an in-flight class load. The job-class set
     // is fixed between start and stop, so this snapshot stays correct.
     private static volatile List<Class<?>> applicationStopJobs = List.of();
-    private static final ThreadLocal<List<Callable<?>>> afterInvocationActions = new ThreadLocal<>();
+    private static final ThreadLocal<List<Callable<?>>> afterInvocationActions = new PlayThreadLocal<>();
 
     @Override
     public String getStatus() {

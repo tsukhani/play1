@@ -24,6 +24,7 @@ import play.libs.F.Promise;
 import play.libs.Time;
 import play.mvc.Http;
 import play.utils.ContextPropagator;
+import play.utils.PlayThreadLocal;
 
 /**
  * A job is an asynchronously executed unit of work
@@ -46,7 +47,7 @@ public class Job<V> extends Invoker.Invocation implements Callable<V> {
     // a field, because the context belongs to one run: a job instance can be started more than
     // once, and a scheduled instance can be started by hand between its scheduled runs. It is
     // not an argument either, because applications override call().
-    private static final ThreadLocal<ContextPropagator.Snapshot> submittedContext = new ThreadLocal<>();
+    private static final ThreadLocal<ContextPropagator.Snapshot> submittedContext = new PlayThreadLocal<>();
 
     protected Object executor;
     protected long lastRun = 0;

@@ -39,6 +39,7 @@ import play.libs.Mail;
 import play.libs.MimeTypes;
 import play.templates.Template;
 import play.templates.TemplateLoader;
+import play.utils.PlayThreadLocal;
 import play.vfs.VirtualFile;
 
 /**
@@ -46,7 +47,7 @@ import play.vfs.VirtualFile;
  */
 public class Mailer implements LocalVariablesSupport {
 
-    protected static final ThreadLocal<Map<String, Object>> infos = new ThreadLocal<>();
+    protected static final ThreadLocal<Map<String, Object>> infos = new PlayThreadLocal<>();
 
     /**
      * Set subject of mail, optionally providing formatting arguments

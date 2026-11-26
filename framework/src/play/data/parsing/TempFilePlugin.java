@@ -8,6 +8,7 @@ import org.apache.commons.io.FileUtils;
 
 import play.Play;
 import play.PlayPlugin;
+import play.utils.PlayThreadLocal;
 
 /**
  *  Creates temporary folders for file parsing, and deletes
@@ -26,7 +27,7 @@ public class TempFilePlugin extends PlayPlugin {
     private static synchronized long getCountLocal() {
         return count++;
     }
-    public static final ThreadLocal<File> tempFolder = new ThreadLocal<>();
+    public static final ThreadLocal<File> tempFolder = new PlayThreadLocal<>();
 
     public static File createTempFolder() {
         if (Play.tmpDir == null || Play.readOnlyTmp) {

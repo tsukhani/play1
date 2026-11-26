@@ -28,13 +28,14 @@ import javassist.expr.Handler;
 import play.Logger;
 import play.classloading.ApplicationClasses.ApplicationClass;
 import play.exceptions.UnexpectedException;
+import play.utils.PlayThreadLocal;
 
 /**
  * Enhance controllers classes. 
  */
 public class ControllersEnhancer extends Enhancer {
 
-    public static final ThreadLocal<Stack<String>> currentAction = new ThreadLocal<>();
+    public static final ThreadLocal<Stack<String>> currentAction = new PlayThreadLocal<>();
 
     @Override
     public void enhanceThisClass(final ApplicationClass applicationClass) throws Exception {
@@ -337,7 +338,7 @@ public class ControllersEnhancer extends Enhancer {
         public static void stopActionCall() {
             allow.set(false);
         }
-        static final ThreadLocal<Boolean> allow = new ThreadLocal<>();
+        static final ThreadLocal<Boolean> allow = new PlayThreadLocal<>();
     }
 
     @Retention(RetentionPolicy.RUNTIME)

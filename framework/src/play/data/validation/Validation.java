@@ -15,10 +15,11 @@ import net.sf.oval.configuration.annotation.AbstractAnnotationCheck;
 import play.Play;
 import play.classloading.enhancers.LocalvariablesNamesEnhancer.LocalVariablesNamesTracer;
 import play.exceptions.UnexpectedException;
+import play.utils.PlayThreadLocal;
 
 public class Validation {
 
-    public static final ThreadLocal<Validation> current = new ThreadLocal<>();
+    public static final ThreadLocal<Validation> current = new PlayThreadLocal<>();
     final List<Error> errors = new ArrayList<>();
     boolean keep = false;
 

@@ -28,6 +28,7 @@ import play.libs.F;
 import play.libs.PlayChannel;
 import play.libs.Time;
 import play.utils.HTTP;
+import play.utils.PlayThreadLocal;
 import play.utils.Utils;
 
 /**
@@ -260,7 +261,7 @@ public class Http {
         /**
          * Bind to thread
          */
-        public static final ThreadLocal<Request> current = new ThreadLocal<>();
+        public static final ThreadLocal<Request> current = new PlayThreadLocal<>();
         /**
          * The really invoker Java method
          */
@@ -629,7 +630,7 @@ public class Http {
         /**
          * Bind to thread
          */
-        public static final ThreadLocal<Response> current = new ThreadLocal<>();
+        public static final ThreadLocal<Response> current = new PlayThreadLocal<>();
 
         /**
          * Retrieve the current response
@@ -878,7 +879,7 @@ public class Http {
      */
     public abstract static class Inbound implements Iterable<WebSocketEvent> {
 
-        public static final ThreadLocal<Inbound> current = new ThreadLocal<>();
+        public static final ThreadLocal<Inbound> current = new PlayThreadLocal<>();
 
         // Bounded so a flood of inbound frames can't grow the heap without limit; the
         // +10 slack gives setReadable(false) room to take effect before offer() would fail.
@@ -983,7 +984,7 @@ public class Http {
      */
     public abstract static class Outbound {
 
-        public static final ThreadLocal<Outbound> current = new ThreadLocal<>();
+        public static final ThreadLocal<Outbound> current = new PlayThreadLocal<>();
 
         public static Outbound current() {
             return current.get();

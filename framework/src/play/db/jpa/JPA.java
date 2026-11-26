@@ -18,6 +18,7 @@ import play.Play;
 import play.db.DB;
 import play.exceptions.JPAException;
 import play.libs.F;
+import play.utils.PlayThreadLocal;
 
 /**
  * JPA Support
@@ -25,7 +26,7 @@ import play.libs.F;
 public class JPA {
 
     protected static final Map<String, EntityManagerFactory> emfs = new ConcurrentHashMap<>();
-    public static final ThreadLocal<Map<String, JPAContext>> currentEntityManager = ThreadLocal.withInitial(ConcurrentHashMap::new);
+    public static final ThreadLocal<Map<String, JPAContext>> currentEntityManager = PlayThreadLocal.withInitial(ConcurrentHashMap::new);
     public static final String DEFAULT = "default";
 
     /**
@@ -33,7 +34,7 @@ public class JPA {
      * {@link #em(String)} adds to its failure to say how the block opens a transaction. Unset
      * everywhere else, which leaves that failure as it was.
      */
-    private static final ThreadLocal<String> withoutTransactionHint = new ThreadLocal<>();
+    private static final ThreadLocal<String> withoutTransactionHint = new PlayThreadLocal<>();
 
     public static class JPAContext {
         public String dbName = JPA.DEFAULT;

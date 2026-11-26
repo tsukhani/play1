@@ -21,6 +21,7 @@ import org.hibernate.internal.SessionImpl;
 import play.Logger;
 import play.db.jpa.JPA;
 import play.exceptions.DatabaseException;
+import play.utils.PlayThreadLocal;
 
 /**
  * Database connection utilities.
@@ -82,7 +83,7 @@ public class DB {
 
     public static final String DEFAULT = "default";
 
-    static final ThreadLocal<Map<String, Connection>> localConnection = new ThreadLocal<>();
+    static final ThreadLocal<Map<String, Connection>> localConnection = new PlayThreadLocal<>();
 
     public static DataSource getDataSource(String name) {
         ExtendedDatasource datasource = datasources.get(name);

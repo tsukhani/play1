@@ -6,6 +6,7 @@ import play.mvc.Http;
 import play.mvc.Http.Request;
 import play.mvc.Http.Response;
 import play.mvc.Scope;
+import play.utils.PlayThreadLocal;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -15,7 +16,7 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class Lang {
 
-    static final ThreadLocal<String> current = new ThreadLocal<>();
+    static final ThreadLocal<String> current = new PlayThreadLocal<>();
 
     // Audit M17: ConcurrentHashMap not HashMap. The cache is read+written from
     // multiple request threads (and virtual threads, where the contention surface

@@ -12,6 +12,7 @@ import play.mvc.Http.Cookie;
 import play.mvc.Scope;
 import play.mvc.results.Result;
 import play.utils.Java;
+import play.utils.PlayThreadLocal;
 
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
@@ -25,7 +26,7 @@ import java.util.regex.Pattern;
 
 public class ValidationPlugin extends PlayPlugin {
 
-    public static final ThreadLocal<Map<Object, String>> keys = new ThreadLocal<>();
+    public static final ThreadLocal<Map<Object, String>> keys = new PlayThreadLocal<>();
 
     @Override
     public void beforeInvocation() {
