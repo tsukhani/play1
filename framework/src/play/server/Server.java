@@ -144,10 +144,11 @@ public class Server {
         try {
             if (httpPort != -1) {
                 // Boss only accepts; one thread per bound port suffices. Worker count honours
-                // play.netty.maxThreads if set (legacy Netty 3 toggle), otherwise half the cores, at
-                // least 2 (PF-244, see workerThreads). 0 / unset / unparseable → default.
+                // play.netty.maxThreads if set (legacy Netty 3 toggle), otherwise two thirds of the
+                // cores for plain HTTP, which never carries HTTP/2 (PF-255, see
+                // defaultHttpWorkerThreads). 0 / unset / unparseable → default.
                 EventLoopGroup bossGroup = new NioEventLoopGroup(1);
-                EventLoopGroup workerGroup = new NioEventLoopGroup(workerThreads());
+                EventLoopGroup workerGroup = new NioEventLoopGroup(workerThreads(true));
                 registerForShutdown(bossGroup, workerGroup);
                 ServerBootstrap bootstrap = new ServerBootstrap();
                 bootstrap.group(bossGroup, workerGroup)
@@ -183,7 +184,7 @@ public class Server {
         try {
             if (httpsPort != -1) {
                 EventLoopGroup bossGroup = new NioEventLoopGroup(1);
-                EventLoopGroup workerGroup = new NioEventLoopGroup(workerThreads());
+                EventLoopGroup workerGroup = new NioEventLoopGroup(workerThreads(false));
                 registerForShutdown(bossGroup, workerGroup);
                 ServerBootstrap bootstrap = new ServerBootstrap();
                 bootstrap.group(bossGroup, workerGroup)
@@ -334,20 +335,44 @@ public class Server {
      * Netty 3 path honoured this property; the Netty 4 migration accidentally dropped it.
      * 0 / unset / unparseable values fall back to {@link #defaultWorkerThreads(int)}.
      */
-    private static int workerThreads() {
+    private static int workerThreads(boolean plainHttp) {
         return workerThreads(Play.configuration.getProperty("play.netty.maxThreads"),
-                Runtime.getRuntime().availableProcessors());
+                Runtime.getRuntime().availableProcessors(), plainHttp);
     }
 
+    /** The HTTPS listener's count: {@link #workerThreads(String, int, boolean)} for TLS. */
     static int workerThreads(String raw, int cores) {
-        if (raw == null || raw.isBlank()) return defaultWorkerThreads(cores);
+        return workerThreads(raw, cores, false);
+    }
+
+    static int workerThreads(String raw, int cores, boolean plainHttp) {
+        int fallback = plainHttp ? defaultHttpWorkerThreads(cores) : defaultWorkerThreads(cores);
+        if (raw == null || raw.isBlank()) return fallback;
         try {
             int n = Integer.parseInt(raw.trim());
-            return n <= 0 ? defaultWorkerThreads(cores) : n;
+            return n <= 0 ? fallback : n;
         } catch (NumberFormatException nfe) {
             Logger.warn("Invalid play.netty.maxThreads='%s'; using the default", raw);
-            return defaultWorkerThreads(cores);
+            return fallback;
         }
+    }
+
+    /**
+     * PF-255: the plain-HTTP listener's default, two thirds of the cores, rounded up and at least 2.
+     * Plain HTTP never carries HTTP/2 (there is no h2c), and it is what an application behind an
+     * HTTP/1.1 proxy receives. On a server whose 12 CPUs nothing else shares, 8 loops served 10 to 19%
+     * more cheap requests over HTTP/1.1 than 6, at a lower 99th percentile on plain text and 0.62 ms
+     * against 0.43 on JDBC, and an action doing real CPU work (200 rows to JSON) as well as 6 (76.9k
+     * against 75.2k requests/s, p99 2.22 ms against 2.14). The 8 loops' cost came only over HTTP/2, at
+     * 16 streams in flight per connection with that action, a p99 of 246 ms against 30: loops and busy
+     * carriers time-sliced on the CPUs, every stream of a waiting loop stalled. So HTTPS, which serves
+     * HTTP/2, keeps half the cores ({@link #defaultWorkerThreads}). With both listeners under heavy
+     * load at once a server runs more loops than it has cores. {@code -Dio.netty.eventLoopThreads}
+     * still wins when it is given.
+     */
+    static int defaultHttpWorkerThreads(int cores) {
+        if (System.getProperty("io.netty.eventLoopThreads") != null) return 0;
+        return Math.max(2, (2 * cores + 2) / 3);
     }
 
     /**

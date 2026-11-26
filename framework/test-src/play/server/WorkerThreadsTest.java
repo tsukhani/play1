@@ -55,4 +55,36 @@ public class WorkerThreadsTest {
         assertThat(Server.workerThreads(null, 14)).isZero();
         assertThat(Server.workerThreads("3", 14)).as("play.netty.maxThreads still wins").isEqualTo(3);
     }
+
+    /** PF-255: plain HTTP, which never carries HTTP/2, defaults to two thirds of the cores. */
+    @Test
+    public void plainHttpDefaultsToTwoThirdsOfTheCoresRoundedUp() {
+        assertThat(Server.defaultHttpWorkerThreads(4)).isEqualTo(3);
+        assertThat(Server.defaultHttpWorkerThreads(6)).isEqualTo(4);
+        assertThat(Server.defaultHttpWorkerThreads(12)).isEqualTo(8);
+        assertThat(Server.defaultHttpWorkerThreads(14)).isEqualTo(10);
+        assertThat(Server.defaultHttpWorkerThreads(64)).isEqualTo(43);
+        assertThat(Server.workerThreads(null, 12, true)).isEqualTo(8);
+        assertThat(Server.workerThreads(null, 12, false)).as("HTTPS keeps half").isEqualTo(6);
+    }
+
+    @Test
+    public void plainHttpIsNeverFewerThanTwoLoopsEither() {
+        for (int cores = 1; cores <= 3; cores++) {
+            assertThat(Server.defaultHttpWorkerThreads(cores)).as("%d cores", cores).isEqualTo(2);
+        }
+    }
+
+    @Test
+    public void aConfiguredCountWinsForBothListeners() {
+        assertThat(Server.workerThreads("5", 12, true)).isEqualTo(5);
+        assertThat(Server.workerThreads("5", 12, false)).isEqualTo(5);
+        assertThat(Server.workerThreads("nonsense", 12, true)).isEqualTo(8);
+    }
+
+    @Test
+    public void nettysOwnPropertyIsLeftToNettyForPlainHttpToo() {
+        System.setProperty("io.netty.eventLoopThreads", "6");
+        assertThat(Server.workerThreads(null, 12, true)).isZero();
+    }
 }
