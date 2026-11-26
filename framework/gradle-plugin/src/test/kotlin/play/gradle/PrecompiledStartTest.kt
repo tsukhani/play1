@@ -295,6 +295,35 @@ class PrecompiledStartTest {
         assertLeftAsItWas(app)
     }
 
+    // PF-258: aot.training.paths names what the training run requests, as for a bundle.
+    @Test
+    @DisabledOnOs(OS.WINDOWS, disabledReason = FORKS_JVMS)
+    fun `aot-gen requests each path aot training paths names, in its order`(@TempDir tmp: File) {
+        val app = appInUse(tmp, conf = "aot.training.paths= /first , /second?x=1,,\n")
+
+        val training = aotGenFails(app, "-PhttpPort=${freePort()}", "-PjvmArgs=-Dpf185.mode=truncate")
+
+        val requests = File(app, "logs/aot-gen.out").readLines().filter { it.startsWith("REQUEST ") }
+        assertEquals(listOf("REQUEST GET /first HTTP/1.1", "REQUEST GET /second?x=1 HTTP/1.1"), requests, training.output)
+        assertTrue("~ GET /first -> HTTP/1." in training.output, training.output)
+        assertTrue("~ GET /second?x=1 -> HTTP/1." in training.output, training.output)
+        assertLeftAsItWas(app)
+    }
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS, disabledReason = FORKS_JVMS)
+    fun `aot-gen refuses a training path that is none and starts nothing`(@TempDir tmp: File) {
+        for ((paths, says) in listOf("/ok, products" to "'products' is not a path", "/a b" to "'/a b' holds whitespace")) {
+            val app = appInUse(File(tmp, paths.hashCode().toString()), conf = "aot.training.paths=$paths\n")
+
+            val training = aotGenFails(app, "-PhttpPort=${freePort()}")
+
+            assertTrue(says in training.output, "$paths: ${training.output}")
+            assertFalse(File(app, "logs/aot-gen.out").exists(), "$paths: the JVM must not have been started")
+            assertLeftAsItWas(app)
+        }
+    }
+
     @Test
     @DisabledOnOs(OS.WINDOWS, disabledReason = FORKS_JVMS)
     fun `aot-gen trains a real JVM and a precompiled start then runs from the cache it wrote`(@TempDir tmp: File) {
@@ -399,7 +428,7 @@ class PrecompiledStartTest {
     }
 
     /** An application that already has a cache and the pid file of an instance playStart is tracking. */
-    private fun appInUse(tmp: File): File = writeApp(tmp).also { app ->
+    private fun appInUse(tmp: File, conf: String = "application.name=testapp\n"): File = writeApp(tmp, conf).also { app ->
         File(app, "server.pid").writeText("4242")
         cacheOf(app).writeText("the cache in use")
     }

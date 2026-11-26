@@ -126,7 +126,9 @@ three depths) of five endpoints. `--protocols h1` takes about a third of that.
   - the server JVM's peak RSS while measuring;
   - the server JVM's CPU per request, and the CPU the server and oha used, in cores.
 - **aot:** each application's own AOT training, then startup again from the cache:
-  - the fork: the bundle's `./play aot-gen`;
+  - the fork: the bundle's `./play aot-gen`, which requests `/plaintext` (`aot.training.paths` in its
+    `application.conf`, PF-258), as the Quarkus training below does; trained on the unrouted `/` it started 17 ms
+    later from a cache 7 MB larger, which held the 404 page;
   - Helidon: `java -XX:AOTCacheOutput` with `-Dexit.on.started=!`, which makes the server exit once it has started;
   - Quarkus: a build with its `aot-jar` packaging, which hands all class loading to the JDK's loaders as an AOT cache
     needs, then the route its AOT guide gives for generating the file by hand: `java -XX:AOTCacheOutput=app.aot` until

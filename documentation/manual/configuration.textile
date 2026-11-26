@@ -129,6 +129,18 @@ h3. Keys the framework declares
 | "play.test.transaction":#play.test.transaction | @ambient@, @none@ |
 
 
+h2(#aot). AOT cache
+
+
+h3(#aot.training.paths). aot.training.paths
+
+The paths that @play aot-gen@ and a bundle's @./play aot-gen@ request during the training run that writes the JDK's AOT cache, a comma-separated list, each one requested once with @GET@, in that order (PF-258). A cache holds what the training run loaded and ran, so name the paths the application answers with its real work when @/@ only redirects, renders a login page or has no route. Each path starts with @/@ and may carry a query string; one that does not, or that holds whitespace, stops @aot-gen@ before it starts the application. A framework ID prefix applies, as for any key. See "The AOT cache for a play bundle":deployment#aot-cache. For example:
+
+bc. aot.training.paths=/, /products, /api/status
+
+Default: @/@
+
+
 h2(#application). Application configuration
 
 

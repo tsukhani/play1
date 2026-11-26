@@ -1452,6 +1452,60 @@ class BundleLauncherTest {
         assertLeftAsItWas(bundle)
     }
 
+    /**
+     * A `java` that runs the application for real without the cache option and, at the SIGTERM,
+     * leaves the partial cache and recording of a JVM whose cache assembly died: the training run
+     * serves its requests, then fails, without waiting for a real cache to be assembled.
+     */
+    private fun servingJavaThatLeavesNoCache(stubs: File) {
+        File(stubs, "java").writeText(
+            "#!/bin/bash\n" +
+                "args=()\n" +
+                "for a in \"\$@\"; do case \"\$a\" in -XX:AOTCacheOutput=*) out=\"\${a#*=}\" ;; *) args+=(\"\$a\") ;; esac; done\n" +
+                "\"\$REAL_JAVA\" \"\${args[@]}\" &\n" +
+                "app=\$!\n" +
+                "trap 'kill \$app; wait \$app; echo partial > \"\$out\"; echo recording > \"\$out.config\"; exit 143' TERM\n" +
+                "wait \$app\n"
+        )
+    }
+
+    // PF-258: aot.training.paths names what the training run requests.
+    @Test
+    @DisabledOnOs(OS.WINDOWS, disabledReason = "aot-gen refuses under Git Bash, where kill cannot stop a JVM gracefully")
+    fun `aot-gen requests each path aot training paths names, in its order`(@TempDir tmp: File) {
+        val (bundle, stubs) = bundleInUse(tmp, conf = "aot.training.paths= /first , /second?x=1,,\n")
+        listeningFrameworkJar(File(tmp, "fake"), File(bundle, "framework/play-$fwVersion.jar"))
+        File(bundle, ".classpath").writeText("framework/play-$fwVersion.jar\n")
+        servingJavaThatLeavesNoCache(stubs)
+
+        val training = aotGen(
+            bundle, stubs, "--http.port=${freePort()}",
+            env = mapOf("REAL_JAVA" to File(System.getProperty("java.home"), "bin/java").absolutePath)
+        )
+
+        val requests = training.jvmOutput.filter { it.startsWith("REQUEST ") }
+        assertEquals(listOf("REQUEST GET /first HTTP/1.1", "REQUEST GET /second?x=1 HTTP/1.1"), requests,
+            training.jvmOutput.joinToString("\n"))
+        assertTrue(training.launch.stdout.any { it.startsWith("~ GET /first -> HTTP/1.") }, "${training.launch.stdout}")
+        assertTrue(training.launch.stdout.any { it.startsWith("~ GET /second?x=1 -> HTTP/1.") }, "${training.launch.stdout}")
+        assertLeftAsItWas(bundle)
+    }
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS, disabledReason = "aot-gen refuses under Git Bash, where kill cannot stop a JVM gracefully")
+    fun `aot-gen refuses a training path that is none and starts nothing`(@TempDir tmp: File) {
+        for ((paths, says) in listOf("/ok, products" to "'products' is not a path", "/a b" to "'/a b' holds whitespace")) {
+            val (bundle, stubs) = bundleInUse(File(tmp, paths.hashCode().toString()), conf = "aot.training.paths=$paths\n")
+
+            val training = aotGen(bundle, stubs, "--http.port=${freePort()}")
+
+            assertEquals(1, training.launch.exit, paths)
+            assertTrue(training.launch.stderr.any { says in it }, "$paths: ${training.launch.stderr}")
+            assertEquals(emptyList<String>(), training.jvmOutput, "$paths: the JVM must not have been started")
+            assertLeftAsItWas(bundle)
+        }
+    }
+
     @Test
     @DisabledOnOs(OS.WINDOWS, disabledReason = "aot-gen refuses under Git Bash, where kill cannot stop a JVM gracefully")
     fun `aot-gen reads PLAY_AOT_TIMEOUT as a decimal number`(@TempDir tmp: File) {

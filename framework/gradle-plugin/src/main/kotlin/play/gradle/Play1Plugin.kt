@@ -2794,11 +2794,31 @@ abstract class PlayRestartTask : DefaultTask() {
 }
 
 /**
+ * PF-258: the paths playAotGen's training run requests, in order, from aot.training.paths, a
+ * comma-separated list, else / as before. A cache holds what the training run loaded and ran, so a
+ * path the application answers with its real work trains more than a / that only redirects or is
+ * not routed. Each path starts with / and holds no whitespace; anything else fails the task before
+ * a JVM is started. bundle-play.sh reads the key alike (aot_training_paths): change the two together.
+ */
+internal fun trainingPaths(configured: String?): List<String> {
+    val paths = (configured ?: "").split(',').map { it.trim() }.filter { it.isNotEmpty() }
+    for (path in paths) {
+        if (path.any(Char::isWhitespace)) {
+            throw GradleException("aot.training.paths: '$path' holds whitespace; give the paths separated by commas")
+        }
+        if (!path.startsWith("/")) {
+            throw GradleException("aot.training.paths: '$path' is not a path: each one starts with /")
+        }
+    }
+    return paths.ifEmpty { listOf("/") }
+}
+
+/**
  * PF-185: a training run that leaves the JDK's AOT cache behind, for an application started
  * through Gradle with -Dprecompiled=true: from its working copy or from a `play dist` install.
  * It starts the application for real, with the JVM options playStart would use plus
- * -XX:AOTCacheOutput, waits until it listens, has it serve one request and stops it: the JVM
- * writes the cache on its way out, and only out of a normal exit.
+ * -XX:AOTCacheOutput, waits until it listens, has it serve the training requests (trainingPaths)
+ * and stops it: the JVM writes the cache on its way out, and only out of a normal exit.
  *
  * The cache is written beside the one in use and moved over it once complete. Nothing here
  * reads or writes the pid file: that is playStart's, and the instance it tracks may be
@@ -2851,6 +2871,7 @@ abstract class PlayAotGenTask : DefaultTask() {
         val host = confValue(conf, "http.address", id) ?: "127.0.0.1"
         val timeout = timeoutSeconds.get().takeIf { it.isNotEmpty() && it.all(Char::isDigit) }?.toLongOrNull()
             ?: throw GradleException("PLAY_AOT_TIMEOUT is a number of seconds, not '${timeoutSeconds.get()}'")
+        val paths = trainingPaths(confValue(conf, "aot.training.paths", id))
         if (portOpen(host, port)) {
             throw GradleException(
                 "play aot-gen: $host:$port is already in use. The training run starts the application " +
@@ -2902,12 +2923,14 @@ abstract class PlayAotGenTask : DefaultTask() {
                 }
                 Thread.sleep(200)
             }
-            val status = try {
-                httpGetRoot(host, port, timeout)
-            } catch (e: java.io.IOException) {
-                failed("the application did not answer GET / on $host:$port")
+            for (path in paths) {
+                val status = try {
+                    httpGet(host, port, path, timeout)
+                } catch (e: java.io.IOException) {
+                    failed("the application did not answer GET $path on $host:$port")
+                }
+                logger.lifecycle("~ GET $path -> $status")
             }
-            logger.lifecycle("~ GET / -> $status")
 
             // No time limit from here on: the shutdown has the application's own, and
             // how long the JVM then takes to assemble the cache depends on its size.
@@ -2946,13 +2969,13 @@ abstract class PlayAotGenTask : DefaultTask() {
     }
 
     /**
-     * GET / on [host]:[port], waiting up to [timeout] seconds for the answer. Returns the
+     * GET [path] on [host]:[port], waiting up to [timeout] seconds for the answer. Returns the
      * status line; the body is read to its end, so the request is served before the
      * application is stopped. Any status will do: the request is there to be served.
      */
-    private fun httpGetRoot(host: String, port: Int, timeout: Long): String {
+    private fun httpGet(host: String, port: Int, path: String, timeout: Long): String {
         val address = if (':' in host) "[$host]" else host
-        val conn = URI("http://$address:$port/").toURL().openConnection(java.net.Proxy.NO_PROXY) as HttpURLConnection
+        val conn = URI("http://$address:$port$path").toURL().openConnection(java.net.Proxy.NO_PROXY) as HttpURLConnection
         conn.instanceFollowRedirects = false
         conn.connectTimeout = 5_000
         conn.readTimeout = (timeout * 1_000).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()

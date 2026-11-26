@@ -600,12 +600,12 @@ port_open() (
     exec 3<>"/dev/tcp/$1/$2"
 ) 2>/dev/null
 
-# GET / on host $1, port $2, waiting up to $3 seconds for the answer. Prints
+# GET $4 on host $1, port $2, waiting up to $3 seconds for the answer. Prints
 # the status line; the rest of the response is read and dropped, so the
 # request is served to its end before the application is stopped.
 http_get() (
     exec 3<>"/dev/tcp/$1/$2" || exit 1
-    printf 'GET / HTTP/1.1\r\nHost: %s:%s\r\nConnection: close\r\n\r\n' "$1" "$2" >&3
+    printf 'GET %s HTTP/1.1\r\nHost: %s:%s\r\nConnection: close\r\n\r\n' "$4" "$1" "$2" >&3
     IFS= read -r -t "$3" line <&3 || exit 1
     printf '%s\n' "${line%$'\r'}"
     while IFS= read -r -t 5 line <&3; do :; done
@@ -637,9 +637,39 @@ aot_gen_fail() {
     exit 1
 }
 
+# PF-258: the paths aot-gen's training run requests, in order, into AOT_PATHS:
+# aot.training.paths from application.conf, a comma-separated list, else / as
+# before. A cache holds what the training run loaded and ran, so a path the
+# application answers with its real work trains more than a / that only
+# redirects or is not routed. Each path starts with / and holds no whitespace;
+# anything else ends the command before a JVM is started. playAotGen reads the
+# key alike (trainingPaths in Play1Plugin.kt): change the two together.
+aot_training_paths() {
+    local configured p list
+    configured=$(conf_value aot.training.paths)
+    AOT_PATHS=()
+    IFS=, read -r -a list <<< "$configured"
+    for p in ${list[@]+"${list[@]}"}; do
+        p="${p#"${p%%[![:space:]]*}"}"
+        p="${p%"${p##*[![:space:]]}"}"
+        [ -n "$p" ] || continue
+        case "$p" in
+            *[[:space:]]*)
+                echo "play: aot.training.paths: '$p' holds whitespace; give the paths separated by commas" >&2
+                exit 1 ;;
+            /*) AOT_PATHS+=("$p") ;;
+            *)
+                echo "play: aot.training.paths: '$p' is not a path: each one starts with /" >&2
+                exit 1 ;;
+        esac
+    done
+    [ "${#AOT_PATHS[@]}" -gt 0 ] || AOT_PATHS=(/)
+}
+
 # PF-180: `aot-gen` -- a training run that leaves the JDK's AOT cache behind.
 # It starts the application for real, with the JVM options `run` would use plus
-# -XX:AOTCacheOutput, waits until it listens, has it serve one request and
+# -XX:AOTCacheOutput, waits until it listens, has it serve the training requests
+# (aot_training_paths) and
 # stops it: the JVM writes the cache on its way out, and only out of a normal
 # exit.
 #
@@ -685,6 +715,7 @@ cmd_aot_gen() {
     esac
     # Decimal whatever its leading zeros: bash arithmetic reads 08 as bad octal.
     timeout=$((10#$timeout))
+    aot_training_paths
 
     if port_open "$host" "$port"; then
         echo "play: aot-gen: $host:$port is already in use. The training run starts the application" >&2
@@ -717,9 +748,11 @@ cmd_aot_gen() {
         sleep 0.2
     done
 
-    status=$(http_get "$host" "$port" "$timeout") \
-        || aot_gen_fail "the application did not answer GET / on $host:$port"
-    echo "~ GET / -> $status"
+    for arg in "${AOT_PATHS[@]}"; do
+        status=$(http_get "$host" "$port" "$timeout" "$arg") \
+            || aot_gen_fail "the application did not answer GET $arg on $host:$port"
+        echo "~ GET $arg -> $status"
+    done
 
     # No time limit from here on: the shutdown has the application's own, and
     # how long the JVM then takes to assemble the cache depends on its size.
@@ -917,8 +950,9 @@ jmx.ssl.config.file) unless jmx.authenticate=false / jmx.ssl=false.
 
 AOT cache: aot-gen starts the application for real, with the arguments above
 and its real configuration, waits until it listens (--http.port, else
-http.port in application.conf, else 9000), has it serve GET / and stops it;
-the JVM writes app.aot as it exits. run and start then pass -XX:AOTCache, ahead
+http.port in application.conf, else 9000), has it serve GET / (or each path
+of aot.training.paths, a comma-separated list) and stops it; the JVM writes
+app.aot as it exits. run and start then pass -XX:AOTCache, ahead
 of your own options so that those win. The cache fits one JDK build, one set
 of JVM options and this bundle's jars: generate it on the host or in the image
 build, and again after a JDK update, a JVM option change or a redeploy. A
