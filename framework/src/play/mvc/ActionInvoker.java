@@ -48,6 +48,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Stack;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.Future;
 
 /**
@@ -114,6 +115,20 @@ public class ActionInvoker {
         ControllersEnhancer.currentAction.set(new Stack<>());
     }
 
+    /**
+     * PF-255: a request's {@code request_id}, a version 4 UUID in the usual form, from
+     * {@link ThreadLocalRandom} rather than {@link UUID#randomUUID()}'s {@code SecureRandom}, which
+     * was 6.7% of a plain-text request's CPU on its virtual thread. It tells log lines apart and is
+     * unique as before, but it is not unpredictable: nothing may rely on it as a secret (the user's
+     * choice, 2026-11-26).
+     */
+    static String requestId() {
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        long msb = (random.nextLong() & ~0xF000L) | 0x4000L; // version 4
+        long lsb = (random.nextLong() & ~0xC000000000000000L) | 0x8000000000000000L; // IETF variant
+        return new UUID(msb, lsb).toString();
+    }
+
     public static void invoke(Http.Request request, Http.Response response) {
         // PF-13: stamp request start so the finally block can record
         // http_server_requests duration into the active Micrometer registry.
@@ -127,7 +142,7 @@ public class ActionInvoker {
         Map<String, String> context = new LinkedHashMap<>(8);
         context.put("request_id", request.args.containsKey("__REQUEST_ID")
                 ? request.args.get("__REQUEST_ID").toString()
-                : UUID.randomUUID().toString());
+                : requestId());
         context.put("http_method", request.method);
         context.put("http_path", request.path);
         context.put("client_ip", request.remoteAddress);
