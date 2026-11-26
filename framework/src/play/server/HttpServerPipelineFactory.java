@@ -8,6 +8,7 @@ import io.netty.handler.codec.compression.CompressionOptions;
 import io.netty.handler.codec.compression.StandardCompressionOptions;
 import io.netty.handler.codec.http.HttpContentCompressor;
 import io.netty.handler.codec.http.HttpObjectAggregator;
+import io.netty.handler.codec.http.HttpResponse;
 import play.Play;
 import play.Logger;
 import play.exceptions.UnexpectedException;
@@ -252,7 +253,18 @@ public class HttpServerPipelineFactory extends ChannelInitializer<Channel> {
      * the array), so handing every compressor the same instance is safe.
      */
     public static HttpContentCompressor buildHttpContentCompressor() {
-        return new HttpContentCompressor(COMPRESSION_THRESHOLD, CompressionOptionsHolder.OPTIONS);
+        return new HttpContentCompressor(COMPRESSION_THRESHOLD, CompressionOptionsHolder.OPTIONS) {
+            /**
+             * PF-257: a close-delimited body ({@link PlayHandler#frameStream}) passes uncompressed.
+             * Netty's encoder frames a compressed body of unknown length chunked, which an HTTP/1.0
+             * client must never get, and on a connection the server closes chunked framing brings
+             * back the close race that left a TIME_WAIT on both ends.
+             */
+            @Override
+            protected Result beginEncode(HttpResponse response, String acceptEncoding) throws Exception {
+                return PlayHandler.isCloseDelimited(response) ? null : super.beginEncode(response, acceptEncoding);
+            }
+        };
     }
 
     protected ChannelHandler getInstance(String name) throws Exception {

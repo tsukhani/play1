@@ -593,6 +593,9 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
             setContentLength(fullResponse, response.out.size());
         }
 
+        if (!keepAlive) {
+            closesAfter(fullResponse);
+        }
         ChannelFuture f = null;
         if (ctx.channel().isOpen()) {
             f = ctx.channel().writeAndFlush(fullResponse);
@@ -650,6 +653,9 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
         }
 
         boolean keepAlive = isKeepAlive(nettyRequest);
+        if (!keepAlive) {
+            closesAfter(nettyResponse);
+        }
         if (file != null && file.isFile()) {
             nettyResponse = addEtag(nettyRequest, nettyResponse, file);
             if (nettyResponse.status().equals(HttpResponseStatus.NOT_MODIFIED)) {
@@ -669,12 +675,11 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
             ChannelFuture writeFuture;
             if (!nettyRequest.method().equals(HttpMethod.HEAD)
                     && !nettyResponse.status().equals(HttpResponseStatus.NOT_MODIFIED)) {
-                // HttpUtil.setTransferEncodingChunked(true) sets Transfer-Encoding: chunked AND
-                // strips any Content-Length, which is the right framing for an unknown-length
-                // streamed body. Required because HttpContentCompressor only sets it when
-                // actually compressing — without this, non-Accept-Encoding clients would have
-                // no message-boundary signal on HTTP/1.1 keep-alive connections.
-                HttpUtil.setTransferEncodingChunked(nettyResponse, true);
+                // An unknown-length streamed body: chunked on a kept-alive connection, which strips
+                // any Content-Length (HttpContentCompressor only chunks when it compresses, so
+                // without this a client would have no message boundary on a kept-alive
+                // connection); close-delimited on one the server closes after (PF-257).
+                frameStream(nettyResponse, keepAlive);
                 ctx.channel().write(nettyResponse);
                 // Wrap as HttpChunkedInput so ChunkedWriteHandler emits HttpContent (not raw
                 // ByteBuf) — required for HttpContentCompressor to compress streaming bodies
@@ -696,7 +701,7 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
             ChannelFuture writeFuture;
             if (!nettyRequest.method().equals(HttpMethod.HEAD)
                     && !nettyResponse.status().equals(HttpResponseStatus.NOT_MODIFIED)) {
-                HttpUtil.setTransferEncodingChunked(nettyResponse, true);
+                frameStream(nettyResponse, keepAlive);
                 ctx.channel().write(nettyResponse);
                 // Cast: the ChunkedInput<?> handed in by Response.direct is in practice always
                 // a ChunkedInput<ByteBuf> (LazyChunkedInput, ChunkedStream, ChunkedFile, etc.).
@@ -1043,11 +1048,21 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
             }
             nettyResponse.headers().set(CONTENT_TYPE, MimeTypes.getContentType("404." + format, "text/plain"));
             setContentLength(nettyResponse, bytes.length);
+            // PF-257: a kept-alive connection stays open after a 404, as after an action's own
+            // notFound(), which copyResponse answers. The request was read whole before routing
+            // (the aggregator hands over a FullHttpRequest), so nothing of it is left on the
+            // connection. Before, every 404 closed it, without saying so.
+            boolean keepAlive = isKeepAlive(nettyRequest);
+            if (!keepAlive) {
+                closesAfter(nettyResponse);
+            }
             // PF-5: error pages get the same default security headers as normal responses.
             SecurityHeadersPolicy.current().applyTo(nettyResponse.headers(),
                     request != null && Boolean.TRUE.equals(request.secure));
             ChannelFuture writeFuture = ctx.channel().writeAndFlush(nettyResponse);
-            writeFuture.addListener(ChannelFutureListener.CLOSE);
+            if (!keepAlive) {
+                writeFuture.addListener(ChannelFutureListener.CLOSE);
+            }
         } catch (UnsupportedEncodingException fex) {
             Logger.error(fex, "(encoding ?)");
         }
@@ -1080,6 +1095,8 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
         if (exposePlayServer) {
             nettyResponse.headers().set(SERVER, signature);
         }
+        // Each of the three writes below closes the connection after it.
+        closesAfter(nettyResponse);
 
         // RFC 7230 §3.3.2: skip body bytes for HEAD requests (Content-Length still set).
         final boolean isHead = nettyRequest.method().equals(HttpMethod.HEAD);
@@ -1239,6 +1256,9 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
                     File localFile = file.getRealFile();
                     boolean keepAlive = isKeepAlive(nettyRequest);
                     nettyResponse = addEtag(nettyRequest, nettyResponse, localFile);
+                    if (!keepAlive) {
+                        closesAfter(nettyResponse);
+                    }
 
                     // PF-5: static asset responses bypass copyResponse / addToResponse, so apply
                     // the default security headers here before either the 304 fast-path flush or
@@ -1273,6 +1293,7 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
                 FullHttpResponse errorResponse = new DefaultFullHttpResponse(
                         HttpVersion.HTTP_1_1, HttpResponseStatus.INTERNAL_SERVER_ERROR, body);
                 setContentLength(errorResponse, bytes.length);
+                closesAfter(errorResponse);
                 // PF-5: even the catastrophic-failure path keeps default security headers.
                 SecurityHeadersPolicy.current().applyTo(errorResponse.headers(),
                         request != null && Boolean.TRUE.equals(request.secure));
@@ -1337,6 +1358,46 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
      */
     public static boolean isKeepAlive(HttpMessage message) {
         return HttpUtil.isKeepAlive(message) && message.protocolVersion().equals(HttpVersion.HTTP_1_1);
+    }
+
+    /**
+     * PF-257: a response after which the server closes the connection says so, as RFC 9112
+     * section 9.6 asks ({@code Connection: close} on an HTTP/1.1 response), so a client that did
+     * not ask for the close, as after a 500 page, knows the connection is not to be reused. Call it
+     * on every response the server closes after, before the response is written. On HTTP/2 and
+     * HTTP/3 the stream codecs drop the header, which both protocols forbid. The header does not
+     * decide which end closes first: {@link #frameStream} does, for a streamed body.
+     */
+    static void closesAfter(HttpResponse response) {
+        HttpUtil.setKeepAlive(response, false);
+    }
+
+    /**
+     * PF-257: the framing of a streamed body, whose length is unknown. On a connection that stays
+     * open it is chunked. On one the server closes after it (a request with {@code Connection:
+     * close}, or HTTP/1.0, which must never be sent {@code Transfer-Encoding}: RFC 9112 section
+     * 6.1) it is close-delimited, neither {@code Transfer-Encoding} nor {@code Content-Length}, so
+     * the body ends with the server's FIN (section 6.3). The client then reads until that FIN and
+     * closes after it, and only the server keeps a TIME_WAIT. With a chunked body the client had
+     * the whole response at the terminating chunk, which went out in a write of its own, and hung
+     * up while the server's FIN was on its way: both ends closed at once and both kept a TIME_WAIT,
+     * and a client opening a connection per request had to take over a TIME_WAIT port on two
+     * connects in three. A truncated close-delimited body looks complete to the client: that is
+     * the price, and only for a client that asked for the close.
+     */
+    static void frameStream(HttpResponse response, boolean keepAlive) {
+        if (keepAlive) {
+            HttpUtil.setTransferEncodingChunked(response, true);
+        } else {
+            // writeChunk puts Transfer-Encoding: chunked on the Play response, which addToResponse copies
+            response.headers().remove(HttpHeaderNames.TRANSFER_ENCODING).remove(HttpHeaderNames.CONTENT_LENGTH);
+        }
+    }
+
+    /** A response head whose body {@link #frameStream} made close-delimited. */
+    static boolean isCloseDelimited(HttpResponse response) {
+        return !(response instanceof FullHttpResponse) && !HttpUtil.isContentLengthSet(response)
+                && !HttpUtil.isTransferEncodingChunked(response) && !HttpUtil.isKeepAlive(response);
     }
 
     public static void setContentLength(HttpMessage message, long contentLength) {
@@ -1643,6 +1704,7 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
             FullHttpResponse notFound = new DefaultFullHttpResponse(
                     HttpVersion.HTTP_1_1, HttpResponseStatus.NOT_FOUND, Unpooled.EMPTY_BUFFER);
             setContentLength(notFound, 0);
+            closesAfter(notFound);
             ctx.writeAndFlush(notFound).addListener(ChannelFutureListener.CLOSE);
             return;
         }

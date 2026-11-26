@@ -272,7 +272,7 @@ class SseWriteLatencyTest {
             socket.setTcpNoDelay(true);
             socket.setSoTimeout(30_000);
             socket.getOutputStream().write(("GET " + path + " HTTP/1.1\r\nHost: localhost\r\n"
-                    + "Accept: text/event-stream\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+                    + "Accept: text/event-stream\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
             ChunkedReader in = new ChunkedReader(socket.getInputStream());
             String status = in.rawLine();
             assertThat(status).startsWith("HTTP/1.1 200");

@@ -68,6 +68,9 @@ public class FileService {
             }
 
             nettyResponse.headers().set(HttpHeaderNames.ACCEPT_RANGES, HttpHeaderValues.BYTES);
+            if (!isKeepAlive) {
+                PlayHandler.closesAfter(nettyResponse); // PF-257
+            }
 
             ChannelFuture writeFuture = null;
 
