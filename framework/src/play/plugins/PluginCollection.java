@@ -448,6 +448,71 @@ public class PluginCollection {
     }
 
     /**
+     * PF-255: the hooks every request calls go only to the enabled plugins whose class overrides
+     * them, in the enabled plugins' order. Each broadcast used to call every enabled plugin, most
+     * of them on {@link PlayPlugin}'s empty default, through a lambda allocated per call; that was
+     * 14% of a plain-text request's CPU on its virtual thread. The table is built from
+     * {@link #getEnabledPlugins()} and built again whenever that list is another one, which every
+     * enable, disable and replace makes it.
+     */
+    static final class Hooks {
+        final List<PlayPlugin> source;
+        final PlayPlugin[] beforeInvocation, afterInvocation, onInvocationSuccess, invocationFinally,
+                beforeActionInvocation, onActionInvocationResult, afterActionInvocation, onActionInvocationFinally,
+                routeRequest, onRequestRouting, rawInvocation;
+
+        Hooks(List<PlayPlugin> source) {
+            this.source = source;
+            beforeInvocation = overriding(source, "beforeInvocation");
+            afterInvocation = overriding(source, "afterInvocation");
+            onInvocationSuccess = overriding(source, "onInvocationSuccess");
+            invocationFinally = overriding(source, "invocationFinally");
+            beforeActionInvocation = overriding(source, "beforeActionInvocation", Method.class);
+            onActionInvocationResult = overriding(source, "onActionInvocationResult", Result.class);
+            afterActionInvocation = overriding(source, "afterActionInvocation");
+            onActionInvocationFinally = overriding(source, "onActionInvocationFinally");
+            routeRequest = overriding(source, "routeRequest", Http.Request.class);
+            onRequestRouting = overriding(source, "onRequestRouting", Router.Route.class);
+            rawInvocation = overriding(source, "rawInvocation", Http.Request.class, Http.Response.class);
+        }
+
+        static PlayPlugin[] overriding(List<PlayPlugin> plugins, String hook, Class<?>... parameters) {
+            List<PlayPlugin> out = new ArrayList<>(plugins.size());
+            for (PlayPlugin plugin : plugins) {
+                if (overrides(plugin.getClass(), hook, parameters)) {
+                    out.add(plugin);
+                }
+            }
+            return out.toArray(new PlayPlugin[0]);
+        }
+
+        /** Whether a class between this one and {@link PlayPlugin}, exclusive, declares the hook. */
+        static boolean overrides(Class<?> pluginClass, String hook, Class<?>... parameters) {
+            for (Class<?> c = pluginClass; c != null && c != PlayPlugin.class; c = c.getSuperclass()) {
+                try {
+                    c.getDeclaredMethod(hook, parameters);
+                    return true;
+                } catch (NoSuchMethodException ignored) {
+                    // not on this class: look further up
+                }
+            }
+            return false;
+        }
+    }
+
+    private volatile Hooks hooks;
+
+    Hooks hooks() {
+        List<PlayPlugin> enabled = getEnabledPlugins();
+        Hooks h = hooks;
+        if (h == null || h.source != enabled) {
+            h = new Hooks(enabled);
+            hooks = h;
+        }
+        return h;
+    }
+
+    /**
      * Broadcasts an action to all enabled plugins in order.
      *
      * @param action
@@ -528,19 +593,27 @@ public class PluginCollection {
     }
 
     public void invocationFinally() {
-        broadcast(PlayPlugin::invocationFinally);
+        for (PlayPlugin plugin : hooks().invocationFinally) {
+            plugin.invocationFinally();
+        }
     }
 
     public void beforeInvocation() {
-        broadcast(PlayPlugin::beforeInvocation);
+        for (PlayPlugin plugin : hooks().beforeInvocation) {
+            plugin.beforeInvocation();
+        }
     }
 
     public void afterInvocation() {
-        broadcast(PlayPlugin::afterInvocation);
+        for (PlayPlugin plugin : hooks().afterInvocation) {
+            plugin.afterInvocation();
+        }
     }
 
     public void onInvocationSuccess() {
-        broadcast(PlayPlugin::onInvocationSuccess);
+        for (PlayPlugin plugin : hooks().onInvocationSuccess) {
+            plugin.onInvocationSuccess();
+        }
     }
 
     public void onInvocationException(Throwable e) {
@@ -686,27 +759,39 @@ public class PluginCollection {
     }
 
     public void beforeActionInvocation(Method actionMethod) {
-        broadcast(plugin -> plugin.beforeActionInvocation(actionMethod));
+        for (PlayPlugin plugin : hooks().beforeActionInvocation) {
+            plugin.beforeActionInvocation(actionMethod);
+        }
     }
 
     public void onActionInvocationResult(Result result) {
-        broadcast(plugin -> plugin.onActionInvocationResult(result));
+        for (PlayPlugin plugin : hooks().onActionInvocationResult) {
+            plugin.onActionInvocationResult(result);
+        }
     }
 
     public void afterActionInvocation() {
-        broadcast(PlayPlugin::afterActionInvocation);
+        for (PlayPlugin plugin : hooks().afterActionInvocation) {
+            plugin.afterActionInvocation();
+        }
     }
 
     public void onActionInvocationFinally() {
-        broadcast(PlayPlugin::onActionInvocationFinally);
+        for (PlayPlugin plugin : hooks().onActionInvocationFinally) {
+            plugin.onActionInvocationFinally();
+        }
     }
 
     public void routeRequest(Http.Request request) {
-        broadcast(plugin -> plugin.routeRequest(request));
+        for (PlayPlugin plugin : hooks().routeRequest) {
+            plugin.routeRequest(request);
+        }
     }
 
     public void onRequestRouting(Router.Route route) {
-        broadcast(plugin -> plugin.onRequestRouting(route));
+        for (PlayPlugin plugin : hooks().onRequestRouting) {
+            plugin.onRequestRouting(route);
+        }
     }
 
     public void onRoutesLoaded() {
@@ -714,7 +799,7 @@ public class PluginCollection {
     }
 
     public boolean rawInvocation(Http.Request request, Http.Response response) throws Exception {
-        for (PlayPlugin plugin : getEnabledPlugins()) {
+        for (PlayPlugin plugin : hooks().rawInvocation) {
             if (plugin.rawInvocation(request, response)) {
                 return true;
             }
