@@ -324,8 +324,7 @@ public class PlayHandler extends ChannelInboundHandlerAdapter {
         @Override
         public InvocationContext getInvocationContext() {
             ActionInvoker.resolve(request);
-            return new InvocationContext(Http.invocationType, request.invokedMethod.getAnnotations(),
-                    request.invokedMethod.getDeclaringClass().getAnnotations());
+            return new InvocationContext(Http.invocationType, ActionInvoker.actionAnnotations(request.invokedMethod));
         }
 
         @Override

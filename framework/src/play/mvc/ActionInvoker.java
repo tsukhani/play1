@@ -36,12 +36,15 @@ import play.utils.Utils;
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.InputStream;
+import java.lang.annotation.Annotation;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -677,6 +680,41 @@ public class ActionInvoker {
         if (primitive == byte.class) return Byte.class;
         if (primitive == char.class) return Character.class;
         return Void.class;
+    }
+
+    /**
+     * PF-255: an action's annotations followed by its controller class's, which a request's
+     * {@link play.Invoker.InvocationContext} lists. {@code Method.getAnnotations()} and
+     * {@code Class.getAnnotations()} each copy their array, and the context copied both again into
+     * a list: 8% of a plain-text request's CPU on its virtual thread with the routing it includes.
+     * In PROD, where no class changes once the application has started, the list is kept per action,
+     * unmodifiable, in a {@link ClassValue} of the controller class, so it goes with the class. DEV
+     * builds it every time: a class redefined in place there may change its annotations.
+     */
+    public static List<Annotation> actionAnnotations(Method action) {
+        if (Play.mode != Play.Mode.PROD) {
+            return combinedAnnotations(action);
+        }
+        Map<Method, List<Annotation>> byAction = ACTION_ANNOTATIONS.get(action.getDeclaringClass());
+        List<Annotation> annotations = byAction.get(action);
+        if (annotations == null) {
+            annotations = combinedAnnotations(action);
+            byAction.put(action, annotations);
+        }
+        return annotations;
+    }
+
+    private static final ClassValue<Map<Method, List<Annotation>>> ACTION_ANNOTATIONS = new ClassValue<>() {
+        @Override
+        protected Map<Method, List<Annotation>> computeValue(Class<?> controller) {
+            return new java.util.concurrent.ConcurrentHashMap<>();
+        }
+    };
+
+    private static List<Annotation> combinedAnnotations(Method action) {
+        List<Annotation> all = new ArrayList<>(Arrays.asList(action.getAnnotations()));
+        all.addAll(Arrays.asList(action.getDeclaringClass().getAnnotations()));
+        return Play.mode == Play.Mode.PROD ? List.copyOf(all) : all;
     }
 
     /** An action that {@link #getActionMethod(String)} found, and the class loader it found it in. */
