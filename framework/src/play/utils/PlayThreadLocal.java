@@ -19,7 +19,8 @@ import java.util.function.Supplier;
 public class PlayThreadLocal<T> extends ThreadLocal<T> {
 
     private static final AtomicInteger SLOTS = new AtomicInteger();
-    private static final ThreadLocal<Object[]> HOLDER = new ThreadLocal<>();
+    /** Made on a thread's first use, so no operation takes the path of a thread without one. */
+    private static final ThreadLocal<Object[]> HOLDER = ThreadLocal.withInitial(() -> new Object[SLOTS.get()]);
     /** A slot set to {@code null}, as {@link ThreadLocal} tells that from an unset one. */
     private static final Object NULL = new Object();
 
@@ -39,7 +40,7 @@ public class PlayThreadLocal<T> extends ThreadLocal<T> {
     @SuppressWarnings("unchecked")
     public T get() {
         Object[] holder = HOLDER.get();
-        Object value = holder != null && slot < holder.length ? holder[slot] : null;
+        Object value = slot < holder.length ? holder[slot] : null;
         if (value == null) {
             T initial = initialValue();
             // ThreadLocal keeps the initial value, null too, so initialValue() runs once; for the
@@ -55,11 +56,9 @@ public class PlayThreadLocal<T> extends ThreadLocal<T> {
     @Override
     public void set(T value) {
         Object[] holder = HOLDER.get();
-        if (holder == null || slot >= holder.length) {
+        if (slot >= holder.length) {
             Object[] grown = new Object[Math.max(SLOTS.get(), slot + 1)];
-            if (holder != null) {
-                System.arraycopy(holder, 0, grown, 0, holder.length);
-            }
+            System.arraycopy(holder, 0, grown, 0, holder.length);
             holder = grown;
             HOLDER.set(holder);
         }
@@ -69,7 +68,7 @@ public class PlayThreadLocal<T> extends ThreadLocal<T> {
     @Override
     public void remove() {
         Object[] holder = HOLDER.get();
-        if (holder != null && slot < holder.length) {
+        if (slot < holder.length) {
             holder[slot] = null;
         }
     }
