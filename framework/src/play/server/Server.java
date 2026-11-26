@@ -367,8 +367,9 @@ public class Server {
      * 16 streams in flight per connection with that action, a p99 of 246 ms against 30: loops and busy
      * carriers time-sliced on the CPUs, every stream of a waiting loop stalled. So HTTPS, which serves
      * HTTP/2, keeps half the cores ({@link #defaultWorkerThreads}). With both listeners under heavy
-     * load at once a server runs more loops than it has cores. {@code -Dio.netty.eventLoopThreads}
-     * still wins when it is given.
+     * load at once a server runs more loops than it has cores. The larger count costs a connection that
+     * carries one request, as from a proxy without upstream keep-alive: 82 to 83 µs of CPU per request
+     * with 8 loops against 73.6 with 6. {@code -Dio.netty.eventLoopThreads} still wins when it is given.
      */
     static int defaultHttpWorkerThreads(int cores) {
         if (System.getProperty("io.netty.eventLoopThreads") != null) return 0;

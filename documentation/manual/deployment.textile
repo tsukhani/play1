@@ -365,11 +365,15 @@ bc. http.path=/myapp
 
 The framework prefixes all generated URLs with this value but does **not** strip it from incoming requests — the proxy is responsible for forwarding the full path.
 
-h3. nginx example
+h3. <a name="nginx">nginx example</a>
 
 A minimal nginx upstream config terminating TLS at the edge and proxying plain HTTP to Play on @127.0.0.1:9000@:
 
-bc. server {
+bc. upstream play {
+    server    127.0.0.1:9000;
+    keepalive 32;
+}
+server {
     listen 443 ssl http2;
     server_name example.com;
 
@@ -377,8 +381,9 @@ bc. server {
     ssl_certificate_key /etc/letsencrypt/live/example.com/privkey.pem;
 
     location / {
-        proxy_pass         http://127.0.0.1:9000;
+        proxy_pass         http://play;
         proxy_http_version 1.1;
+        proxy_set_header   Connection        "";
         proxy_set_header   Host              $host;
         proxy_set_header   X-Real-IP         $remote_addr;
         proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
@@ -386,6 +391,8 @@ bc. server {
         proxy_read_timeout 600s;
     }
 }
+
+The @upstream@ block's @keepalive@, @proxy_http_version 1.1@ and the empty @Connection@ header together make nginx reuse its connections to Play; @keepalive@ is the number of idle connections each nginx worker keeps. Without all three nginx sends @Connection: close@ and opens a new connection for every request, which costs Play about three times the CPU of a request on a kept-alive connection: about 83 µs against 28 on 12 CPUs (PF-255). Give the other locations below that proxy to Play the same @proxy_pass@ and @Connection@ header, except the WebSocket one, which sets its own.
 
 Add @application.conf@:
 
