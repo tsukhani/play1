@@ -30,8 +30,7 @@ import jakarta.ws.rs.sse.SseEventSink;
  * Head-to-head benchmark resources, the same endpoints as the fork's: /plaintext, /json, /db (JDBC, one random row
  * of 10,000 in in-memory H2 through Agroal), /jpa (the same row as an entity, in a transaction) and /sse (200 named
  * events of a small JSON object, then the end). Every method has a blocking signature, so Quarkus REST runs it on
- * its worker pool, or on a virtual thread when the build sets
- * quarkus.rest.blocking.signatures.execution.mode=virtual-thread, which is @RunOnVirtualThread on every endpoint.
+ * its worker pool, or on a virtual thread in the build that compiles src/virtual/java (BenchApplication).
  */
 @Path("/")
 public class BenchResource {

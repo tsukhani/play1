@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The fork against Helidon 4.5.7 SE and MP and Quarkus 4.0.1, one application at a time, on one JDK and one machine
+"""The fork against Helidon 4.5.7 SE and MP and Quarkus 3.40.1, one application at a time, on one JDK and one machine
 (PF-235, PF-236, PF-252).
 
     python3 run.py --framework <a built checkout of this repository> [--out <dir>] [--steps ...] [--apps ...] [--quick]
@@ -56,7 +56,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HELIDON = "4.5.7"
-QUARKUS = "4.0.1"
+QUARKUS = "3.40.1"
 APPS = ("fork", "se", "mp", "quarkus")
 ENDPOINTS = {
     "fork": ["plaintext", "json", "db", "jpa", "sse"],
@@ -66,10 +66,11 @@ ENDPOINTS = {
 }
 ALL_ENDPOINTS = ("plaintext", "json", "db", "jpa", "sse")
 LABELS = {"fork": "Fork", "se": "Helidon SE", "mp": "Helidon MP", "quarkus": "Quarkus"}
-# Quarkus REST's execution model for blocking endpoints, a build-time property: its worker pool by default, or a
-# virtual thread per request, which is @RunOnVirtualThread on every endpoint
+# Quarkus REST's execution model for blocking endpoints, fixed at build time: its worker pool by default, or a virtual
+# thread per request, which the build with quarkus/src/virtual/java gives: a JAX-RS Application annotated
+# @RunOnVirtualThread, so @RunOnVirtualThread on every endpoint
 QUARKUS_THREADS = {"worker": "worker pool", "virtual": "virtual threads"}
-QUARKUS_VIRTUAL = "-Dquarkus.rest.blocking.signatures.execution.mode=virtual-thread"
+QUARKUS_VIRTUAL = "-PbenchThreads=virtual"
 # Quarkus's TLS engine, a runtime property: BoringSSL through the fork's netty-tcnative-boringssl-static, as the fork
 # runs, or the JDK's SSLEngine, Quarkus's default
 QUARKUS_TLS = {"boringssl": ("openssl", "BoringSSL (netty-tcnative-boringssl-static)"),
@@ -421,7 +422,7 @@ class Harness:
                 self.quarkus_copy("quarkus-" + threads)
 
     def quarkus_flags(self, threads=None):
-        """The build-time properties of a Quarkus build for the worker pool or for virtual threads."""
+        """The Gradle arguments of a Quarkus build for the worker pool or for virtual threads."""
         return [QUARKUS_VIRTUAL] if (threads or self.quarkus_threads) == "virtual" else []
 
     def quarkus_copy(self, name):
@@ -782,8 +783,9 @@ class Harness:
     def quarkus_aot(self):
         """Quarkus's aot-jar packaging, which hands all class loading to the JDK's loaders as the AOT cache needs, and
         a training run as the fork's aot-gen makes one: start, the first answer on /plaintext, SIGTERM. Quarkus's
-        quarkus.package.jar.aot.enabled trains during the Gradle build instead, but on 4.0.1 it trains against the H2
-        jar its build has filtered and ships the unfiltered one, so the JVM refuses that cache ("size has changed")."""
+        quarkus.package.jar.aot.enabled trains during the Gradle build instead, but on 3.40.1, as on 4.0.1, it trains
+        against the H2 jar its build has filtered and ships the unfiltered one, so the JVM refuses that cache ("size
+        has changed")."""
         self.gradle(os.path.join(self.out, "quarkus"), "quarkusBuild", "-Dquarkus.package.jar.type=aot-jar",
                     *self.quarkus_flags())
         cwd = self.quarkus_copy("quarkus-aot-" + self.quarkus_threads)
@@ -972,7 +974,8 @@ def describe(results):
         if e.get("quarkus") else ""
     return "%s; %s %s, %s cores, %s GB; %s; %s; framework %s; Helidon %s%s%s%s; run %s%s" % (
         e["java"], e["os"], e["arch"], e["cores"], e["memory_gb"], e["oha"], e.get("h2load"), e["framework"],
-        e["helidon"], writes, quarkus, pinned, results["started"], " (quick: not for the record)" if results["quick"] else "")
+        e["helidon"], writes, quarkus, pinned, results["started"],
+        " (quick: not for the record)" if results["quick"] else "")
 
 
 def load_row(results, app, protocol, in_flight, ep):
@@ -1065,9 +1068,9 @@ def main():
                              "smart:N (and smart-async-writes), +nodelay for TCP_NODELAY (off by default), for se and "
                              "mp, or one of them with se= or mp=")
     parser.add_argument("--quarkus-threads", choices=list(QUARKUS_THREADS), default="worker",
-                        help="where Quarkus REST runs the blocking endpoints: worker, its worker pool (its default), or "
-                             "virtual, a virtual thread per request (@RunOnVirtualThread on every endpoint); the build "
-                             "step builds both")
+                        help="where Quarkus REST runs the blocking endpoints: worker, its worker pool (its "
+                             "default), or virtual, a virtual thread per request (@RunOnVirtualThread on every "
+                             "endpoint); the build step builds both")
     parser.add_argument("--quarkus-tls", choices=list(QUARKUS_TLS), default="boringssl",
                         help="Quarkus's TLS engine: boringssl, the fork's BoringSSL through netty-tcnative "
                              "(quarkus.tls.ssl-engine=openssl), or jdk, the JDK's SSLEngine, Quarkus's default")

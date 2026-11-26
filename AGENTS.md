@@ -115,7 +115,7 @@ Its own tests are gated by `ant test` via the `gradle-plugin-test` target (PF-17
 
 ### Benchmarks against Helidon
 
-`benchmarks/helidon/` (PF-236) measures the fork against Helidon 4.5.7 SE and MP, and against Quarkus 4.0.1 (PF-252):
+`benchmarks/helidon/` (PF-236) measures the fork against Helidon 4.5.7 SE and MP, and against Quarkus 3.40.1 (PF-252):
 - **The applications:** four minimal applications with the same endpoints (plain text, JSON, JDBC, JPA and SSE), each
   built by Gradle with the checkout's own wrapper, Quarkus with its own Gradle plugin, in JVM mode. They send the same
   security headers, the fork's defaults, which the Helidon applications add in a filter (PF-249) and Quarkus in its
@@ -135,8 +135,9 @@ Its own tests are gated by `ant test` via the `gradle-plugin-test` target (PF-17
 - **Quarkus at its best:** `--quarkus-threads worker|virtual` picks Quarkus REST's worker pool or a virtual thread per
   request (both built by the build step), and `--quarkus-tls boringssl|jdk` its TLS engine: by default the fork's own
   BoringSSL (`netty-tcnative-boringssl-static`, `quarkus.tls.ssl-engine=openssl`), which the load step proves loaded.
-  Compare against the better setting per cell. Quarkus's own Gradle AOT build trains a cache the JVM refuses on 4.0.1,
-  so the harness trains its `aot-jar` build itself; the README says why.
+  Compare against the better setting per cell. Quarkus's own Gradle AOT build trains a cache the JVM refuses, on
+  3.40.1 and 4.0.1, so the harness trains its `aot-jar` build itself; the README says why. It is 3.40.1 because 4.0.1
+  deadlocks an event loop under HTTP/2 (quarkusio/quarkus#57911, fixed for 4.1): re-run on 4.1 once it is released.
 - **Linux:** it runs there too. `--server-cpus` and `--client-cpus` pin with taskset, and `--guard-cpus` measures what
   other users' programs used of the benchmark CPUs and measures again above half a core. The README says how to keep
   Gradle out of the home directory and which h2load prints p99.
@@ -144,7 +145,8 @@ Its own tests are gated by `ant test` via the `gradle-plugin-test` target (PF-17
 - **The target:** ADR 0003 keeps the fork on condition that it reaches Helidon MP's figures. PF-235's tasks are
   measured with this harness, before and after, in one session on one machine.
 - **Not part of the build:** it takes about 40 minutes per application (a third of that with `--protocols h1`) and its
-  figures depend on the machine, so `ant test` does not run it. It is excluded from the release zip (`benchmarks/**` in `build.xml`).
+  figures depend on the machine, so `ant test` does not run it. It is excluded from the release zip (`benchmarks/**`
+  in `build.xml`).
 - **Idle memory:** the fork's idle RSS stays about 10 MB above Helidon MP's with the JVM's default heap sizing on a 48 GB machine, and the cause is G1's sizing, not a retained object (PF-240). The fork's live heap after a full GC is within about 1 MB of MP's, and its RSS after one is below MP's. The heap is 8 MB regions there, G1 sizes it at the startup remarks from the survivor and old regions in use, and the fork's start holds four where MP's holds three, so G1 commits 112 MB of heap to MP's 80. Most of the difference in live heap at those remarks is the central directories of the larger classpath, which every jar keeps in the heap once a lookup has opened it, and a lookup that misses opens them all; dropping the 49 jars that supplied no class, 2.1 to 2.4 MB of live heap, still left 112 MB. So compare the live heap (`jcmd <pid> GC.run`, then `GC.heap_info`) as well as RSS before keeping a cut for its memory.
 - **Pitfalls it already handles:** its README lists them; MP's Hibernate logs two warnings per JPA request unless
   `SessionImpl` is silenced. Keep them handled when changing an application.

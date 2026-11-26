@@ -1,9 +1,10 @@
 # The fork against Helidon and Quarkus
 
-A head-to-head of this fork with Helidon 4.5.7 SE and MP (PF-236) and with Quarkus 4.0.1 (PF-252). It measures the
+A head-to-head of this fork with Helidon 4.5.7 SE and MP (PF-236) and with Quarkus 3.40.1 (PF-252). It measures the
 work of PF-235: each of the fork's metrics at or better than Helidon MP's. The reasons for that target are in
 [ADR 0003](../../docs/adr/0003-stay-on-the-fork-over-helidon.md). Quarkus is the full-stack Java framework most often
-reported fastest, so PF-252 measures the fork against it with PF-235's method and decision rule.
+reported fastest, so PF-252 measures the fork against it with PF-235's method and decision rule. It is 3.40.1 and not
+4.0.1, the latest, because 4.0.1 deadlocks under HTTP/2 (Pitfalls, below).
 
 The four applications have the same endpoints:
 
@@ -20,11 +21,11 @@ The four applications have the same endpoints:
 - `helidon-se/`: Helidon SE, its WebServer with routing set up by hand.
 - `helidon-mp/`: Helidon MP: CDI, JAX-RS on Jersey, JTA and Hibernate. It is what a port of an application with a JPA
   model would run on, so it is the comparison that counts.
-- `quarkus/`: Quarkus 4.0.1 in JVM mode, its own full stack, built with Quarkus's Gradle plugin:
+- `quarkus/`: Quarkus 3.40.1 in JVM mode, its own full stack, on Vert.x 4.5.34 and Netty 4.1.138, built with
+  Quarkus's Gradle plugin:
   - Quarkus REST with blocking endpoints, and Jackson for JSON;
   - Agroal for JDBC;
-  - Hibernate ORM through an injected `EntityManager` in a JTA transaction (Narayana). The Hibernate is 8.0.0.CR2,
-    what Quarkus 4.0.1 ships;
+  - Hibernate ORM 7.4.9.Final through an injected `EntityManager` in a JTA transaction (Narayana);
   - H2 2.5.252, the fork's version, in memory;
   - `/sse` through the same JAX-RS `SseEventSink` as MP's, its element type declared with Quarkus's
     `@RestStreamElementType`.
@@ -84,15 +85,18 @@ The checkout's own Gradle wrapper builds all three applications; nothing else is
   `server.connection-options.tcp-no-delay`. The run's JSON and summary record the setting.
 - `--quarkus-threads worker|virtual`: where Quarkus REST runs the blocking endpoints:
   - `worker`: its worker pool, Quarkus's default;
-  - `virtual`: a virtual thread per request, which is `@RunOnVirtualThread` on every endpoint. It is the build-time
-    property `quarkus.rest.blocking.signatures.execution.mode=virtual-thread`, so the build step builds Quarkus twice,
-    into `<out>/quarkus-worker` and `<out>/quarkus-virtual`, and the option needs no new build.
+  - `virtual`: a virtual thread per request, which is `@RunOnVirtualThread` on every endpoint: the build with
+    `-PbenchThreads=virtual` compiles `src/virtual/java`, a JAX-RS `Application` annotated `@RunOnVirtualThread`, which
+    Quarkus REST applies to every blocking endpoint. 3.40 has no build property for it; 4.0's
+    `quarkus.rest.blocking.signatures.execution.mode` does nothing on 3.40.1, whose "virtual" build then served on
+    `executor-thread-1`. The build step builds Quarkus twice, into `<out>/quarkus-worker` and `<out>/quarkus-virtual`,
+    so the option needs no new build.
 
   PF-252 judges Quarkus at the better of the two in each cell, as PF-235 judged Helidon at its better write setting.
 - `--quarkus-tls boringssl|jdk`: Quarkus's TLS engine, `quarkus.tls.ssl-engine`:
   - `boringssl`: the default, `openssl`, through the fork's own `netty-tcnative-boringssl-static` 2.0.86, which the
-    application carries. This is the TLS the fork runs. Quarkus's own netty-tcnative, which its TLS guide describes, is
-    for Linux only and links the system's OpenSSL through libapr;
+    application carries. This is the TLS the fork runs. The netty-tcnative that Quarkus's TLS guide describes is for
+    Linux only and links the system's OpenSSL through libapr;
   - `jdk`: `jdkssl`, the JDK's SSLEngine, Quarkus's own default.
 - `--h2load-in-flight 4 16`: the HTTP/2 depths that h2load measures again (below).
 - `--h2load-threads N`: h2load's threads; a quarter of the client's CPUs, at least 2, by default (below).
@@ -128,7 +132,7 @@ three depths) of five endpoints. `--protocols h1` takes about a third of that.
     needs, then the route its AOT guide gives for generating the file by hand: `java -XX:AOTCacheOutput=app.aot` until
     the first answer on `/plaintext`, then SIGTERM, as the fork's `aot-gen` does. The harness waits for the JVM to
     remove its `app.aot.config` recording, as `aot-gen` does. The guide's `quarkus.package.jar.aot.enabled` trains
-    during the Gradle build instead, but on 4.0.1 the JVM refuses that cache (Pitfalls, below).
+    during the Gradle build instead, but on 3.40.1, as on 4.0.1, the JVM refuses that cache (Pitfalls, below).
 - **dev:** from saving an edit to the first response that carries it, the median of 10 after 3 warm-ups, for:
   - a method-body edit;
   - a new method.
@@ -236,9 +240,9 @@ The rest still differs, and is what each ships: the fork sends `Server`, `Cache-
 `Content-Type` and, over TLS, `Alt-Svc`; Helidon sends `Connection: keep-alive`; Quarkus sends a charset in
 `Content-Type`, and no `Date`, `Server` or `Connection`. A plain-text response's header block is 353 bytes from the
 fork, 300 from either Helidon and 251 from Quarkus over HTTP/1.1, and 449, 364 and 315 over TLS; the first HTTP/2
-HEADERS frame on a connection is 339, 197 and 240 bytes, and each later one 13, 40 and 14. Before PF-249 the fork also sent a deletion
-of each of the three scope cookies, 294 bytes more, to a client that carried none, and the Helidon applications sent
-none of the security headers.
+HEADERS frame on a connection is 339, 197 and 240 bytes, and each later one 13, 40 and 14. Before PF-249 the fork
+also sent a deletion of each of the three scope cookies, 294 bytes more, to a client that carried none, and the Helidon
+applications sent none of the security headers.
 
 
 ## Results
@@ -296,15 +300,28 @@ from the same session, never with figures from elsewhere.
   default of a quarter of the client's CPUs for h2load, and the separate cores on Linux.
 - The fork binds HTTP/3 on the same port in UDP whenever it has an HTTPS port, and adds `Alt-Svc` to every TLS
   response. No client here uses it.
-- **Quarkus's Gradle AOT build trains a cache that the JVM refuses.** `quarkusBuild -Dquarkus.package.jar.aot.enabled=true`
-  writes `app.aot` in `build/quarkus-build/gen/quarkus-app`, whose H2 jar Quarkus has filtered (it drops
-  `META-INF/native-image/reflect-config.json`), but assembles `build/quarkus-app` from the unfiltered jar in
-  `build/quarkus-build/dep`. The JVM then refuses the cache: "This file is not the one used while building the AOT
-  cache: 'lib/main/com.h2database.h2-2.5.252.jar', size has changed", then "shared class paths mismatch". Hence the
-  training run the harness makes itself (above).
-- Quarkus's TLS registry offers TLS 1.3 alone by default, and oha on macOS, which links Security.framework, speaks
-  1.2 at most: every TLS request failed with "bad protocol version". The `tls` profile offers 1.3 and 1.2, as the fork
-  and Helidon do; a client that speaks 1.3 still gets it.
+- **Quarkus 4.0.1 deadlocks under HTTP/2.** When a client closes an HTTP/2 connection while a response is being
+  written, a Vert.x event loop can wait forever, and every connection it holds hangs. In the first check on the Linux
+  server, curl's request after an HTTP/2 cell at 16 in flight on `/json` waited six minutes for nothing, and two of the
+  event loops were blocked for 391 s. A thread dump showed the two orders:
+  - the event loop holds the HTTP/2 connection's monitor (`Http2ConnectionImpl.onConnectionError`) and waits for the
+    stream's `ReentrantLock` in `VertxOutputStream`'s end handler;
+  - the worker writing the response holds that lock (`VertxOutputStream.write`) and waits for the connection's monitor
+    in `response.closed()`.
+
+  Three oha runs of 3 s, each ending in a disconnect, reproduced it, on the worker pool and on virtual threads alike.
+  It is quarkusio/quarkus#57911, fixed on main for 4.1, without a backport. 3.40.1 locks on the connection itself and
+  ran 20 such runs on each thread model, at about 280k req/s, with no blocked thread. Re-run against 4.1 once it is
+  released.
+- **Quarkus's Gradle AOT build trains a cache that the JVM refuses**, on 3.40.1 and 4.0.1.
+  `quarkusBuild -Dquarkus.package.jar.aot.enabled=true` writes `app.aot` in `build/quarkus-build/gen/quarkus-app`,
+  whose H2 jar Quarkus has filtered (it drops `META-INF/native-image/reflect-config.json`), but assembles
+  `build/quarkus-app` from the unfiltered jar in `build/quarkus-build/dep`. The JVM then refuses the cache: "This file
+  is not the one used while building the AOT cache: 'lib/main/com.h2database.h2-2.5.252.jar', size has changed", then
+  "shared class paths mismatch". Hence the training run the harness makes itself (above).
+- Quarkus's TLS registry offers TLS 1.3 alone by default (3.40.1 and 4.0.1), and oha on macOS, which links
+  Security.framework, speaks 1.2 at most: every TLS request failed with "bad protocol version". The `tls` profile
+  offers 1.3 and 1.2, as the fork and Helidon do; a client that speaks 1.3 still gets it.
 - `quarkusDev` opens a debugger on port 5005 unless given `-Ddebug=false`, which the harness passes.
 - An SSE event built with `.mediaType(APPLICATION_JSON_TYPE)` carries a `content-type:application/json` line in each
   frame on Quarkus REST. Declaring the type once with `@RestStreamElementType` gives the same frames as the others'.

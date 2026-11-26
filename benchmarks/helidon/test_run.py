@@ -112,7 +112,8 @@ class QuarkusCommandTest(unittest.TestCase):
                     mock.patch.object(run, "tcnative_loaded", return_value=loaded):
                 with self.assertRaises(RuntimeError):
                     self.harness(tls=tls).tls_info("quarkus", 8443)
-        with mock.patch.object(run, "tls_probe", return_value=probe), mock.patch.object(run, "listener", return_value=1), \
+        with mock.patch.object(run, "tls_probe", return_value=probe), \
+                mock.patch.object(run, "listener", return_value=1), \
                 mock.patch.object(run, "tcnative_loaded", return_value=True):
             self.assertEqual(self.harness().tls_info("quarkus", 8443)["provider"], run.QUARKUS_TLS["boringssl"][1])
 
