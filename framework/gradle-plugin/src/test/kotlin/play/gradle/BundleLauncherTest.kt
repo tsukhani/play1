@@ -1903,6 +1903,23 @@ class BundleLauncherTest {
                     if (arg.startsWith("--http.port=")) port = Integer.parseInt(arg.substring("--http.port=".length()));
                 }
                 Runtime.getRuntime().addShutdownHook(new Thread(() -> System.out.println("SHUTDOWN HOOK")));
+                // PF-243: the stop file a stop on Windows writes, answered as play.server.StopFile
+                // answers it. The launcher names one under Git Bash only.
+                String stopFile = System.getProperty("play.stopFile");
+                if (stopFile != null) {
+                    java.nio.file.Path file = java.nio.file.Path.of(stopFile).toAbsolutePath();
+                    Thread watch = new Thread(() -> {
+                        try {
+                            while (!java.nio.file.Files.exists(file)) Thread.sleep(100);
+                            java.nio.file.Files.deleteIfExists(file);
+                        } catch (Exception e) {
+                            return;
+                        }
+                        System.exit(0);
+                    });
+                    watch.setDaemon(true);
+                    watch.start();
+                }
                 // PF-212: slow to listen on request, so a test can tell waiting for Play from
                 // racing it. Off unless set.
                 Thread.sleep(Long.getLong("pf212.listen.delay", 0));
