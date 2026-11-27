@@ -7,9 +7,9 @@
 //
 // Stopping: when the file PLAY1_STOP_FILE names appears, it is removed and the server's own
 // SIGTERM handler runs. Nitro then closes its listener, lets requests in flight finish and
-// exits. A file and not a signal, because on Windows no signal reaches node.exe from another
-// process, and one way to stop on every OS is one way to test. A SIGTERM from outside (systemd,
-// docker stop) still works where the OS delivers one.
+// exits. The launchers name a stop file on Windows only, where no signal reaches node.exe from
+// another process. Elsewhere they send the SIGTERM itself (PF-259), which only the server's own
+// user or root may send, as systemd and docker stop do.
 import { existsSync, readFileSync, rmSync } from 'node:fs'
 
 const here = new URL('.', import.meta.url)

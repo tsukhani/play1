@@ -184,6 +184,65 @@ class PlayStopFileTest {
         assertTrue(left.exists())
     }
 
+    // ---- PF-259: Nuxt's server, stopped through a file on Windows only -----------------
+    //
+    // The same stand-in takes node's place: it watches the stop file as play1-server.mjs does,
+    // and its shutdown hook shows a SIGTERM, which runs Nitro's handler.
+
+    @Test
+    fun `Nuxt's server is named a stop file only where a stop writes it`(@TempDir tmp: File) {
+        val frontendPid = File(tmp, "server.frontend.pid")
+        assertEquals(File(tmp, "server.frontend.pid.stop"), frontendStopFileFor(frontendPid, throughFile = true))
+        assertEquals(null, frontendStopFileFor(frontendPid, throughFile = false))
+
+        val windows = frontendLaunch(tmp, "prod", 9123, frontendStopFileFor(frontendPid, throughFile = true))
+        assertEquals(File(tmp, "server.frontend.pid.stop").absolutePath, windows.env["PLAY1_STOP_FILE"])
+        // Off Windows none: a stop file can be made by anyone who may create a file in the pid
+        // file's folder, a SIGTERM only by the server's own user or root.
+        val elsewhere = frontendLaunch(tmp, "prod", 9123, frontendStopFileFor(frontendPid, throughFile = false))
+        assertFalse("PLAY1_STOP_FILE" in elsewhere.env, "${elsewhere.env}")
+        assertEquals(windows.env - "PLAY1_STOP_FILE", elsewhere.env)
+    }
+
+    @Test
+    fun `a stop through Nuxt's stop file sends no signal before the wait`(@TempDir tmp: File) {
+        val stopFile = File(tmp, "server.frontend.pid.stop")
+        standIn(tmp, "exit", stopFile).use { node ->
+            assertTrue(stopFrontendProcess(node.process.toHandle(), stopFile, waitSeconds = 30))
+            assertTrue(node.hookRan, "its shutdown handler did not run")
+            assertFalse(stopFile.exists(), "the stop file outlived the stop")
+        }
+        // One that takes the file and keeps going is still running when the wait ends, so no
+        // signal came before it; destroy() ends it then.
+        File(tmp, "take").mkdirs()
+        standIn(File(tmp, "take"), "take", stopFile).use { node ->
+            val started = System.nanoTime()
+
+            assertTrue(stopFrontendProcess(node.process.toHandle(), stopFile, waitSeconds = 2))
+
+            val seconds = (System.nanoTime() - started) / 1e9
+            assertTrue(seconds >= 2.0, "it ended after $seconds s, before the wait was out")
+            assertFalse(stopFile.exists())
+        }
+        assertEquals("its stop file and a forced terminate", frontendStopsSent(stopFile))
+    }
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS, disabledReason = "asserts the SIGTERM a stop sends off Windows")
+    fun `off Windows Nuxt's server is stopped with a SIGTERM and no stop file`(@TempDir tmp: File) {
+        val stopFile = File(tmp, "server.frontend.pid.stop")
+        standIn(tmp, "ignore", stopFile).use { node ->
+            val started = System.nanoTime()
+
+            assertTrue(stopFrontendProcess(node.process.toHandle(), stopFile = null, waitSeconds = 30))
+
+            assertTrue((System.nanoTime() - started) / 1e9 < 10, "the SIGTERM was not sent at once")
+            assertTrue(node.hookRan, "a SIGTERM runs its shutdown handler")
+            assertFalse(stopFile.exists())
+        }
+        assertEquals("two SIGTERMs", frontendStopsSent(null))
+    }
+
     @Test
     @EnabledOnOs(OS.WINDOWS)
     fun `on Windows playStop stops the JVM through its stop file and its shutdown hook runs`(@TempDir tmp: File) {

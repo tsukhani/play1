@@ -227,11 +227,13 @@ STOP_JVM=()
 # run and start start Play, wait until it listens, then start Nuxt's server,
 # whose pages fetch from Play as they render; stop stops Nuxt's server first.
 # It runs as `node frontend/.output/play1-server.mjs`, which checks the Node it
-# runs on against what the build needs (play1.json) and stops gracefully when
-# its stop file appears: a file rather than a signal, because kill ends a
-# native node.exe at once under Git Bash, MSYS2 and Cygwin. Its pid file sits
-# beside Play's (server.pid -> server.frontend.pid), so --pid-file instances
-# keep theirs apart.
+# runs on against what the build needs (play1.json). Under Git Bash, MSYS2 and
+# Cygwin it is given a stop file and stops gracefully when that appears, because
+# kill ends a native node.exe at once there. Everywhere else it gets none and is
+# stopped with the SIGTERM Nitro handles, so that only its own user or root can
+# stop it (PF-259): a stop file can be made by anyone who may create a file in
+# the pid file's folder. Its pid file sits beside Play's (server.pid ->
+# server.frontend.pid), so --pid-file instances keep theirs apart.
 FRONTEND_OUT="frontend/.output"
 FRONTEND_START="$FRONTEND_OUT/play1-server.mjs"
 FRONTEND_PID_FILE="${PID_FILE%.pid}.frontend.pid"
@@ -285,8 +287,8 @@ frontend_env() {
         "NITRO_PORT=$port"
         "NITRO_HOST=$host"
         "NUXT_PLAY_BACKEND_URL=http://$PLAY_HOST:$PLAY_PORT"
-        "PLAY1_STOP_FILE=$FRONTEND_STOP_FILE"
     )
+    [ "$WINDOWS_JVM" != 1 ] || FRONTEND_ENV+=("PLAY1_STOP_FILE=$FRONTEND_STOP_FILE")
 }
 
 # Wait until Play ($1 is its pid) listens: the first page Nuxt's server renders
@@ -330,12 +332,18 @@ stop_wait_seconds() {
     if [ "$seconds" -gt 0 ]; then echo "$seconds"; else echo 35; fi
 }
 
-# Stop Nuxt's server (pid $1) through its stop file and wait for it, as stop
-# waits for Play. After stop_wait_seconds it gets kill: off Windows the SIGTERM
-# Nitro also handles. Returns 1 when it is still running after that.
+# Stop Nuxt's server (pid $1) and wait for it, as stop waits for Play: under
+# Git Bash, MSYS2 and Cygwin through its stop file, elsewhere with a SIGTERM,
+# unless $2 is "signalled", when run's trap has sent it already. After
+# stop_wait_seconds it gets kill: a terminate under Git Bash, a second SIGTERM
+# elsewhere. Returns 1 when it is still running after that.
 stop_frontend_pid() {
     local deadline
-    : > "$FRONTEND_STOP_FILE"
+    if [ "$WINDOWS_JVM" = 1 ]; then
+        : > "$FRONTEND_STOP_FILE"
+    elif [ "$2" != signalled ]; then
+        kill "$1" 2>/dev/null || :
+    fi
     deadline=$((SECONDS + $(stop_wait_seconds)))
     while kill -0 "$1" 2>/dev/null && [ "$SECONDS" -le "$deadline" ]; do
         sleep 0.02
@@ -406,23 +414,40 @@ stop_frontend() {
     elif stop_frontend_pid "$pid"; then
         rm -f "$FRONTEND_PID_FILE"
         echo "~ OK, Nuxt's server is stopped"
+    elif [ "$WINDOWS_JVM" = 1 ]; then
+        echo "~ Nuxt's server (pid $pid) is still running after its stop file and a forced terminate; leaving its pid file"
     else
-        echo "~ Nuxt's server (pid $pid) is still running after its stop file and a kill; leaving its pid file"
+        echo "~ Nuxt's server (pid $pid) is still running after two SIGTERMs; leaving its pid file"
+    fi
+}
+
+# run's trap: Ctrl-C, or a SIGTERM or SIGHUP for the launcher. Play gets a
+# SIGTERM, and Nuxt's server is told to stop at the same time, as
+# stop_frontend_pid tells it: under Git Bash its stop file, elsewhere a SIGTERM,
+# once it has started, which "signalled" then records so that it is sent only
+# once. Reads and sets run_with_frontend's locals.
+run_interrupted() {
+    kill -TERM "$jvm" 2>/dev/null
+    if [ "$WINDOWS_JVM" = 1 ]; then
+        : > "$FRONTEND_STOP_FILE"
+    elif [ -n "$frontend" ]; then
+        kill "$frontend" 2>/dev/null
+        signalled=signalled
     fi
 }
 
 # run, for a bundle with Nuxt's server: the launcher stays in the foreground
 # and supervises both. Ctrl-C and a SIGTERM or SIGHUP for the launcher stop
-# both -- Play with SIGTERM, Nuxt's server through its stop file -- because the
-# two run in the background of a script, which leaves them ignoring SIGINT.
-# The launcher exits with Play's status once both are down.
+# both (run_interrupted), because the two run in the background of a script,
+# which leaves them ignoring SIGINT. The launcher exits with Play's status once
+# both are down.
 run_with_frontend() {
-    local jvm frontend status
+    local jvm frontend status signalled=""
     frontend_preflight
     frontend_env
     ( launch "${JVM_ENV[@]}" -- "${JAVA_CMD[@]}" ) &
     jvm=$!
-    trap 'kill -TERM "$jvm" 2>/dev/null; : > "$FRONTEND_STOP_FILE"' INT TERM HUP
+    trap run_interrupted INT TERM HUP
     echo "~ Waiting for Play on $PLAY_HOST:$PLAY_PORT before starting Nuxt's server"
     if wait_for_play "$jvm"; then
         ( launch "${JVM_ENV[@]}" "${FRONTEND_ENV[@]}" -- "$NODE_CMD" "$FRONTEND_START" ) &
@@ -433,7 +458,7 @@ run_with_frontend() {
         wait "$jvm" && status=0 || status=$?
         kill -0 "$jvm" 2>/dev/null || break
     done
-    [ -z "$frontend" ] || stop_frontend_pid "$frontend" || :
+    [ -z "$frontend" ] || stop_frontend_pid "$frontend" "$signalled" || :
     exit "$status"
 }
 

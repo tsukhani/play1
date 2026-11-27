@@ -946,7 +946,7 @@ class Play1Plugin : Plugin<Project> {
                 doFirst {
                     if (runsFrontendServer(appDir, runPlayId)) {
                         frontendPreflight(appDir, runNode.get())
-                        val launch = frontendLaunch(appDir, runPlayId, runHttpPort, frontendStopFile(frontendPidFile(File(appDir, "server.pid"))))
+                        val launch = frontendLaunch(appDir, runPlayId, runHttpPort, frontendStopFileFor(frontendPidFile(File(appDir, "server.pid"))))
                         logger.lifecycle("~ Nuxt's server starts once Play listens on ${launch.playHost}:${launch.playPort}")
                         nuxtServer.get().startAfterPlay(appDir, runNode.get(), launch, frontendWaitSeconds(runWait.get()), logger)
                     } else if (frontendServerEntry(appDir).isFile) {
@@ -2329,6 +2329,16 @@ internal fun frontendPidFile(pidFile: File): File = File(pidFile.parentFile, pid
 
 internal fun frontendStopFile(frontendPid: File): File = File(frontendPid.parentFile, frontendPid.name + ".stop")
 
+/**
+ * PF-259: the stop file Nuxt's server is started with and stopped through: [frontendPid]'s, where
+ * a stop goes through it ([throughFile], on Windows, where no signal reaches node.exe). Elsewhere
+ * none, and it is stopped with the SIGTERM Nitro handles, so that only its own user or root can
+ * stop it: a stop file can be made by anyone who may create a file in the pid file's folder.
+ * bundle-play.sh decides alike (WINDOWS_JVM).
+ */
+internal fun frontendStopFileFor(frontendPid: File, throughFile: Boolean = stopsThroughFile()): File? =
+    if (throughFile) frontendStopFile(frontendPid) else null
+
 /** Whether a start runs Nuxt's server: the application holds one (an SSR build) and the start is in PROD mode. */
 internal fun runsFrontendServer(appDir: File, playId: String): Boolean {
     if (!frontendServerEntry(appDir).isFile) return false
@@ -2342,7 +2352,7 @@ internal const val FRONTEND_DEV_NOTE =
 /** Where Play listens and where Nuxt's server is to, and the environment it gets on top of certs/.env. */
 internal data class FrontendLaunch(val playHost: String, val playPort: Int, val address: String, val env: Map<String, String>)
 
-internal fun frontendLaunch(appDir: File, playId: String, httpPort: Int?, stopFile: File): FrontendLaunch {
+internal fun frontendLaunch(appDir: File, playId: String, httpPort: Int?, stopFile: File?): FrontendLaunch {
     val config = File(appDir, "conf/application.conf").takeIf { it.isFile }?.readText() ?: ""
     fun conf(key: String) = confValue(config, key, playId)?.trim()?.takeIf { it.isNotEmpty() }
     val playPort = httpPort ?: conf("http.port")?.toIntOrNull() ?: 9000
@@ -2351,12 +2361,13 @@ internal fun frontendLaunch(appDir: File, playId: String, httpPort: Int?, stopFi
     val host = conf("frontend.host") ?: "127.0.0.1"
     return FrontendLaunch(
         playHost, playPort, "$host:$port",
-        mapOf(
-            "NITRO_PORT" to port,
-            "NITRO_HOST" to host,
-            "NUXT_PLAY_BACKEND_URL" to "http://$playHost:$playPort",
-            "PLAY1_STOP_FILE" to stopFile.absolutePath,
-        ),
+        buildMap {
+            put("NITRO_PORT", port)
+            put("NITRO_HOST", host)
+            put("NUXT_PLAY_BACKEND_URL", "http://$playHost:$playPort")
+            // PF-259: on Windows only (frontendStopFileFor)
+            stopFile?.let { put("PLAY1_STOP_FILE", it.absolutePath) }
+        },
     )
 }
 
@@ -2418,7 +2429,7 @@ internal fun spawnFrontend(appDir: File, node: String, launch: FrontendLaunch): 
  * server, recording its pid in [frontendPid].
  */
 internal fun startFrontend(appDir: File, node: String, playId: String, httpPort: Int?, frontendPid: File, play: ProcessHandle, waitSeconds: Long, logger: Logger) {
-    val launch = frontendLaunch(appDir, playId, httpPort, frontendStopFile(frontendPid))
+    val launch = frontendLaunch(appDir, playId, httpPort, frontendStopFileFor(frontendPid))
     logger.lifecycle("~ Waiting for Play on ${launch.playHost}:${launch.playPort} before starting Nuxt's server")
     if (!waitForPlay({ play.isAlive }, launch.playHost, launch.playPort, waitSeconds, logger)) {
         throw GradleException("Play stopped before it was listening on ${launch.playHost}:${launch.playPort}, so Nuxt's server was not started. See logs/system.out")
@@ -2430,20 +2441,25 @@ internal fun startFrontend(appDir: File, node: String, playId: String, httpPort:
 }
 
 /**
- * Stop Nuxt's server through its stop file and wait for it, as playStop waits for Play. After
- * [stopWaitSeconds] it gets destroy(): the SIGTERM Nitro also handles, off Windows. False when
- * it is still running after that.
+ * Stop Nuxt's server and wait for it, as playStop waits for Play: through [stopFile] when it was
+ * started with one ([frontendStopFileFor], on Windows), otherwise with destroy(), the SIGTERM
+ * Nitro handles. After [waitSeconds] it gets destroy(): a terminate on Windows, a second SIGTERM
+ * elsewhere. False when it is still running after that.
  */
-internal fun stopFrontendProcess(handle: ProcessHandle, stopFile: File): Boolean {
-    stopFile.writeText("")
-    var gone = awaitExit(handle, TimeUnit.SECONDS.toMillis(stopWaitSeconds()))
+internal fun stopFrontendProcess(handle: ProcessHandle, stopFile: File?, waitSeconds: Long = stopWaitSeconds()): Boolean {
+    if (stopFile != null) stopFile.writeText("") else handle.destroy()
+    var gone = awaitExit(handle, TimeUnit.SECONDS.toMillis(waitSeconds))
     if (!gone) {
         handle.destroy()
         gone = awaitExit(handle, 5_000)
     }
-    stopFile.delete()
+    stopFile?.delete()
     return gone
 }
+
+/** What [stopFrontendProcess] sent a Nuxt's server that is still running after it. */
+internal fun frontendStopsSent(stopFile: File?): String =
+    if (stopFile != null) "its stop file and a forced terminate" else "two SIGTERMs"
 
 /** The first half of a stop: Nuxt's server, when its pid file says it was started. */
 internal fun stopFrontend(frontendPid: File, logger: Logger) {
@@ -2456,11 +2472,11 @@ internal fun stopFrontend(frontendPid: File, logger: Logger) {
             frontendPid.delete()
             frontendStopFile(frontendPid).delete()
         }
-        stopFrontendProcess(handle, frontendStopFile(frontendPid)) -> {
+        stopFrontendProcess(handle, frontendStopFileFor(frontendPid)) -> {
             frontendPid.delete()
             logger.lifecycle("~ OK, Nuxt's server is stopped")
         }
-        else -> logger.lifecycle("~ Nuxt's server (pid $pid) is still running after its stop file and a SIGTERM; leaving its pid file")
+        else -> logger.lifecycle("~ Nuxt's server (pid $pid) is still running after ${frontendStopsSent(frontendStopFileFor(frontendPid))}; leaving its pid file")
     }
 }
 
@@ -2480,7 +2496,7 @@ abstract class NuxtServerService : BuildService<BuildServiceParameters.None>, Au
     @Volatile private var watcher: Thread? = null
 
     internal fun startAfterPlay(appDir: File, node: String, launch: FrontendLaunch, waitSeconds: Long, logger: Logger) {
-        stopFile = File(launch.env.getValue("PLAY1_STOP_FILE"))
+        stopFile = launch.env["PLAY1_STOP_FILE"]?.let(::File)
         watcher = Thread.ofPlatform().daemon().name("play1-nuxt-server").start {
             try {
                 if (!waitForPlay({ true }, launch.playHost, launch.playPort, waitSeconds, logger)) return@start
@@ -2498,13 +2514,13 @@ abstract class NuxtServerService : BuildService<BuildServiceParameters.None>, Au
         watcher = null
         val running = process ?: return
         process = null
-        if (stopFrontendProcess(running.toHandle(), stopFile!!)) logger.lifecycle("~ OK, Nuxt's server is stopped")
-        else logger.lifecycle("~ Nuxt's server (pid ${running.pid()}) is still running after its stop file and a SIGTERM")
+        if (stopFrontendProcess(running.toHandle(), stopFile)) logger.lifecycle("~ OK, Nuxt's server is stopped")
+        else logger.lifecycle("~ Nuxt's server (pid ${running.pid()}) is still running after ${frontendStopsSent(stopFile)}")
     }
 
     override fun close() {
         watcher?.interrupt()
-        process?.let { stopFrontendProcess(it.toHandle(), stopFile!!) }
+        process?.let { stopFrontendProcess(it.toHandle(), stopFile) }
         process = null
     }
 }

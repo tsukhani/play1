@@ -1694,8 +1694,12 @@ class BundleLauncherTest {
     // and the launcher runs `node frontend/.output/play1-server.mjs` beside Play. Play is
     // the listening framework jar on the JVM the tests run on; node is a stub that logs
     // to node-stub.log (relative, so Git Bash needs no path translation) what it got,
-    // whether Play was listening when it started and when it was stopped, and exits only
-    // when its stop file appears: the one way the launcher stops it on every OS.
+    // whether Play was listening when it started and when it was stopped, and exits once
+    // its stop file appears or a SIGTERM comes, and which (stopped-by-file or
+    // stopped-by-signal) and how many SIGTERMs it had (terms=N). Under Git Bash the
+    // launcher names it a stop file and stops it through that; elsewhere it names none and
+    // sends a SIGTERM (PF-259). With STUB_NODE_LINGER set it stays up a second after it
+    // is told, as Nitro does while requests finish, so that a second SIGTERM would show.
 
     private val nodeRange = "^20.19.0 || >=22.12.0"
 
@@ -1711,15 +1715,20 @@ class BundleLauncherTest {
                     "    [ -z \"\$STUB_NODE_TOO_OLD\" ] || { echo \"play: Nuxt's server needs Node ^99.0.0; this is Node 1.0.0\" >&2; exit 1; }\n" +
                     "    exit 0\n" +
                     "fi\n" +
+                    "terms=0; stopped=\n" +
+                    "trap 'terms=\$((terms+1)); stopped=signal' TERM\n" +
                     "play=\"\${NUXT_PLAY_BACKEND_URL#http://}\"\n" +
                     "listening() { (exec 3<>\"/dev/tcp/\${play%:*}/\${play##*:}\") 2>/dev/null; }\n" +
                     "if listening; then echo play-listening-at-start >> \$log; else echo play-not-listening-at-start >> \$log; fi\n" +
                     "for v in NITRO_PORT NITRO_HOST NUXT_PLAY_BACKEND_URL PLAY1_STOP_FILE PF212_FROM_DOTENV; do echo \"ENV:\$v=\${!v}\" >> \$log; done\n" +
                     "echo \"started \$1\" >> \$log\n" +
-                    "while [ ! -e \"\$PLAY1_STOP_FILE\" ]; do sleep 0.05; done\n" +
+                    "while [ -z \"\$stopped\" ]; do\n" +
+                    "    if [ -n \"\$PLAY1_STOP_FILE\" ] && [ -e \"\$PLAY1_STOP_FILE\" ]; then rm -f \"\$PLAY1_STOP_FILE\"; stopped=file; else sleep 0.05; fi\n" +
+                    "done\n" +
                     "if listening; then echo play-listening-at-stop >> \$log; fi\n" +
-                    "rm -f \"\$PLAY1_STOP_FILE\"\n" +
-                    "echo stopped-by-file >> \$log\n"
+                    "[ -z \"\$STUB_NODE_LINGER\" ] || sleep 1\n" +
+                    "echo stopped-by-\$stopped >> \$log\n" +
+                    "echo terms=\$terms >> \$log\n"
             )
             setExecutable(true)
         }
@@ -1775,9 +1784,11 @@ class BundleLauncherTest {
             val log = nodeLog(bundle)
             assertEquals("check frontend/.output/play1-server.mjs", log.first(), "the Node check comes before anything starts: $log")
             assertTrue("play-listening-at-start" in log, "Nuxt's server started before Play listened: $log")
+            // PF-259: a stop file under Git Bash only
+            val stopFile = if (onWindows) "server.frontend.pid.stop" else ""
             for (env in listOf(
                 "NITRO_PORT=3456", "NITRO_HOST=127.0.0.1", "NUXT_PLAY_BACKEND_URL=http://127.0.0.1:$port",
-                "PLAY1_STOP_FILE=server.frontend.pid.stop", "PF212_FROM_DOTENV=from certs/.env",
+                "PLAY1_STOP_FILE=$stopFile", "PF212_FROM_DOTENV=from certs/.env",
             )) assertTrue("ENV:$env" in log, "Nuxt's server should get $env: $log")
 
             val status = launch(bundle, stubs, "status")
@@ -1795,7 +1806,7 @@ class BundleLauncherTest {
             val playStopped = stop.stdout.indexOfFirst { it.startsWith("~ OK, ") && it.endsWith(" is stopped") && "Nuxt" !in it }
             assertTrue(nuxtStopped in 0 until playStopped, "Nuxt's server stops first, then Play: ${stop.stdout}")
             assertTrue("play-listening-at-stop" in nodeLog(bundle), "Play went down before Nuxt's server: ${nodeLog(bundle)}")
-            assertTrue("stopped-by-file" in nodeLog(bundle), "${nodeLog(bundle)}")
+            assertTrue((if (onWindows) "stopped-by-file" else "stopped-by-signal") in nodeLog(bundle), "${nodeLog(bundle)}")
             for (left in listOf("server.pid", "server.frontend.pid", "server.frontend.pid.stop")) {
                 assertFalse(File(bundle, left).exists(), "$left should be gone after stop")
             }
@@ -1845,6 +1856,70 @@ class BundleLauncherTest {
         assertTrue(status.single().startsWith("Running (pid: ") || status.single() == "Not running", "$status")
     }
 
+    /**
+     * A bash in place of Nuxt's server, recorded in [bundle]'s server.frontend.pid: it exits
+     * once server.frontend.pid.stop appears, after logging FILE to node-stop.log, or at a
+     * SIGTERM, after logging TERM, so a stop shows which it sent. Returns once it is waiting.
+     */
+    private fun frontendStandIn(bundle: File): Process {
+        val log = "node-stop.log"
+        val node = ProcessBuilder(
+            "/bin/bash", "-c",
+            "trap 'echo TERM >> $log; exit 0' TERM; echo ready; " +
+                "while [ ! -f server.frontend.pid.stop ]; do sleep 0.02 & wait \$!; done; echo FILE >> $log; exit 0"
+        )
+            .directory(bundle)
+            .redirectError(ProcessBuilder.Redirect.DISCARD)
+            .start()
+        assertEquals("ready", node.inputStream.bufferedReader().readLine())
+        File(bundle, "server.frontend.pid").writeText("${node.pid()}")
+        return node
+    }
+
+    private fun frontendStopLog(bundle: File): List<String> =
+        File(bundle, "node-stop.log").takeIf { it.isFile }?.readLines() ?: emptyList()
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS, disabledReason = "the process in place of node is a bash child; under Git Bash the Nuxt case above stops through the file")
+    fun `under MSYS stop stops Nuxt's server through its stop file and sends it no SIGTERM`(@TempDir tmp: File) {
+        val bundle = File(tmp, "app").apply { mkdirs() }
+        writeBundle(bundle)
+        val stubs = File(tmp, "bin").apply { writeStubs(this, windows = true) }
+        val node = frontendStandIn(bundle)
+        try {
+            val stop = launch(bundle, stubs, "stop")
+
+            assertEquals(0, stop.exit, "${stop.stdout}\n${stop.stderr}")
+            assertTrue("~ OK, Nuxt's server is stopped" in stop.stdout, "${stop.stdout}")
+            assertTrue(node.waitFor(5, TimeUnit.SECONDS), "the stand-in did not exit at its stop file")
+            assertEquals(listOf("FILE"), frontendStopLog(bundle))
+            assertFalse(File(bundle, "server.frontend.pid").exists())
+            assertFalse(File(bundle, "server.frontend.pid.stop").exists())
+        } finally {
+            node.destroyForcibly()
+        }
+    }
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS, disabledReason = "a bundle under Git Bash always takes the MSYS branch")
+    fun `off Windows stop sends Nuxt's server a SIGTERM and writes no stop file`(@TempDir tmp: File) {
+        // PF-259: a stop file can be made by anyone who may create a file in the pid file's
+        // folder, a SIGTERM only by the server's own user or root.
+        val (bundle, stubs) = bundleWithConf(tmp, "application.name=testapp\n")
+        val node = frontendStandIn(bundle)
+        try {
+            val stop = launch(bundle, stubs, "stop")
+
+            assertEquals(0, stop.exit, "${stop.stdout}\n${stop.stderr}")
+            assertTrue("~ OK, Nuxt's server is stopped" in stop.stdout, "${stop.stdout}")
+            assertTrue(node.waitFor(5, TimeUnit.SECONDS), "the stand-in did not exit at its SIGTERM")
+            assertEquals(listOf("TERM"), frontendStopLog(bundle))
+            assertFalse(File(bundle, "server.frontend.pid").exists())
+        } finally {
+            node.destroyForcibly()
+        }
+    }
+
     @Test
     @DisabledOnOs(OS.WINDOWS, disabledReason = "Process.destroy() is TerminateProcess there, which no shell can trap")
     fun `run supervises both, and a SIGTERM for the launcher stops Nuxt's server and Play`(@TempDir tmp: File) {
@@ -1856,6 +1931,7 @@ class BundleLauncherTest {
             .redirectErrorStream(true)
             .redirectOutput(out)
             .pathFirst(stubs, *javaBin.toTypedArray())
+            .apply { environment()["STUB_NODE_LINGER"] = "1" }
             .start()
         try {
             awaitNodeLog(bundle, "started")
@@ -1865,7 +1941,10 @@ class BundleLauncherTest {
 
             assertTrue(run.waitFor(40, TimeUnit.SECONDS), "the launcher did not exit:\n${out.readText()}")
             assertEquals(143, run.exitValue(), "the launcher exits with Play's status after its SIGTERM:\n${out.readText()}")
-            assertTrue("stopped-by-file" in nodeLog(bundle), "${nodeLog(bundle)}")
+            // PF-259: off Windows a SIGTERM, and one only, though the trap and the stop after
+            // Play's exit both tell it to stop
+            assertTrue("stopped-by-signal" in nodeLog(bundle), "${nodeLog(bundle)}")
+            assertTrue("terms=1" in nodeLog(bundle), "${nodeLog(bundle)}")
             assertFalse(listening(port), "Play is still listening")
             assertTrue("SHUTDOWN HOOK" in out.readText(), "Play was not stopped gracefully:\n${out.readText()}")
         } finally {

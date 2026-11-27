@@ -29,7 +29,9 @@ import javax.tools.ToolProvider
  * so that a test can tell waiting for Play from racing it, and with -Dpf213.listen.for ms
  * exits on its own (a foreground playRun that ends). node is a stub that PLAY_NODE names: it
  * logs to node-stub.log in the application what it was started with and whether Play was
- * listening, and exits only when its stop file appears.
+ * listening, and exits once its stop file appears or a SIGTERM comes, logging which. Off
+ * Windows, where these run, it is named no stop file and gets the SIGTERM (PF-259);
+ * PlayStopFileTest covers the Windows branch.
  */
 @DisabledOnOs(OS.WINDOWS, disabledReason = "forks detached JVMs and a #!/bin/sh stub node from TestKit; unverified on Windows, as PrecompiledStartTest")
 class NuxtServerStartTest {
@@ -68,15 +70,18 @@ class NuxtServerStartTest {
                 "    [ -z \"\$STUB_NODE_TOO_OLD\" ] || { echo \"play: Nuxt's server needs Node ^99.0.0; this is Node 1.0.0\" >&2; exit 1; }\n" +
                 "    exit 0\n" +
                 "fi\n" +
+                "stopped=\n" +
+                "trap 'stopped=signal' TERM\n" +
                 "play=\"\${NUXT_PLAY_BACKEND_URL#http://}\"\n" +
                 "listening() { (exec 3<>\"/dev/tcp/\${play%:*}/\${play##*:}\") 2>/dev/null; }\n" +
                 "if listening; then echo play-listening-at-start >> \$log; else echo play-not-listening-at-start >> \$log; fi\n" +
                 "for v in NITRO_PORT NITRO_HOST NUXT_PLAY_BACKEND_URL PLAY1_STOP_FILE PF213_FROM_DOTENV; do echo \"ENV:\$v=\${!v}\" >> \$log; done\n" +
                 "echo \"started \$1\" >> \$log\n" +
-                "while [ ! -e \"\$PLAY1_STOP_FILE\" ]; do sleep 0.05; done\n" +
+                "while [ -z \"\$stopped\" ]; do\n" +
+                "    if [ -n \"\$PLAY1_STOP_FILE\" ] && [ -e \"\$PLAY1_STOP_FILE\" ]; then rm -f \"\$PLAY1_STOP_FILE\"; stopped=file; else sleep 0.05; fi\n" +
+                "done\n" +
                 "if listening; then echo play-listening-at-stop >> \$log; fi\n" +
-                "rm -f \"\$PLAY1_STOP_FILE\"\n" +
-                "echo stopped-by-file >> \$log\n"
+                "echo stopped-by-\$stopped >> \$log\n"
         )
         setExecutable(true)
     }
@@ -122,7 +127,8 @@ class NuxtServerStartTest {
             assertTrue("play-listening-at-start" in log, "Nuxt's server started before Play listened: $log")
             for (env in listOf(
                 "NITRO_PORT=3457", "NITRO_HOST=127.0.0.1", "NUXT_PLAY_BACKEND_URL=http://127.0.0.1:$port",
-                "PLAY1_STOP_FILE=${File(app.canonicalFile, "server.frontend.pid.stop").path}", "PF213_FROM_DOTENV=from certs/.env",
+                // PF-259: no stop file off Windows
+                "PLAY1_STOP_FILE=", "PF213_FROM_DOTENV=from certs/.env",
             )) assertTrue("ENV:$env" in log, "Nuxt's server should get $env: $log")
 
             val status = runner(app, node, "playStatus", "-PhttpPort=$port").build().output
@@ -136,7 +142,7 @@ class NuxtServerStartTest {
             val playStopped = stop.indexOf("~ OK, ${app.canonicalPath} is stopped")
             assertTrue(nuxtStopped in 0 until playStopped, "Nuxt's server stops first, then Play:\n$stop")
             assertTrue("play-listening-at-stop" in nodeLog(app), "Play went down before Nuxt's server: ${nodeLog(app)}")
-            assertTrue("stopped-by-file" in nodeLog(app), "${nodeLog(app)}")
+            assertTrue("stopped-by-signal" in nodeLog(app), "${nodeLog(app)}")
             for (left in listOf("server.pid", "server.frontend.pid", "server.frontend.pid.stop")) {
                 assertFalse(File(app, left).exists(), "$left should be gone after playStop")
             }
@@ -195,7 +201,7 @@ class NuxtServerStartTest {
             assertTrue("~ OK, Nuxt's server is stopped" in restart.output && "~ OK, Nuxt's server is started" in restart.output, restart.output)
             awaitNodeLog(app, "started", count = 2)
             val log = nodeLog(app)
-            assertTrue(log.indexOf("stopped-by-file") in 0 until log.lastIndexOf(log.last { it.startsWith("started") }), "$log")
+            assertTrue(log.indexOf("stopped-by-signal") in 0 until log.lastIndexOf(log.last { it.startsWith("started") }), "$log")
             assertEquals("play-listening-at-start", log.filter { it.startsWith("play-") && "start" in it }.last(), "the new one waited for the new Play: $log")
             assertNotEquals(first, File(app, "server.frontend.pid").readText().trim())
         } finally {
@@ -215,7 +221,7 @@ class NuxtServerStartTest {
         val log = nodeLog(app)
         assertTrue("play-listening-at-start" in log, "Nuxt's server started before Play listened: $log\n${run.output}")
         assertTrue("ENV:NUXT_PLAY_BACKEND_URL=http://127.0.0.1:$port" in log, "$log")
-        assertTrue("stopped-by-file" in log, "Nuxt's server was not stopped when the run ended: $log\n${run.output}")
+        assertTrue("stopped-by-signal" in log, "Nuxt's server was not stopped when the run ended: $log\n${run.output}")
         assertTrue("~ OK, Nuxt's server is stopped" in run.output, run.output)
     }
 
@@ -231,7 +237,7 @@ class NuxtServerStartTest {
 
         val log = nodeLog(app)
         assertTrue("play-listening-at-start" in log, "$log")
-        assertTrue("stopped-by-file" in log, "Nuxt's server outlived the failed run: $log")
+        assertTrue("stopped-by-signal" in log, "Nuxt's server outlived the failed run: $log")
     }
 
     /**
