@@ -40,9 +40,14 @@ import play.server.Server;
  * database and creates it again when it reopens it, and a JVM that ends with the database open
  * leaves it behind. The stop job waits before it writes, so that before PF-201 H2's hook had
  * always closed the database by then.
+ *
+ * <p>PF-243: on Windows no signal reaches the JVM, and a stop writes the file {@code -Dplay.stopFile}
+ * names instead, which runs the same hook. That case runs on every OS; the SIGTERM ones are off on
+ * Windows, where {@code destroy()} terminates the JVM outright.
  */
-@DisabledOnOs(value = OS.WINDOWS, disabledReason = "a SIGTERM is what runs the shutdown hooks")
 public class H2ShutdownTest {
+
+    private static final String SIGTERM_ONLY = "a SIGTERM is what runs the shutdown hooks, and on Windows destroy() is none";
 
     private static final String SECRET = "h2shutdowntestsecret1234567890h2shutdowntestsecret1234567890ab";
 
@@ -65,6 +70,7 @@ public class H2ShutdownTest {
             + "    }\n";
 
     @Test
+    @DisabledOnOs(value = OS.WINDOWS, disabledReason = SIGTERM_ONLY)
     public void aStopJobsWriteCommitsAndTheDatabaseClosesOnce(@TempDir File app) throws Exception {
         scratchApp(app, "prod", WRITE, "");
         int port = freePort();
@@ -81,6 +87,7 @@ public class H2ShutdownTest {
     }
 
     @Test
+    @DisabledOnOs(value = OS.WINDOWS, disabledReason = SIGTERM_ONLY)
     public void aDatabaseAnAutoServerClientHoldsIsClosedBeforeTheJvmExits(@TempDir File app) throws Exception {
         scratchApp(app, "prod", WRITE, "");
         int port = freePort();
@@ -110,6 +117,7 @@ public class H2ShutdownTest {
     }
 
     @Test
+    @DisabledOnOs(value = OS.WINDOWS, disabledReason = SIGTERM_ONLY)
     public void aStartThatFailsAfterTheDatabaseIsUpStillClosesIt(@TempDir File app) throws Exception {
         scratchApp(app, "prod", WRITE, "");
         try (ServerSocket taken = new ServerSocket(0)) {
@@ -125,6 +133,7 @@ public class H2ShutdownTest {
     }
 
     @Test
+    @DisabledOnOs(value = OS.WINDOWS, disabledReason = SIGTERM_ONLY)
     public void aHookThatHangsHasTheFallbackCloseTheDatabase(@TempDir File app) throws Exception {
         // the fallback's budget is play.jobs.stop.timeout + 3 s
         scratchApp(app, "prod", HANG, "play.jobs.stop.timeout=500\n");
@@ -152,6 +161,7 @@ public class H2ShutdownTest {
     }
 
     @Test
+    @DisabledOnOs(value = OS.WINDOWS, disabledReason = SIGTERM_ONLY)
     public void aRequestThatHoldsTheServerDrainLeavesTheStopJobItsWholeBudget(@TempDir File app) throws Exception {
         // stop()'s budget is play.jobs.stop.timeout + 3 s = 3.5 s, and the request holds the drain
         // before stop() for 5 s: a clock started at the SIGTERM closed H2 before the stop job wrote
@@ -177,6 +187,7 @@ public class H2ShutdownTest {
     }
 
     @Test
+    @DisabledOnOs(value = OS.WINDOWS, disabledReason = SIGTERM_ONLY)
     public void aDevReloadLeavesH2AloneAndTheDatabaseIsClosedAtExit(@TempDir File app) throws Exception {
         scratchApp(app, "dev", WRITE, "");
         int port = freePort();
@@ -198,6 +209,38 @@ public class H2ShutdownTest {
         assertThat(read(console(app))).doesNotContain("90121").doesNotContain("Database is already closed");
         assertThat(farewells(app)).as("one write at the reload, one at the exit; console:%n%s", read(console(app)))
                 .isEqualTo(2);
+    }
+
+    @Test
+    public void aStopFileRunsPlaysHookAndClosesTheDatabaseOnEveryOs(@TempDir File app) throws Exception {
+        scratchApp(app, "prod", WRITE, "");
+        int port = freePort();
+        File stopFile = new File(app, "server.pid.stop");
+        Process server = server(app, port, "-Dplay.stopFile=" + stopFile.getAbsolutePath());
+        awaitOk(port, server, console(app));
+
+        List<Boolean> lock;
+        try (LockWatch watch = new LockWatch(lockFile(app))) {
+            long written = System.nanoTime();
+            Files.writeString(stopFile.toPath(), "");
+            boolean exited = server.waitFor(120, TimeUnit.SECONDS);
+            if (!exited) {
+                server.destroyForcibly().waitFor();
+            }
+            assertThat(exited).as("the JVM ended at its stop file; console:%n%s", read(console(app))).isTrue();
+            long ms = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - written);
+            assertThat(ms).as("ms from the stop file to exit; console:%n%s", read(console(app))).isLessThan(15_000);
+            lock = watch.states();
+        }
+
+        assertThat(server.exitValue()).as("System.exit(0); console:%n%s", read(console(app))).isZero();
+        assertThat(stopFile).as("the JVM removes the file it answered").doesNotExist();
+        assertThat(lock).as("lock file present, then not, and never again; console:%n%s", read(console(app)))
+                .containsExactly(true, false);
+        assertThat(read(console(app))).contains("Stop file " + stopFile.getAbsolutePath() + " found: stopping")
+                .contains("FAREWELL written").doesNotContain("still stopping the application")
+                .doesNotContain("90121").doesNotContain("Database is already closed");
+        assertThat(farewells(app)).isEqualTo(1);
     }
 
     /** The lock file, sampled every millisecond: one entry per change, the first its state at the start. */
@@ -289,12 +332,13 @@ public class H2ShutdownTest {
         return new File(app, "server.out");
     }
 
-    /** play.server.Server on [app], as a Gradle task starts it from the working copy. */
-    private static Process server(File app, int port) throws IOException {
-        List<String> cmd = List.of(java(), "--enable-native-access=ALL-UNNAMED",
+    /** play.server.Server on [app], as a Gradle task starts it from the working copy, with [jvmArgs] before the classpath. */
+    private static Process server(File app, int port, String... jvmArgs) throws IOException {
+        List<String> cmd = new ArrayList<>(List.of(java(), "--enable-native-access=ALL-UNNAMED",
                 "-DPLAY_SECRET=" + SECRET, "-Dapplication.path=" + app.getAbsolutePath(),
-                JUL_MANAGER, "-Dlog4j2.shutdownHookEnabled=false",
-                "-cp", System.getProperty("java.class.path"), Server.class.getName(), "--http.port=" + port);
+                JUL_MANAGER, "-Dlog4j2.shutdownHookEnabled=false"));
+        cmd.addAll(List.of(jvmArgs));
+        cmd.addAll(List.of("-cp", System.getProperty("java.class.path"), Server.class.getName(), "--http.port=" + port));
         return new ProcessBuilder(cmd).directory(app).redirectErrorStream(true).redirectOutput(console(app)).start();
     }
 

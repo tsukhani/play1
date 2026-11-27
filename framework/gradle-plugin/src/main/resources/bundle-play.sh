@@ -211,6 +211,15 @@ for arg in "$@"; do
     esac
 done
 
+# PF-243: the file a stop writes for the JVM PID_FILE tracks (server.pid.stop
+# for server.pid). start names it to the JVM in -Dplay.stopFile, and the JVM
+# (play.server.StopFile) stops as at a SIGTERM once it appears. Under Git Bash,
+# MSYS2 and Cygwin stop writes it, because kill ends a native java.exe at once,
+# before any shutdown hook; everywhere else stop still sends SIGTERM.
+# playStopFile in Play1Plugin.kt names it alike.
+PLAY_STOP_FILE="$PID_FILE.stop"
+STOP_JVM=()
+
 # PF-212: a bundle whose frontend sets ssr: true carries Nuxt's server at
 # frontend/.output, built by playFrontendSpa (PF-210), and runs it beside Play.
 # run and start start Play, wait until it listens, then start Nuxt's server,
@@ -340,6 +349,50 @@ stop_frontend_pid() {
     ! kill -0 "$1" 2>/dev/null
 }
 
+# PF-243: stop Play (pid $1) and wait $wait_seconds for it to exit, as stopPlay
+# in Play1Plugin.kt does; keep the two in step. Off Windows with kill, a SIGTERM:
+# returns 1 when it is still draining after the wait, which is left to finish.
+# Under Git Bash, MSYS2 and Cygwin through PLAY_STOP_FILE instead, since kill
+# there ends a native java.exe before any shutdown hook runs; a JVM still running
+# after the wait is then terminated, with a line that says whether it had taken
+# the stop file (one started by a framework before PF-243 watches none): returns
+# 2 once it is gone, 3 when it is still running after that.
+stop_play_pid() {
+    local deadline taken
+    if [ "$WINDOWS_JVM" = 1 ]; then : > "$PLAY_STOP_FILE"; else kill "$1"; fi
+    # PF-199: a check every 20 ms notices the exit within about 20 ms, and a
+    # restart's outage includes that wait. The wait is elapsed time, not a
+    # number of checks, which would also count the start of every sleep.
+    # SECONDS counts whole seconds, so -le waits 35 to 36 s, never less.
+    deadline=$((SECONDS + wait_seconds))
+    while kill -0 "$1" 2>/dev/null && [ "$SECONDS" -le "$deadline" ]; do
+        sleep 0.02
+    done
+    if ! kill -0 "$1" 2>/dev/null; then
+        rm -f "$PLAY_STOP_FILE"
+        return 0
+    fi
+    [ "$WINDOWS_JVM" = 1 ] || return 1
+    taken=1
+    [ ! -f "$PLAY_STOP_FILE" ] || taken=0
+    kill -9 "$1" 2>/dev/null || :
+    deadline=$((SECONDS + 5))
+    while kill -0 "$1" 2>/dev/null && [ "$SECONDS" -le "$deadline" ]; do
+        sleep 0.02
+    done
+    rm -f "$PLAY_STOP_FILE"
+    if kill -0 "$1" 2>/dev/null; then
+        echo "~ Play (pid $1) is still running after its stop file and a forced terminate"
+        return 3
+    fi
+    if [ "$taken" = 1 ]; then
+        echo "~ Play (pid $1) was still stopping ${wait_seconds}s after it took its stop file; terminated it before its shutdown finished"
+    else
+        echo "~ Play (pid $1) did not take its stop file in ${wait_seconds}s, which a JVM started by an older framework does not watch; terminated it, so no shutdown hook ran"
+    fi
+    return 2
+}
+
 # stop's first half: Nuxt's server, when its pid file says it was started.
 stop_frontend() {
     local pid
@@ -433,6 +486,8 @@ build_java_cmd() {
         -Dplay.version="$FW_VERSION"
         -Dprecompiled=true
         -Dfile.encoding=utf-8
+        # PF-243: start's -Dplay.stopFile; nothing for run and aot-gen, which have no pid file.
+        "${STOP_JVM[@]}"
         # PF-180: ahead of the conf and command-line flags, like the JUL
         # manager below and for the same reason.
         "${AOT_JVM[@]}"
@@ -802,6 +857,9 @@ case "$CMD" in
                 rm -f "$FRONTEND_PID_FILE"
             fi
         fi
+        # PF-243: a stop file left behind would stop the JVM as soon as it watched.
+        rm -f "$PLAY_STOP_FILE"
+        STOP_JVM=("-Dplay.stopFile=$(native_path "$PLAY_STOP_FILE")")
         build_java_cmd
         mkdir -p logs
         # A subshell, so the entries are exported for the JVM only; exec keeps
@@ -832,32 +890,31 @@ case "$CMD" in
         fi
         pid=$(cat "$PID_FILE")
         if kill -0 "$pid" 2>/dev/null; then
-            kill "$pid"
             # Wait past the jobs drain budget (play.jobs.stop.timeout, default 30s)
             # so a clean-but-slow shutdown finishes instead of being truncated
             # mid job-drain. Mirrors PlayStopTask in Play1Plugin.kt — keep the two
-            # copies in sync (PF-120 / PF-128). No SIGKILL: once SIGTERM is sent we
-            # leave reaping to the OS rather than hard-killing in-flight work.
-            # PF-199: a check every 20 ms notices the exit within about 20 ms, and a
-            # restart's outage includes that wait. The 35 s are elapsed time, not a
-            # number of checks, which would also count the start of every sleep.
-            # SECONDS counts whole seconds, so -le waits 35 to 36 s, never less.
+            # copies in sync (PF-120 / PF-128). No SIGKILL off Windows: once SIGTERM
+            # is sent we leave reaping to the OS rather than hard-killing in-flight work.
             wait_seconds=$(stop_wait_seconds)
-            deadline=$((SECONDS + wait_seconds))
-            while kill -0 "$pid" 2>/dev/null && [ "$SECONDS" -le "$deadline" ]; do
-                sleep 0.02
-            done
-            if kill -0 "$pid" 2>/dev/null; then
-                # Still draining: leave the pid file so status/pid keep tracking
-                # the live process, mirroring PlayStopTask's timeout return.
-                echo "~ SIGTERM sent; process (pid $pid) still draining after ${wait_seconds}s. Leaving it to the OS to reap."
-            else
-                rm -f "$PID_FILE"
-                echo "~ OK, $SCRIPT_DIR is stopped"
-            fi
+            stopped=0
+            stop_play_pid "$pid" || stopped=$?
+            case "$stopped" in
+                0)
+                    rm -f "$PID_FILE"
+                    echo "~ OK, $SCRIPT_DIR is stopped" ;;
+                1)
+                    # Still draining: leave the pid file so status/pid keep tracking
+                    # the live process, mirroring PlayStopTask's timeout return.
+                    echo "~ SIGTERM sent; process (pid $pid) still draining after ${wait_seconds}s. Leaving it to the OS to reap." ;;
+                2)
+                    rm -f "$PID_FILE"
+                    echo "~ $SCRIPT_DIR is stopped, by a forced terminate" ;;
+                *)
+                    echo "~ Leaving its pid file" ;;
+            esac
         else
             echo "~ Play was not running (pid $pid not found); removing stale pid file"
-            rm -f "$PID_FILE"
+            rm -f "$PID_FILE" "$PLAY_STOP_FILE"
         fi
         ;;
     restart)

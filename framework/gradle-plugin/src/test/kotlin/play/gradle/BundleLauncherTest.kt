@@ -886,6 +886,99 @@ class BundleLauncherTest {
         }
     }
 
+    // ---- PF-243: the stop file ------------------------------------------------------
+    //
+    // Under Git Bash, MSYS2 and Cygwin kill ends a native java.exe before any shutdown
+    // hook, so stop writes the file start named to the JVM in -Dplay.stopFile instead.
+    // Here the MSYS branch is the stubbed uname's, and a bash stands in for the JVM;
+    // integration.ShutdownLoggingTest stops a real bundle that way under Git Bash on Windows.
+
+    /**
+     * A bash in place of the JVM, recorded in [bundle]'s pid file. When [takes], it exits once
+     * server.pid.stop appears, as the JVM does, after removing it; otherwise it never looks. A
+     * SIGTERM it records in term.log and survives, so a stop that sent one shows.
+     */
+    private fun stopFileStandIn(bundle: File, takes: Boolean): Process {
+        val body = if (takes) "while [ ! -f server.pid.stop ]; do sleep 0.02 & wait \$!; done; rm -f server.pid.stop; exit 0"
+            else STAND_IN_WAIT
+        val jvm = ProcessBuilder("/bin/bash", "-c", "trap 'echo TERM >> term.log' TERM; echo ready; $body")
+            .directory(bundle)
+            .redirectError(ProcessBuilder.Redirect.DISCARD)
+            .start()
+        assertEquals("ready", jvm.inputStream.bufferedReader().readLine())
+        File(bundle, "server.pid").writeText("${jvm.pid()}")
+        return jvm
+    }
+
+    @Test
+    fun `start names the stop file of its pid file to the JVM, and run names none`(@TempDir tmp: File) {
+        val (bundle, stubs) = bundleWithConf(tmp, "application.name=testapp\n")
+        File(bundle, "server.pid.stop").writeText("")
+
+        val start = startArgv(bundle, stubs)
+        assertEquals(listOf("-Dplay.stopFile=server.pid.stop"), start.filter { it.startsWith("-Dplay.stopFile=") })
+        // ahead of the conf and command-line flags, with the launcher's own
+        assertTrue(start.indexOf("-Dplay.stopFile=server.pid.stop") < start.indexOf(julManager), "$start")
+        assertFalse(File(bundle, "server.pid.stop").exists(), "a stop file left behind would stop the new JVM at once")
+        // the name Play1Plugin.kt gives it
+        assertEquals(playStopFile(File(bundle, "server.pid")).name, valueOf(start, "play.stopFile"))
+
+        val elsewhere = startArgv(bundle, stubs, "--pid-file=other.pid")
+        assertEquals("other.pid.stop", valueOf(elsewhere, "play.stopFile"))
+
+        // run has no pid file, and aot-gen's command line is run's
+        assertEquals(emptyList<String>(), launcherArgv(bundle, stubs).filter { it.startsWith("-Dplay.stopFile=") })
+        settle(bundle)
+    }
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS, disabledReason = "the process in place of the JVM is a bash child; a bundle under Git Bash is integration.ShutdownLoggingTest's")
+    fun `under MSYS stop writes the stop file and sends no SIGTERM`(@TempDir tmp: File) {
+        val bundle = File(tmp, "app").apply { mkdirs() }
+        writeBundle(bundle)
+        val stubs = File(tmp, "bin").apply { writeStubs(this, windows = true) }
+        val jvm = stopFileStandIn(bundle, takes = true)
+        try {
+            val stop = launch(bundle, stubs, "stop")
+
+            assertEquals(0, stop.exit, "${stop.stdout}\n${stop.stderr}")
+            assertTrue(stop.stdout.any { it.startsWith("~ OK, ") && it.endsWith(" is stopped") }, "${stop.stdout}")
+            assertTrue(jvm.waitFor(5, TimeUnit.SECONDS), "the stand-in did not exit at its stop file")
+            assertEquals(0, jvm.exitValue())
+            assertFalse(File(bundle, "term.log").exists(), "stop sent a SIGTERM")
+            assertFalse(File(bundle, "server.pid").exists())
+            assertFalse(File(bundle, "server.pid.stop").exists())
+        } finally {
+            jvm.killTree()
+        }
+    }
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS, disabledReason = "the process in place of the JVM is a bash child; a bundle under Git Bash is integration.ShutdownLoggingTest's")
+    fun `under MSYS stop terminates a JVM that does not take its stop file after the wait`(@TempDir tmp: File) {
+        val bundle = File(tmp, "app").apply { mkdirs() }
+        writeBundle(bundle)
+        val stubs = File(tmp, "bin").apply { writeStubs(this, windows = true) }
+        val jvm = stopFileStandIn(bundle, takes = false)
+        try {
+            val started = System.nanoTime()
+            val stop = launch(bundle, stubs, "stop", env = mapOf("PLAY_TEST_STOP_WAIT_SECONDS" to "2"))
+            val seconds = (System.nanoTime() - started) / 1e9
+
+            assertEquals(0, stop.exit, "${stop.stdout}\n${stop.stderr}")
+            assertTrue(seconds >= 2.0 && seconds < 9.0, "stop took $seconds s")
+            assertTrue(stop.stdout.any { "did not take its stop file in 2s" in it }, "${stop.stdout}")
+            assertTrue(stop.stdout.any { it.endsWith(" is stopped, by a forced terminate") }, "${stop.stdout}")
+            assertFalse(stop.stdout.any { "SIGTERM" in it }, "${stop.stdout}")
+            assertTrue(jvm.waitFor(5, TimeUnit.SECONDS), "stop left the JVM running")
+            assertFalse(File(bundle, "term.log").exists(), "the forced terminate is no SIGTERM")
+            assertFalse(File(bundle, "server.pid").exists())
+            assertFalse(File(bundle, "server.pid.stop").exists())
+        } finally {
+            jvm.killTree()
+        }
+    }
+
     @Test
     fun `host environment beats the dotenv file and the file supplies the rest`(@TempDir tmp: File) {
         // PF-184: the launcher sourced certs/.env with `set -a`, so the file won

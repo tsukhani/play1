@@ -49,9 +49,17 @@ import play.server.Server;
  * <p>With log4j's hook off, a JVM that ends before {@code Play.start()} has registered Play's
  * hook ({@code play precompile}, a start that fails in {@code Play.init}) relies on the one
  * {@code Server.main} registers, which the last case covers.
+ *
+ * <p>PF-243: on Windows no signal reaches the JVM: {@code destroy()}, and {@code kill} from Git Bash,
+ * terminate it before any hook runs. There the launchers stop it through the file
+ * {@code -Dplay.stopFile} names, so the bundle's case runs on Windows too, under Git Bash, and a
+ * stop through the file is checked on every OS. The SIGTERM cases are off on Windows.
  */
-@DisabledOnOs(value = OS.WINDOWS, disabledReason = "a SIGTERM is what runs the shutdown hooks")
 public class ShutdownLoggingTest {
+
+    private static final String SIGTERM_ONLY = "a SIGTERM is what runs the shutdown hooks, and on Windows destroy() is none";
+
+    private static final boolean WINDOWS = OS.WINDOWS.isCurrentOs();
 
     private static final String VERSION = "9.9.9-TEST";
 
@@ -86,12 +94,50 @@ public class ShutdownLoggingTest {
         assertThat(start).contains("is started");
         File systemOut = new File(bundle, "logs/system.out");
         awaitOk(port, null, systemOut);
-        assertThat(launch(bundle, "stop")).as("stopped; console:%n%s", read(systemOut)).contains("is stopped");
+        // under Git Bash, PF-243's stop file; elsewhere a SIGTERM
+        assertThat(launch(bundle, "stop")).as("stopped; console:%n%s", read(systemOut)).contains("~ OK, ")
+                .contains(" is stopped").doesNotContain("forced terminate");
+        assertThat(new File(bundle, "server.pid")).doesNotExist();
+        assertThat(new File(bundle, "server.pid.stop")).doesNotExist();
+        if (WINDOWS) {
+            assertThat(read(systemOut)).contains("Stop file").contains("server.pid.stop found: stopping");
+        }
 
         assertFarewellInEveryLog(bundle, systemOut);
     }
 
     @Test
+    public void aStopFileKeepsWhatTheApplicationLogsWhileItStops(@TempDir File tmp) throws Exception {
+        // PF-243: the JVM playStart starts, stopped as playStop stops it on Windows, on every OS
+        File app = new File(tmp, "app");
+        scratchApp(app);
+        Path dist = tmp.toPath().resolve("play1");
+        File playJar = dist.resolve("framework/play-" + VERSION + ".jar").toFile();
+        playJar(playJar);
+        List<String> classpath = new ArrayList<>(List.of(playJar.getAbsolutePath()));
+        classpath.addAll(frameworkLibJars());
+        Files.createDirectories(dist.resolve("resources"));
+        Files.copy(FRAMEWORK.resolve("../resources/messages"), dist.resolve("resources/messages"));
+
+        File console = new File(app, "logs/system.out");
+        File stopFile = new File(app, "server.pid.stop");
+        int port = freePort();
+        Process server = gradleStart(app, playJar, classpath, port, console, "-Dplay.stopFile=" + stopFile.getAbsolutePath());
+        awaitOk(port, server, console);
+        Files.writeString(stopFile.toPath(), "");
+        boolean exited = server.waitFor(120, TimeUnit.SECONDS);
+        if (!exited) {
+            server.destroyForcibly().waitFor();
+        }
+        assertThat(exited).as("the JVM ended at its stop file; console:%n%s", read(console)).isTrue();
+        assertThat(server.exitValue()).as("System.exit(0); console:%n%s", read(console)).isZero();
+        assertThat(stopFile).as("the JVM removes the file it answered").doesNotExist();
+
+        assertFarewellInEveryLog(app, console);
+    }
+
+    @Test
+    @DisabledOnOs(value = OS.WINDOWS, disabledReason = SIGTERM_ONLY)
     public void aGradleStartFromTheAotCacheKeepsWhatTheApplicationLogsWhileItStops(@TempDir File tmp) throws Exception {
         File app = new File(tmp, "app");
         scratchApp(app);
@@ -131,6 +177,7 @@ public class ShutdownLoggingTest {
     }
 
     @Test
+    @DisabledOnOs(value = OS.WINDOWS, disabledReason = SIGTERM_ONLY)
     public void aJvmThatEndsBeforePlayHasItsShutdownHookStillWritesWhatTheAppendersHold(@TempDir File app) throws Exception {
         // Play.start() registers the hook that stops log4j once the application has stopped,
         // and with log4j's own hook off Server.main stops it for a JVM that ends before that.
@@ -282,19 +329,50 @@ public class ShutdownLoggingTest {
         }
     }
 
-    /** Run the bundle's {@code ./play} with {@code args} and return what it printed. */
+    /**
+     * Run the bundle's {@code ./play} with {@code args} and return what it printed. On Windows
+     * through Git Bash, which is how a bundle starts there. Its output goes to a file, not a pipe:
+     * the JVM that {@code start} leaves running could otherwise hold the pipe open, and a read to
+     * its end would wait for the JVM.
+     */
     private static String launch(File bundle, String... args) throws Exception {
-        List<String> cmd = new ArrayList<>(List.of("./play"));
+        List<String> cmd = new ArrayList<>(WINDOWS ? List.of(gitBash(), "./play") : List.of("./play"));
         cmd.addAll(List.of(args));
-        ProcessBuilder pb = new ProcessBuilder(cmd).directory(bundle).redirectErrorStream(true);
+        File out = new File(bundle, "launcher-" + args[0] + ".out");
+        ProcessBuilder pb = new ProcessBuilder(cmd).directory(bundle).redirectErrorStream(true).redirectOutput(out);
         pb.environment().put("PLAY_SECRET", SECRET);
-        // the java the suite runs on, ahead of whatever the host has
-        pb.environment().put("PATH", Path.of(java()).getParent() + File.pathSeparator + System.getenv("PATH"));
+        // the java the suite runs on, ahead of whatever the host has, under the name the
+        // variable already has: on Windows that is Path, and the map is case-sensitive
+        String path = pb.environment().keySet().stream().filter("PATH"::equalsIgnoreCase).findFirst().orElse("PATH");
+        pb.environment().put(path, Path.of(java()).getParent() + File.pathSeparator + pb.environment().getOrDefault(path, ""));
         Process p = pb.start();
-        String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        assertThat(p.waitFor(120, TimeUnit.SECONDS)).as("./play %s ended", String.join(" ", args)).isTrue();
-        assertThat(p.exitValue()).as("./play %s:%n%s", String.join(" ", args), out).isZero();
-        return out;
+        boolean ended = p.waitFor(120, TimeUnit.SECONDS);
+        if (!ended) {
+            p.destroyForcibly().waitFor();
+        }
+        assertThat(ended).as("./play %s ended:%n%s", String.join(" ", args), read(out)).isTrue();
+        assertThat(p.exitValue()).as("./play %s:%n%s", String.join(" ", args), read(out)).isZero();
+        return read(out);
+    }
+
+    /**
+     * Git Bash's bash.exe, as BundleLauncherTest finds it: the bin\ wrapper, which puts the MSYS
+     * tools on PATH, and not the bash on PATH, which on Windows is WSL's.
+     */
+    private static String gitBash() {
+        List<String> roots = new ArrayList<>();
+        for (String variable : List.of("ProgramFiles", "ProgramFiles(x86)")) {
+            String root = System.getenv(variable);
+            if (root != null) {
+                roots.add(root + "\\Git");
+            }
+        }
+        String local = System.getenv("LOCALAPPDATA");
+        if (local != null) {
+            roots.add(local + "\\Programs\\Git");
+        }
+        return roots.stream().map(root -> root + "\\bin\\bash.exe").filter(bash -> new File(bash).isFile()).findFirst()
+                .orElseThrow(() -> new AssertionError("Git Bash (Git\\bin\\bash.exe) was not found: a bundle starts through it on Windows"));
     }
 
     /** Wait until {@code GET /} answers, as aot-gen waits before its SIGTERM. */

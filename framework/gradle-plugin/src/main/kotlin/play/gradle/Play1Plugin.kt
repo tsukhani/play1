@@ -2646,8 +2646,10 @@ abstract class PlayStartTask : DefaultTask() {
         val jvmArgsList = extraJvmArgs.orNull
             ?.split(Regex("\\s+"))?.filter { it.isNotEmpty() }
             ?: emptyList()
+        // PF-243: a stop file left behind would stop the new JVM as soon as it watched
+        val stopFile = playStopFile(pidFile).apply { delete() }
         val process = spawnPlay(appDir, frameworkPath.get().asFile, frameworkVersion.get(),
-            playId.get(), httpPort.orNull, httpsPort.orNull, playClasspath.files, jvmArgsList)
+            playId.get(), httpPort.orNull, httpsPort.orNull, playClasspath.files, jvmArgsList, stopFile = stopFile)
         pidFile.writeText(process.pid().toString())
         logger.lifecycle("~ OK, ${appDir.absolutePath} is started")
         outputBanner(appDir, playId.get()).forEach { logger.lifecycle(it) }
@@ -2659,8 +2661,9 @@ abstract class PlayStartTask : DefaultTask() {
 }
 
 /**
- * How long playStop and playRestart wait for the JVM after the SIGTERM: past the jobs drain
- * budget (play.jobs.stop.timeout, default 30s), as bundle-play.sh's stop does (PF-120 / PF-128).
+ * How long playStop and playRestart wait for the JVM after the SIGTERM, or on Windows the stop
+ * file (PF-243): past the jobs drain budget (play.jobs.stop.timeout, default 30s), as
+ * bundle-play.sh's stop does (PF-120 / PF-128).
  */
 internal const val STOP_WAIT_SECONDS = 35L
 
@@ -2700,7 +2703,72 @@ internal fun awaitExit(handle: ProcessHandle, timeoutMillis: Long): Boolean {
     }
 }
 
-@DisableCachingByDefault(because = "Process lifecycle task (sends SIGTERM); produces no cacheable output")
+/**
+ * PF-243: the file a stop writes for the JVM [pidFile] tracks, beside it: server.pid.stop for
+ * server.pid. playStart and playRestart name it to the JVM in -Dplay.stopFile, and the JVM
+ * (play.server.StopFile) stops as at a SIGTERM once it appears. bundle-play.sh names it alike
+ * (PLAY_STOP_FILE).
+ */
+internal fun playStopFile(pidFile: File): File = File(pidFile.parentFile, pidFile.name + ".stop")
+
+/** PF-243: the system property play.server.StopFile reads the stop file's path from. */
+internal const val STOP_FILE_PROPERTY = "play.stopFile"
+
+/**
+ * PF-243: whether a stop goes through the stop file: on Windows, where destroy() is
+ * TerminateProcess, which runs no shutdown hook. Everywhere else it is a SIGTERM, as before.
+ */
+internal fun stopsThroughFile(osName: String = System.getProperty("os.name")): Boolean = osName.startsWith("Windows")
+
+/** How [stopPlay] left the JVM. */
+internal enum class PlayStop {
+    /** It exited within the stop wait: its shutdown hook ran. */
+    EXITED,
+    /** Off Windows: still running after the wait, and left to finish its shutdown. */
+    DRAINING,
+    /** On Windows: still running after the wait, and terminated. */
+    TERMINATED,
+    /** On Windows: still running after the wait and a forced terminate. */
+    RUNNING,
+}
+
+/**
+ * Stop the JVM [handle] and wait [waitSeconds] for it to exit. Off Windows with destroy(), a
+ * SIGTERM, and a JVM still draining after the wait is left to finish (PF-120); the caller says
+ * so, as it did before. On Windows ([throughFile]) by writing [stopFile] (PF-243), since
+ * destroy() there terminates the JVM before any shutdown hook runs; a JVM still running after
+ * the wait is then terminated, and the line logged here says whether it had taken the stop
+ * file: a JVM started by a framework before PF-243 watches none. The file is gone again on return.
+ */
+internal fun stopPlay(handle: ProcessHandle, stopFile: File, throughFile: Boolean, logger: Logger, waitSeconds: Long = stopWaitSeconds()): PlayStop {
+    val pid = handle.pid()
+    if (!throughFile) {
+        handle.destroy()
+        return if (awaitExit(handle, TimeUnit.SECONDS.toMillis(waitSeconds))) PlayStop.EXITED else PlayStop.DRAINING
+    }
+    stopFile.parentFile?.mkdirs()
+    stopFile.writeText("")
+    if (awaitExit(handle, TimeUnit.SECONDS.toMillis(waitSeconds))) {
+        stopFile.delete()
+        return PlayStop.EXITED
+    }
+    val taken = !stopFile.exists()
+    handle.destroyForcibly()
+    val gone = awaitExit(handle, 5_000)
+    stopFile.delete()
+    if (!gone) {
+        logger.lifecycle("~ Play (pid $pid) is still running after its stop file and a forced terminate")
+        return PlayStop.RUNNING
+    }
+    if (taken) {
+        logger.lifecycle("~ Play (pid $pid) was still stopping ${waitSeconds}s after it took its stop file; terminated it before its shutdown finished")
+    } else {
+        logger.lifecycle("~ Play (pid $pid) did not take its stop file in ${waitSeconds}s, which a JVM started by an older framework does not watch; terminated it, so no shutdown hook ran")
+    }
+    return PlayStop.TERMINATED
+}
+
+@DisableCachingByDefault(because = "Process lifecycle task (stops the JVM); produces no cacheable output")
 abstract class PlayStopTask : DefaultTask() {
     @get:Internal abstract val applicationPath: DirectoryProperty
     @get:Internal abstract val pidFileOverride: Property<String>
@@ -2717,17 +2785,31 @@ abstract class PlayStopTask : DefaultTask() {
         }
         val pid = pidFile.readText().trim().toLong()
         val handle = ProcessHandle.of(pid).orElse(null)
+        val stopFile = playStopFile(pidFile)
         if (handle == null) {
             logger.lifecycle("~ Play was not running (pid $pid not found); removing stale pid file")
+            stopFile.delete()
         } else {
-            handle.destroy()
             // Wait past the jobs drain budget (play.jobs.stop.timeout, default 30s) so a
             // clean-but-slow shutdown is observed as a real exit rather than tripping a
             // wrapper deadline and surfacing as BUILD FAILED on a successful stop (PF-120).
             val waitSeconds = stopWaitSeconds()
-            if (!awaitExit(handle, TimeUnit.SECONDS.toMillis(waitSeconds))) {
-                logger.lifecycle("~ SIGTERM sent; process (pid $pid) still draining after ${waitSeconds}s. Leaving it to the OS to reap.")
-                return
+            when (stopPlay(handle, stopFile, stopsThroughFile(), logger, waitSeconds)) {
+                PlayStop.EXITED -> {}
+                PlayStop.TERMINATED -> {
+                    pidFile.delete()
+                    logger.lifecycle("~ ${appDir.absolutePath} is stopped, by a forced terminate")
+                    return
+                }
+                // Still running: the pid file keeps status and pid tracking it.
+                PlayStop.DRAINING -> {
+                    logger.lifecycle("~ SIGTERM sent; process (pid $pid) still draining after ${waitSeconds}s. Leaving it to the OS to reap.")
+                    return
+                }
+                PlayStop.RUNNING -> {
+                    logger.lifecycle("~ Leaving its pid file")
+                    return
+                }
             }
         }
         pidFile.delete()
@@ -2760,29 +2842,34 @@ abstract class PlayRestartTask : DefaultTask() {
         if (frontend) frontendPreflight(appDir, node.get())
         stopFrontend(frontendPid, logger)
         if (!frontend && frontendServerEntry(appDir).isFile) logger.lifecycle(FRONTEND_DEV_NOTE)
+        val stopFile = playStopFile(pidFile)
         if (pidFile.exists()) {
             val pid = pidFile.readText().trim().toLongOrNull()
             pidFile.delete()
             if (pid != null) {
                 ProcessHandle.of(pid).ifPresent { h ->
-                    h.destroy()
                     // Match playStop: wait past the jobs drain budget (default 30s) so a
                     // clean-but-slow shutdown is not reported as BUILD FAILED (PF-120).
                     val waitSeconds = stopWaitSeconds()
-                    if (!awaitExit(h, TimeUnit.SECONDS.toMillis(waitSeconds))) {
-                        logger.lifecycle("~ Previous process (pid $pid) still draining after ${waitSeconds}s; starting new instance anyway.")
+                    when (stopPlay(h, stopFile, stopsThroughFile(), logger, waitSeconds)) {
+                        PlayStop.EXITED, PlayStop.TERMINATED -> {}
+                        PlayStop.DRAINING ->
+                            logger.lifecycle("~ Previous process (pid $pid) still draining after ${waitSeconds}s; starting new instance anyway.")
+                        PlayStop.RUNNING -> logger.lifecycle("~ Starting the new instance anyway.")
                     }
                 }
             }
         } else {
             logger.lifecycle("~ ${appDir.absolutePath} was not started (${pidFile.name} not found); starting fresh")
         }
+        // PF-243: a stop file left behind would stop the new JVM as soon as it watched
+        stopFile.delete()
 
         val jvmArgsList = extraJvmArgs.orNull
             ?.split(Regex("\\s+"))?.filter { it.isNotEmpty() }
             ?: emptyList()
         val process = spawnPlay(appDir, frameworkPath.get().asFile, frameworkVersion.get(),
-            playId.get(), httpPort.orNull, httpsPort.orNull, playClasspath.files, jvmArgsList)
+            playId.get(), httpPort.orNull, httpsPort.orNull, playClasspath.files, jvmArgsList, stopFile = stopFile)
         pidFile.writeText(process.pid().toString())
         logger.lifecycle("~ OK, ${appDir.absolutePath} is restarted")
         outputBanner(appDir, playId.get()).forEach { logger.lifecycle(it) }
@@ -3097,7 +3184,10 @@ abstract class PlayStatusTask : DefaultTask() {
 
 // [aotOption], when given, is the AOT option to start with: playAotGen's
 // -XX:AOTCacheOutput. Otherwise a precompiled start uses the cache if the
-// application has one. [output] takes the JVM's stdout and stderr.
+// application has one. [output] takes the JVM's stdout and stderr. [stopFile],
+// when given, is the file a stop writes for this JVM (PF-243, playStopFile):
+// playStart's and playRestart's, which have a pid file. playAotGen has none,
+// and stops its training run with a SIGTERM only.
 private fun spawnPlay(
     appDir: File,
     frameworkPath: File,
@@ -3109,6 +3199,7 @@ private fun spawnPlay(
     extraJvmArgs: List<String> = emptyList(),
     aotOption: String? = null,
     output: File = File(appDir, "logs/system.out"),
+    stopFile: File? = null,
 ): Process {
     val playJar = File(frameworkPath, "framework/play-$frameworkVersion.jar")
     val confArgs = confJvmArgs(appDir, playId)
@@ -3124,6 +3215,7 @@ private fun spawnPlay(
         add("-Dapplication.path=${appDir.absolutePath}")
         add("-Dplay.id=$playId")
         add("-Dplay.version=$frameworkVersion")
+        stopFile?.let { add("-D$STOP_FILE_PROPERTY=${it.absolutePath}") }
         // Ahead of the conf and command-line flags, like the JUL manager below and
         // for the same reason.
         aot?.let { add(it) }

@@ -597,6 +597,8 @@ public class Server {
                 LogManager.shutdown();
             }
         }, "play-log4j-shutdown"));
+        // PF-243: the stop a Windows launcher sends, where no signal reaches the JVM
+        StopFile.watchFromProperty();
         if (System.getProperty("precompile") == null) {
             preinitialize();
         }
