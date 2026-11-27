@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
 <project name="Docviewer" default="build" basedir=".">
+    <!-- PF-260: a test JVM that ends before its run does fails the build (see the file). -->
+    <import file="../../framework/run-completion.xml" />
+
     <property name="build-release" value="25" />
     <path id="project.classpath">
         <pathelement path="${play.path}/framework/classes"/>
@@ -50,17 +53,27 @@
                 <fileset dir="lib" includes="*.jar" />
             </classpath>
         </javac>
+        <fileset id="tests.unit" dir="tmp/test-classes" includes="**/*Test.class" />
+        <run-completion-start file="${basedir}/tmp/.run-unittest" />
         <junitlauncher haltonfailure="true" printSummary="true">
             <testclasses>
-                <fileset dir="tmp/test-classes" includes="**/*Test.class" />
-                <fork />
+                <fileset refid="tests.unit" />
+                <fork>
+                    <sysproperty key="play.tests.completion" value="${basedir}/tmp/.run-unittest" />
+                </fork>
             </testclasses>
             <classpath>
                 <pathelement location="tmp/test-classes" />
+                <!-- PF-260: the run-completion listener, which framework's compile-tests copies there -->
+                <pathelement location="../../framework/test-support" />
                 <path refid="project.classpath" />
                 <fileset dir="lib" includes="*.jar" />
             </classpath>
         </junitlauncher>
+        <run-completion-check file="${basedir}/tmp/.run-unittest" label="docviewer unittest"
+                              testclasses="../../framework/test-support" root="${basedir}/tmp/test-classes">
+            <selected><fileset refid="tests.unit" /></selected>
+        </run-completion-check>
         <delete dir="tmp" />
     </target>
 

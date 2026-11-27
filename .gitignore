@@ -2,6 +2,7 @@ out
 bin
 framework/classes
 framework/test-classes
+framework/test-support
 framework/out
 .DS_Store
 .kotlin/

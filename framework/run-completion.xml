@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    PF-260: a junitlauncher run whose forked JVM ended before the run did fails the build.
+
+    Ant's junitlauncher judges a forked JVM by its exit status: 1 is an exception, 2 failed tests,
+    3 a timeout, and every other status, 0 included, a success. A test JVM that a test ended with
+    System.exit or Runtime.halt, that crashed or that a signal killed therefore passed the build,
+    with every test class after it unrun. So the fork names a file in -Dplay.tests.completion,
+    which play.testsupport.RunCompletionListener (framework/test-classes, and framework/test-support
+    for the modules, through META-INF/services) writes as the JVM exits, and only when no test
+    class is still running. run-completion-check fails the build when it is missing, naming the
+    class that was running and the selected classes that never started.
+
+    Use, around a junitlauncher whose classpath holds the listener:
+      <run-completion-start file="F"/>
+      <junitlauncher ...> ... <fileset refid="the.tests"/> <fork> <sysproperty key="play.tests.completion" value="F"/> ...
+      <run-completion-check file="F" label="ant unittest" testclasses="framework/test-support" root="dir of the.tests">
+          <selected> <fileset refid="the.tests"/> </selected>
+      </run-completion-check>
+    Imported by framework/build.xml, the two modules' build.xml and play.testsupport.RunCompletionAntTest.
+-->
+<project name="run-completion">
+
+    <macrodef name="run-completion-start">
+        <attribute name="file"/>
+        <sequential>
+            <delete file="@{file}" quiet="true"/>
+            <delete file="@{file}.progress" quiet="true"/>
+            <delete file="@{file}.selected" quiet="true"/>
+        </sequential>
+    </macrodef>
+
+    <macrodef name="run-completion-check">
+        <attribute name="file"/>
+        <attribute name="label"/>
+        <!-- where RunCompletion is: framework/test-classes or framework/test-support -->
+        <attribute name="testclasses"/>
+        <!-- the directory of the selected test classes, to name them from their files -->
+        <attribute name="root"/>
+        <!-- the fileset of test classes junitlauncher was given -->
+        <element name="selected"/>
+        <sequential>
+            <local name="run-completion.selected"/>
+            <pathconvert property="run-completion.selected" pathsep="${line.separator}">
+                <selected/>
+            </pathconvert>
+            <echo file="@{file}.selected" message="${run-completion.selected}${line.separator}"/>
+            <!-- Forked: Ant 1.10.12 runs an unforked <java> under a SecurityManager, which JDK 25
+                 refuses. It prints what is wrong and exits 1, which fails the build. -->
+            <java classname="play.testsupport.RunCompletion" classpath="@{testclasses}" fork="true" failonerror="true">
+                <arg value="@{file}"/>
+                <arg value="@{label}"/>
+                <arg value="@{root}"/>
+            </java>
+        </sequential>
+    </macrodef>
+
+</project>

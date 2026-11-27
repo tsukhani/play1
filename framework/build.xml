@@ -9,6 +9,10 @@
          about and a future JDK will disallow). Bump in lock-step with byte-buddy-*.jar. -->
     <property name="bytebuddy.agent.jar" value="${basedir}/lib-test/byte-buddy-agent-1.18.10.jar" />
 
+    <!-- PF-260: junitlauncher passes a forked test JVM that ends before its run does; these
+         macros make that fail the build (see run-completion.xml). -->
+    <import file="run-completion.xml" />
+
     <!-- Targets that shell out to the Gradle wrapper have to pick the right script:
          the CI matrix runs `ant test` on windows-latest, where the POSIX `gradlew`
          is not executable. -->
@@ -254,6 +258,16 @@
                 <include name="**/*.png"/>
                 <include name="**/*.jpg"/>
                 <include name="**/IOTest/**"/>
+                <!-- PF-260: registers play.testsupport.RunCompletionListener -->
+                <include name="META-INF/services/**"/>
+            </fileset>
+        </copy>
+        <!-- PF-260: the run-completion listener and check alone, for the modules' test forks,
+             which must not get the framework's test fixtures and logging configurations. -->
+        <copy todir="test-support">
+            <fileset dir="test-classes">
+                <include name="play/testsupport/RunCompletion*.class"/>
+                <include name="META-INF/services/org.junit.platform.launcher.TestExecutionListener"/>
             </fileset>
         </copy>
     </target>
@@ -263,10 +277,12 @@
          `ant integration-test` from a clean tree would otherwise boot without it. -->
     <target name="integration-test" depends="compile-tests,version,modules">
         <mkdir dir="tests-results" />
+        <fileset id="tests.integration" dir="test-classes" includes="integration/*Test.class" />
+        <run-completion-start file="${basedir}/tests-results/.run-integration" />
         <junitlauncher haltonfailure="false" failureproperty="integration.failure" printSummary="true">
             <classpath refid="classpath.integration" />
             <testclasses>
-                <fileset dir="test-classes" includes="integration/*Test.class" />
+                <fileset refid="tests.integration" />
                 <fork>
                     <jvmarg value="-javaagent:${basedir}/play-${version}.jar" />
                     <jvmarg value="-javaagent:${bytebuddy.agent.jar}" />
@@ -283,6 +299,7 @@
                          Play with JPA against H2, so whatever Hibernate genuinely loads
                          reflectively shows up here. -->
                     <jvmarg value="-Xlog:class+load=info:file=${basedir}/census/integration-%p.log" if:set="census" />
+                    <sysproperty key="play.tests.completion" value="${basedir}/tests-results/.run-integration" />
                 </fork>
             </testclasses>
             <classpath>
@@ -291,6 +308,10 @@
             </classpath>
             <listener type="legacy-plain" sendSysOut="true" sendSysErr="true" outputdir="tests-results" />
         </junitlauncher>
+        <run-completion-check file="${basedir}/tests-results/.run-integration" label="ant integration-test"
+                              testclasses="test-classes" root="${basedir}/test-classes">
+            <selected><fileset refid="tests.integration" /></selected>
+        </run-completion-check>
         <fail if="integration.failure" message="Integration test(s) failed!"/>
     </target>
 
@@ -346,10 +367,12 @@
                 </tokenfilter>
             </filterchain>
         </loadresource>
+        <fileset id="tests.single" dir="test-classes" includes="${testclass.path}.class" />
+        <run-completion-start file="${basedir}/tests-results/.run-single" />
         <junitlauncher haltonfailure="false" failureproperty="junit.failure" printSummary="true">
             <classpath refid="${testsingle.classpath}" />
             <testclasses>
-                <fileset dir="test-classes" includes="${testclass.path}.class" />
+                <fileset refid="tests.single" />
                 <fork>
                     <jvmarg value="-javaagent:${basedir}/play-${version}.jar" />
                     <jvmarg value="-javaagent:${bytebuddy.agent.jar}" />
@@ -358,18 +381,25 @@
                     <jvmarg value="--enable-native-access=ALL-UNNAMED" if:set="testclass.integration" />
                     <jvmarg value="-Dsse.bench=true" if:set="sse.bench" />
                     <sysproperty key="tests-tmp" value="${basedir}/tests-tmp" />
+                    <sysproperty key="play.tests.completion" value="${basedir}/tests-results/.run-single" />
+                    <sysproperty key="ant.home" value="${ant.home}" />
                 </fork>
             </testclasses>
             <listener type="legacy-xml" sendSysOut="true" sendSysErr="true" outputdir="tests-results" />
             <listener type="legacy-plain" sendSysOut="true" sendSysErr="true" outputdir="tests-results"/>
             <listener type="legacy-brief" sendSysOut="true" sendSysErr="true" outputdir="tests-results"  />
         </junitlauncher>
+        <run-completion-check file="${basedir}/tests-results/.run-single" label="ant test-single"
+                              testclasses="test-classes" root="${basedir}/test-classes">
+            <selected><fileset refid="tests.single" /></selected>
+        </run-completion-check>
         <delete dir="${basedir}/tests-tmp" />
         <fail if="junit.failure" message="Single test failed. See reports!"/>
     </target>
 
     <target name="clean-tests">
         <delete dir="test-classes" />
+        <delete dir="test-support" />
     </target>
 
     <target name="agent-jar" depends="version,compile">
@@ -386,10 +416,12 @@
     <target name="unittest" depends="version,compile-tests,modules">
         <mkdir dir="tests-results" />
         <mkdir dir="${basedir}/tests-tmp" />
+        <fileset id="tests.unit" dir="test-classes" includes="**/*Test.class" excludes="integration/*Test.class" />
+        <run-completion-start file="${basedir}/tests-results/.run-unittest" />
         <junitlauncher haltonfailure="false" failureproperty="junit.failure" printSummary="true">
             <classpath refid="classpath.test" />
             <testclasses>
-                <fileset dir="test-classes" includes="**/*Test.class" excludes="integration/*Test.class" />
+                <fileset refid="tests.unit" />
                 <fork>
                     <jvmarg value="-javaagent:${basedir}/play-${version}.jar" />
                     <jvmarg value="-javaagent:${bytebuddy.agent.jar}" />
@@ -397,6 +429,9 @@
                     <!-- PF: class-load census (ant audit-census). %p is the JVM's own pid
                          substitution, so repeated forks cannot clobber a single file. -->
                     <jvmarg value="-Xlog:class+load=info:file=${basedir}/census/unittest-%p.log" if:set="census" />
+                    <sysproperty key="play.tests.completion" value="${basedir}/tests-results/.run-unittest" />
+                    <!-- PF-260: RunCompletionAntTest runs a scratch junitlauncher through this Ant -->
+                    <sysproperty key="ant.home" value="${ant.home}" />
                 </fork>
             </testclasses>
             <classpath>
@@ -409,6 +444,10 @@
                  nothing and a failure is undiagnosable from the run. -->
             <listener type="legacy-plain" sendSysOut="true" sendSysErr="true" outputdir="tests-results" />
         </junitlauncher>
+        <run-completion-check file="${basedir}/tests-results/.run-unittest" label="ant unittest"
+                              testclasses="test-classes" root="${basedir}/test-classes">
+            <selected><fileset refid="tests.unit" /></selected>
+        </run-completion-check>
         <delete dir="${basedir}/tests-tmp" />
 
         <!-- Framework tests done; now run each module's tests. Done after framework
