@@ -212,11 +212,13 @@ for arg in "$@"; do
 done
 
 # PF-243: the file a stop writes for the JVM PID_FILE tracks (server.pid.stop
-# for server.pid). start names it to the JVM in -Dplay.stopFile, and the JVM
-# (play.server.StopFile) stops as at a SIGTERM once it appears. Under Git Bash,
-# MSYS2 and Cygwin stop writes it, because kill ends a native java.exe at once,
-# before any shutdown hook; everywhere else stop still sends SIGTERM.
-# playStopFile in Play1Plugin.kt names it alike.
+# for server.pid). Under Git Bash, MSYS2 and Cygwin start names it to the JVM
+# in -Dplay.stopFile and stop writes it, because kill ends a native java.exe at
+# once, before any shutdown hook, and the JVM (play.server.StopFile) stops as at
+# a SIGTERM once it appears. Everywhere else start names none and stop still
+# sends SIGTERM, so that only the JVM's own user or root can stop it: a stop
+# file can be made by anyone who may create a file in the pid file's folder.
+# playStopFile and startStopFile in Play1Plugin.kt decide alike.
 PLAY_STOP_FILE="$PID_FILE.stop"
 STOP_JVM=()
 
@@ -486,7 +488,7 @@ build_java_cmd() {
         -Dplay.version="$FW_VERSION"
         -Dprecompiled=true
         -Dfile.encoding=utf-8
-        # PF-243: start's -Dplay.stopFile; nothing for run and aot-gen, which have no pid file.
+        # PF-243: start's -Dplay.stopFile on Windows; nothing for run and aot-gen, which have no pid file.
         "${STOP_JVM[@]}"
         # PF-180: ahead of the conf and command-line flags, like the JUL
         # manager below and for the same reason.
@@ -857,9 +859,11 @@ case "$CMD" in
                 rm -f "$FRONTEND_PID_FILE"
             fi
         fi
-        # PF-243: a stop file left behind would stop the JVM as soon as it watched.
-        rm -f "$PLAY_STOP_FILE"
-        STOP_JVM=("-Dplay.stopFile=$(native_path "$PLAY_STOP_FILE")")
+        if [ "$WINDOWS_JVM" = 1 ]; then
+            # PF-243: a stop file left behind would stop the JVM as soon as it watched.
+            rm -f "$PLAY_STOP_FILE"
+            STOP_JVM=("-Dplay.stopFile=$(native_path "$PLAY_STOP_FILE")")
+        fi
         build_java_cmd
         mkdir -p logs
         # A subshell, so the entries are exported for the JVM only; exec keeps

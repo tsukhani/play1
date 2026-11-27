@@ -90,21 +90,13 @@ class PrecompiledStartTest {
     @ParameterizedTest
     @ValueSource(strings = ["playStart", "playRestart"])
     @DisabledOnOs(OS.WINDOWS, disabledReason = FORKS_JVMS)
-    fun `a start names the stop file of its pid file to the JVM and removes one left behind`(task: String, @TempDir tmp: File) {
-        // PF-243: the file a stop writes on Windows, where no signal reaches the JVM
+    fun `off Windows a start names no stop file, so only a signal stops the JVM`(task: String, @TempDir tmp: File) {
+        // PF-243: the file a stop writes is Windows's, where no signal reaches the JVM. A stop
+        // file can be made by anyone who may create a file in the pid file's folder, a SIGTERM
+        // only by the JVM's own user or root. PlayStopFileTest covers startStopFile on Windows.
         val app = writeApp(tmp)
-        File(app, "server.pid.stop").writeText("")
 
-        val start = report(app, task)
-
-        val named = start.jvmArgs.filter { it.startsWith("-Dplay.stopFile=") }
-        assertEquals(1, named.size, "${start.jvmArgs}")
-        assertEquals(File(app, "server.pid.stop").canonicalFile, File(named[0].substringAfter('=')).canonicalFile)
-        // ahead of the conf and command-line flags, with the launcher's own
-        assertTrue(start.jvmArgs.indexOf(named[0]) < start.jvmArgs.indexOf(julManager), "${start.jvmArgs}")
-        assertFalse(File(app, "server.pid.stop").exists(), "a stop file left behind would stop the new JVM at once")
-        // playRun has no pid file, so no stop file
-        assertEquals(emptyList<String>(), report(app, "playRun").jvmArgs.filter { it.startsWith("-Dplay.stopFile=") })
+        assertEquals(emptyList<String>(), report(app, task).jvmArgs.filter { it.startsWith("-Dplay.stopFile=") })
     }
 
     @Test
@@ -194,12 +186,7 @@ class PrecompiledStartTest {
         assertEquals(File(app, "build/play/aot/app.aot.new").canonicalFile, File(output.substringAfter('=')).canonicalFile)
         // The cache being replaced is not an input to its own replacement, and the JVM
         // refuses -XX:AOTCache next to -XX:AOTCacheOutput: the one takes the place of the other.
-        // PF-243: nor has the training run playStart's stop file, since it has no pid file; a
-        // system property is nothing a cache is checked against.
-        assertEquals(
-            start.jvmArgs.filterNot { it.startsWith("-Dplay.stopFile=") }.map { if (it == use) output else it },
-            training.jvmArgs
-        )
+        assertEquals(start.jvmArgs.map { if (it == use) output else it }, training.jvmArgs)
         assertEquals(start.classpath, training.classpath)
         assertEquals(start.args, training.args)
     }

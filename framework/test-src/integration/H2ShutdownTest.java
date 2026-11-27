@@ -321,7 +321,9 @@ public class H2ShutdownTest {
     }
 
     private static String url(File app) {
-        return "jdbc:h2:" + new File(app, "db/app").getAbsolutePath() + ";AUTO_SERVER=TRUE";
+        // with forward slashes: application.conf is read as a properties file, whose escapes
+        // turn C:\Users\... into C:Users..., a path H2 refuses as relative
+        return "jdbc:h2:" + new File(app, "db/app").getAbsolutePath().replace('\\', '/') + ";AUTO_SERVER=TRUE";
     }
 
     private static Path lockFile(File app) {

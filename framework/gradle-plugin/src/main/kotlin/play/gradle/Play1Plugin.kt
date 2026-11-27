@@ -2646,10 +2646,8 @@ abstract class PlayStartTask : DefaultTask() {
         val jvmArgsList = extraJvmArgs.orNull
             ?.split(Regex("\\s+"))?.filter { it.isNotEmpty() }
             ?: emptyList()
-        // PF-243: a stop file left behind would stop the new JVM as soon as it watched
-        val stopFile = playStopFile(pidFile).apply { delete() }
         val process = spawnPlay(appDir, frameworkPath.get().asFile, frameworkVersion.get(),
-            playId.get(), httpPort.orNull, httpsPort.orNull, playClasspath.files, jvmArgsList, stopFile = stopFile)
+            playId.get(), httpPort.orNull, httpsPort.orNull, playClasspath.files, jvmArgsList, stopFile = startStopFile(pidFile))
         pidFile.writeText(process.pid().toString())
         logger.lifecycle("~ OK, ${appDir.absolutePath} is started")
         outputBanner(appDir, playId.get()).forEach { logger.lifecycle(it) }
@@ -2705,9 +2703,9 @@ internal fun awaitExit(handle: ProcessHandle, timeoutMillis: Long): Boolean {
 
 /**
  * PF-243: the file a stop writes for the JVM [pidFile] tracks, beside it: server.pid.stop for
- * server.pid. playStart and playRestart name it to the JVM in -Dplay.stopFile, and the JVM
- * (play.server.StopFile) stops as at a SIGTERM once it appears. bundle-play.sh names it alike
- * (PLAY_STOP_FILE).
+ * server.pid. On Windows playStart and playRestart name it to the JVM in -Dplay.stopFile
+ * ([startStopFile]), and the JVM (play.server.StopFile) stops as at a SIGTERM once it appears.
+ * bundle-play.sh names it alike (PLAY_STOP_FILE).
  */
 internal fun playStopFile(pidFile: File): File = File(pidFile.parentFile, pidFile.name + ".stop")
 
@@ -2719,6 +2717,16 @@ internal const val STOP_FILE_PROPERTY = "play.stopFile"
  * TerminateProcess, which runs no shutdown hook. Everywhere else it is a SIGTERM, as before.
  */
 internal fun stopsThroughFile(osName: String = System.getProperty("os.name")): Boolean = osName.startsWith("Windows")
+
+/**
+ * PF-243: the stop file playStart and playRestart name to the JVM: [pidFile]'s, where a stop
+ * goes through it ([throughFile], on Windows), once one left behind is removed, since it would
+ * stop the new JVM as soon as it watched. Elsewhere none, so that only a user who may signal the
+ * JVM, its own or root, can stop it, as before: a stop file can be made by anyone who may
+ * create a file in the pid file's folder. bundle-play.sh's start decides alike (WINDOWS_JVM).
+ */
+internal fun startStopFile(pidFile: File, throughFile: Boolean = stopsThroughFile()): File? =
+    if (throughFile) playStopFile(pidFile).apply { delete() } else null
 
 /** How [stopPlay] left the JVM. */
 internal enum class PlayStop {
@@ -2862,14 +2870,11 @@ abstract class PlayRestartTask : DefaultTask() {
         } else {
             logger.lifecycle("~ ${appDir.absolutePath} was not started (${pidFile.name} not found); starting fresh")
         }
-        // PF-243: a stop file left behind would stop the new JVM as soon as it watched
-        stopFile.delete()
-
         val jvmArgsList = extraJvmArgs.orNull
             ?.split(Regex("\\s+"))?.filter { it.isNotEmpty() }
             ?: emptyList()
         val process = spawnPlay(appDir, frameworkPath.get().asFile, frameworkVersion.get(),
-            playId.get(), httpPort.orNull, httpsPort.orNull, playClasspath.files, jvmArgsList, stopFile = stopFile)
+            playId.get(), httpPort.orNull, httpsPort.orNull, playClasspath.files, jvmArgsList, stopFile = startStopFile(pidFile))
         pidFile.writeText(process.pid().toString())
         logger.lifecycle("~ OK, ${appDir.absolutePath} is restarted")
         outputBanner(appDir, playId.get()).forEach { logger.lifecycle(it) }
@@ -3185,9 +3190,9 @@ abstract class PlayStatusTask : DefaultTask() {
 // [aotOption], when given, is the AOT option to start with: playAotGen's
 // -XX:AOTCacheOutput. Otherwise a precompiled start uses the cache if the
 // application has one. [output] takes the JVM's stdout and stderr. [stopFile],
-// when given, is the file a stop writes for this JVM (PF-243, playStopFile):
-// playStart's and playRestart's, which have a pid file. playAotGen has none,
-// and stops its training run with a SIGTERM only.
+// when given, is the file a stop writes for this JVM (PF-243, startStopFile):
+// playStart's and playRestart's on Windows, which have a pid file. playAotGen
+// has none, and stops its training run with a SIGTERM only.
 private fun spawnPlay(
     appDir: File,
     frameworkPath: File,

@@ -12,11 +12,13 @@ import play.Logger;
  * reaches a native {@code java.exe} from another process: {@code ProcessHandle.destroy()}, and
  * {@code kill} from Git Bash, MSYS2 or Cygwin, terminate it outright, so a stop ran no
  * shutdown hook at all, no server drain, no {@code onApplicationStop}, no H2 close and no log4j
- * shutdown. So every launcher names a file beside the pid file in {@value #PROPERTY}
- * ({@code server.pid.stop} for {@code server.pid}), and a stop on Windows writes it: once it
- * appears, the JVM removes it and calls {@code System.exit(0)}, which runs the hooks as a
- * SIGTERM does, {@code Play.shutdownHook} included. macOS and Linux are still stopped with
- * SIGTERM. Nuxt's server beside Play stops the same way (PF-213).
+ * shutdown. So on Windows the launchers name a file beside the pid file in {@value #PROPERTY}
+ * ({@code server.pid.stop} for {@code server.pid}), and a stop writes it: once it appears, the
+ * JVM removes it and calls {@code System.exit(0)}, which runs the hooks as a SIGTERM does,
+ * {@code Play.shutdownHook} included. On macOS and Linux they name none and still stop with
+ * SIGTERM, which only the JVM's own user or root may send, where a stop file can be made by
+ * anyone who may create a file in the pid file's folder. A JVM given the property watches on
+ * any OS. Nuxt's server beside Play stops the same way (PF-213).
  *
  * <p>The file is looked for every {@value #POLL_MS} ms by a daemon platform thread, from the start
  * of {@code Server.main}, so a stop during a long start ends the JVM too, as a SIGTERM would.

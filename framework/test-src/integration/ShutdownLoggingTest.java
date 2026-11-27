@@ -100,7 +100,9 @@ public class ShutdownLoggingTest {
         assertThat(new File(bundle, "server.pid")).doesNotExist();
         assertThat(new File(bundle, "server.pid.stop")).doesNotExist();
         if (WINDOWS) {
-            assertThat(read(systemOut)).contains("Stop file").contains("server.pid.stop found: stopping");
+            // the application's own log: its log4j2 configuration has no console appender
+            assertThat(read(new File(bundle, "logs/application.log"))).as("console:%n%s", read(systemOut))
+                    .contains("Stop file").contains("server.pid.stop found: stopping");
         }
 
         assertFarewellInEveryLog(bundle, systemOut);
@@ -132,6 +134,8 @@ public class ShutdownLoggingTest {
         assertThat(exited).as("the JVM ended at its stop file; console:%n%s", read(console)).isTrue();
         assertThat(server.exitValue()).as("System.exit(0); console:%n%s", read(console)).isZero();
         assertThat(stopFile).as("the JVM removes the file it answered").doesNotExist();
+        assertThat(read(new File(app, "logs/application.log"))).as("console:%n%s", read(console))
+                .contains("Stop file").contains("server.pid.stop found: stopping");
 
         assertFarewellInEveryLog(app, console);
     }

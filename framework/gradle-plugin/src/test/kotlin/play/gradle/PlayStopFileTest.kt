@@ -170,6 +170,21 @@ class PlayStopFileTest {
     }
 
     @Test
+    fun `a start names the stop file to the JVM only where a stop writes it, and removes one left behind there`(@TempDir tmp: File) {
+        val pidFile = File(tmp, "server.pid")
+        val left = File(tmp, "server.pid.stop").apply { writeText("") }
+
+        assertEquals(left, startStopFile(pidFile, throughFile = true))
+        assertFalse(left.exists(), "a stop file left behind would stop the new JVM at once")
+
+        // Off Windows none: a stop file can be made by anyone who may create a file in the pid
+        // file's folder, a SIGTERM only by the JVM's own user or root. One there is not watched.
+        left.writeText("")
+        assertEquals(null, startStopFile(pidFile, throughFile = false))
+        assertTrue(left.exists())
+    }
+
+    @Test
     @EnabledOnOs(OS.WINDOWS)
     fun `on Windows playStop stops the JVM through its stop file and its shutdown hook runs`(@TempDir tmp: File) {
         TestProject.write(tmp)

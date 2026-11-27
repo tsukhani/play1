@@ -890,6 +890,7 @@ class BundleLauncherTest {
     //
     // Under Git Bash, MSYS2 and Cygwin kill ends a native java.exe before any shutdown
     // hook, so stop writes the file start named to the JVM in -Dplay.stopFile instead.
+    // Elsewhere start names none, and stop sends a SIGTERM.
     // Here the MSYS branch is the stubbed uname's, and a bash stands in for the JVM;
     // integration.ShutdownLoggingTest stops a real bundle that way under Git Bash on Windows.
 
@@ -911,24 +912,47 @@ class BundleLauncherTest {
     }
 
     @Test
-    fun `start names the stop file of its pid file to the JVM, and run names none`(@TempDir tmp: File) {
-        val (bundle, stubs) = bundleWithConf(tmp, "application.name=testapp\n")
+    fun `under MSYS start names the stop file of its pid file to the JVM, and run names none`(@TempDir tmp: File) {
+        val bundle = File(tmp, "app").apply { mkdirs() }
+        writeBundle(bundle)
+        File(bundle, "conf").mkdirs()
+        File(bundle, "conf/application.conf").writeText("application.name=testapp\n")
+        // the MSYS branch: Git Bash's own uname and cygpath on Windows, the stubs elsewhere
+        val stubs = File(tmp, "bin").apply { writeStubs(this, windows = !onWindows) }
+        // cygpath -w leaves a relative path as it is; the stub puts its drive in front
+        fun native(path: String) = if (onWindows) path else "C:$path"
         File(bundle, "server.pid.stop").writeText("")
 
         val start = startArgv(bundle, stubs)
-        assertEquals(listOf("-Dplay.stopFile=server.pid.stop"), start.filter { it.startsWith("-Dplay.stopFile=") })
+        val named = "-Dplay.stopFile=${native("server.pid.stop")}"
+        assertEquals(listOf(named), start.filter { it.startsWith("-Dplay.stopFile=") })
         // ahead of the conf and command-line flags, with the launcher's own
-        assertTrue(start.indexOf("-Dplay.stopFile=server.pid.stop") < start.indexOf(julManager), "$start")
+        assertTrue(start.indexOf(named) < start.indexOf(julManager), "$start")
         assertFalse(File(bundle, "server.pid.stop").exists(), "a stop file left behind would stop the new JVM at once")
         // the name Play1Plugin.kt gives it
-        assertEquals(playStopFile(File(bundle, "server.pid")).name, valueOf(start, "play.stopFile"))
+        assertEquals(native(playStopFile(File(bundle, "server.pid")).name), valueOf(start, "play.stopFile"))
 
         val elsewhere = startArgv(bundle, stubs, "--pid-file=other.pid")
-        assertEquals("other.pid.stop", valueOf(elsewhere, "play.stopFile"))
+        assertEquals(native("other.pid.stop"), valueOf(elsewhere, "play.stopFile"))
 
         // run has no pid file, and aot-gen's command line is run's
         assertEquals(emptyList<String>(), launcherArgv(bundle, stubs).filter { it.startsWith("-Dplay.stopFile=") })
         settle(bundle)
+    }
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS, disabledReason = "a bundle under Git Bash always takes the MSYS branch")
+    fun `off Windows start names no stop file, so only a signal stops the JVM`(@TempDir tmp: File) {
+        // A stop file can be made by anyone who may create a file in the pid file's folder,
+        // a SIGTERM only by the JVM's own user or root.
+        val (bundle, stubs) = bundleWithConf(tmp, "application.name=testapp\n")
+
+        val start = startArgv(bundle, stubs)
+        assertEquals(emptyList<String>(), start.filter { it.startsWith("-Dplay.stopFile=") }, "$start")
+        assertEquals(
+            emptyList<String>(),
+            startArgv(bundle, stubs, "--pid-file=other.pid").filter { it.startsWith("-Dplay.stopFile=") }
+        )
     }
 
     @Test
