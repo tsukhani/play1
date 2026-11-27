@@ -1,6 +1,7 @@
 package play.db.jpa;
 
 import org.hibernate.jpa.HibernatePersistenceProvider;
+import play.Logger;
 
 import jakarta.persistence.SharedCacheMode;
 import jakarta.persistence.ValidationMode;
@@ -44,6 +45,11 @@ public class PersistenceUnitInfoImpl implements PersistenceUnitInfo {
         this.managedClasses = managedClasses;
         this.mappingFileNames = mappingFileNames;
         this.properties = properties;
+    }
+
+    /** The entity classes of this persistence unit, as Play loaded them. */
+    List<Class<?>> managedClasses() {
+        return managedClasses;
     }
 
     @Override
@@ -147,7 +153,11 @@ public class PersistenceUnitInfoImpl implements PersistenceUnitInfo {
 
     @Override
     public void addTransformer(ClassTransformer transformer) {
-
+        // PF-56: Hibernate 7 makes a transformer only when getNewTempClassLoader() returns a loader, which this one
+        // does not, and the entity classes are loaded before the factory is built, so there is nothing to apply it
+        // to. Should a provider pass one all the same, say so, rather than drop it without a word.
+        Logger.warn("JPA (%s): %s was not applied: Play does not enhance entities at load time", persistenceUnitName,
+                transformer.getClass().getName());
     }
 
     @Override

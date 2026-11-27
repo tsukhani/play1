@@ -15,7 +15,6 @@ import jakarta.persistence.NoResultException;
 import jakarta.persistence.PersistenceException;
 import jakarta.persistence.PersistenceUnit;
 import jakarta.persistence.Query;
-import jakarta.persistence.spi.PersistenceUnitInfo;
 import jakarta.validation.Validation;
 import org.hibernate.validator.messageinterpolation.ParameterMessageInterpolator;
 import org.apache.logging.log4j.Level;
@@ -312,7 +311,7 @@ public class JPAPlugin extends PlayPlugin {
     }
 
     protected EntityManagerFactory newEntityManagerFactory(String dbName, Configuration dbConfig) {
-        PersistenceUnitInfo persistenceUnitInfo = persistenceUnitInfo(dbName, dbConfig);
+        PersistenceUnitInfoImpl persistenceUnitInfo = persistenceUnitInfo(dbName, dbConfig);
         Map<String, Object> configuration = new HashMap<>();
         configuration.put(AvailableSettings.INTERCEPTOR, new HibernateInterceptor());
 
@@ -341,6 +340,11 @@ public class JPAPlugin extends PlayPlugin {
         }
         // Also when Hibernate was configured not to call it
         validatorFactory.get();
+        // PF-56: what Hibernate loads eagerly, without a word, because Play does not enhance entities
+        List<String> eager = LazyAttributes.loadedEagerly(persistenceUnitInfo.managedClasses());
+        if (!eager.isEmpty()) {
+            Logger.warn("%s", LazyAttributes.warning(dbName, eager));
+        }
         return emf;
     }
 

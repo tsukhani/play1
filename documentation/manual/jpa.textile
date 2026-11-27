@@ -257,6 +257,24 @@ bc. public static void save(Long id) {
 
 This is far more intuitive. Moreover since it could be tedious to explicitly call @save()@ on a large object graph, the @save()@ call is automatically cascaded to the relationships annotated with the @cascade=CascadeType.ALL@ attribute.
 
+h2. <a name="lazy">Lazy attributes</a>
+
+Play does not enhance entity classes with Hibernate's bytecode enhancer, and some of Hibernate's fetch settings work only on enhanced classes. On a Play entity these load eagerly, as if they were not lazy:
+
+* <code>@Basic(fetch = FetchType.LAZY)</code> on a field or a getter, a large text or <code>@Lob</code> column for one, and Hibernate's <code>@LazyGroup</code>;
+* the side of a <code>@OneToOne(fetch = FetchType.LAZY)</code> that has @mappedBy@, because Hibernate has to query the owning side to know whether there is one.
+
+A start names each of them in one warning per persistence unit, which begins @JPA (default): ... declared lazy but loaded eagerly@. Hibernate itself says nothing about it.
+
+A lazy <code>@ManyToOne</code>, the owning side of a <code>@OneToOne</code>, and collections stay lazy: Hibernate loads them through proxies, which need no enhancement. Hibernate finds what changed by comparing each managed entity with a copy of the state it was loaded with.
+
+Hibernate's Gradle and Maven enhancement plugins do not help. They enhance the classes that Gradle compiles, and Play compiles and loads the application's classes itself.
+
+To keep a large column out of the queries that do not need it:
+
+* move it to an entity of its own, reached through a <code>@ManyToOne</code> or the owning side of a <code>@OneToOne</code>, which a proxy keeps lazy;
+* or select only the columns a page shows, with a JPQL query such as @select p.id, p.title from Post p@.
+
 h2. <a name="typing">More about generic typing problems</a>
 
 The @play.db.jpa.Model@ defines a set of generic methods. These generic methods use a type parameter to specify the method’s return type. When using those methods, the concrete type to be used as return value is derived from the invocation context using type inference.
