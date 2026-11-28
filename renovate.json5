@@ -225,6 +225,17 @@
       allowedVersions: "!/^4\\.0\\./"
     },
     {
+      // The benchmarks' Quarkus moves only when it is measured: PF-252's figures are of 3.40.1,
+      // so a minor or patch update there is not offered at all. A declined one cannot simply
+      // be closed, because the grouped non-major PR is recreated whenever it is closed unmerged
+      // ("immortal"); 3.40.2 for the plugin with 3.40.1.2 for the BOM was declined that way on
+      // 2026-11-28. A major update, such as 4.1, is still offered.
+      matchFileNames: ["benchmarks/**"],
+      matchPackageNames: ["io.quarkus**"],
+      matchUpdateTypes: ["minor", "patch"],
+      enabled: false
+    },
+    {
       // Major bumps go through manual review — never auto-merge.
       matchUpdateTypes: ["major"],
       automerge: false,
