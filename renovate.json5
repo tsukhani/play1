@@ -214,6 +214,17 @@
       allowedVersions: "/^4\\./"
     },
     {
+      // benchmarks/helidon also builds the Quarkus application (PF-252), on 3.40.1: Quarkus
+      // 4.0.1 deadlocks a Vert.x event loop when an HTTP/2 client closes its connection while
+      // a response is written (quarkusio/quarkus#57911, fixed for 4.1). A bump of the BOM alone
+      // to 4.0.1 was offered on 2026-11-28 and closed. 4.1 and later still come through, to be
+      // measured with the harness before merging; the BOM and the io.quarkus Gradle plugin
+      // move together.
+      matchFileNames: ["benchmarks/**"],
+      matchPackageNames: ["io.quarkus**"],
+      allowedVersions: "!/^4\\.0\\./"
+    },
+    {
       // Major bumps go through manual review — never auto-merge.
       matchUpdateTypes: ["major"],
       automerge: false,
