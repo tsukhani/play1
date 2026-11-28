@@ -6,13 +6,13 @@
 // fixed for 4.1). The README has the thread dump's two stacks.
 plugins {
     java
-    id("io.quarkus") version "3.40.1"
+    id("io.quarkus") version "3.40.2"
 }
 
 repositories { mavenCentral() }
 
 dependencies {
-    implementation(platform("io.quarkus.platform:quarkus-bom:3.40.1"))
+    implementation(platform("io.quarkus.platform:quarkus-bom:3.40.1.2"))
     implementation("io.quarkus:quarkus-rest")
     implementation("io.quarkus:quarkus-rest-jackson")
     implementation("io.quarkus:quarkus-hibernate-orm")
