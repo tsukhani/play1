@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.nio.file.Files;
+import java.util.List;
 import java.util.Properties;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
@@ -202,6 +203,52 @@ public class LoggerTest {
                     "monitorInterval should be watching " + config);
         } finally {
             // Not left behind for the rest of the suite: the watched file goes with the temp dir.
+            Configurator.reconfigure(Logger.class.getResource("/log4j.properties").toURI());
+            Logger.configuredManually = configuredManually;
+        }
+    }
+
+    /**
+     * PF-261: in test mode every event reaches test-result/application.log once. The appender
+     * used to be given to every configured logger as well as to root, so an event from a logger
+     * whose additivity is on was written by its own copy and again by root's.
+     */
+    @Test
+    public void testModeWritesEachEventToTheTestResultLogOnce(@TempDir File tmp) throws Exception {
+        File app = tmp.getCanonicalFile();
+        File config = writeConf(app, "log4j2-pf261.xml",
+                "<Configuration status=\"ERROR\"><Loggers>"
+                        // Additivity on, more verbose than root: its events go up to root.
+                        + "<Logger name=\"pf261.additive\" level=\"debug\"/>"
+                        // Additivity off: its events stop here, and so do its child's.
+                        + "<Logger name=\"pf261.alone\" level=\"info\" additivity=\"false\"/>"
+                        + "<Logger name=\"pf261.alone.child\" level=\"trace\"/>"
+                        + "<Root level=\"info\"/>"
+                        + "</Loggers></Configuration>");
+        Play.applicationPath = app;
+        Play.configuration.put(APPLICATION_LOG_PATH_PROPERTYNAME, config.getAbsolutePath());
+        boolean configuredManually = Logger.configuredManually;
+        Logger.log4j = null;
+        try {
+            init();
+
+            LogManager.getLogger("pf261.additive").info("pf261 additive at root's level");
+            // Below root's level: log4j checks no ancestor's level on an event a logger passes up.
+            LogManager.getLogger("pf261.additive").debug("pf261 additive below root's level");
+            LogManager.getLogger("pf261.alone").info("pf261 alone");
+            LogManager.getLogger("pf261.alone.child").info("pf261 child at its parent's level");
+            LogManager.getLogger("pf261.alone.child").trace("pf261 child below its parent's level");
+            LogManager.getLogger("pf261.unconfigured").warn("pf261 unconfigured");
+
+            List<String> lines = Files.readAllLines(new File(app, "test-result/application.log").toPath());
+            for (String message : List.of("pf261 additive at root's level", "pf261 additive below root's level",
+                    "pf261 alone", "pf261 child at its parent's level", "pf261 child below its parent's level",
+                    "pf261 unconfigured")) {
+                assertEquals(1, lines.stream().filter(line -> line.endsWith("~ " + message)).count(),
+                        "\"" + message + "\" in " + lines);
+            }
+        } finally {
+            // Also stops the file appender, so the temp dir can go.
             Configurator.reconfigure(Logger.class.getResource("/log4j.properties").toURI());
             Logger.configuredManually = configuredManually;
         }

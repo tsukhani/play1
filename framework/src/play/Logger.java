@@ -106,8 +106,14 @@ public class Logger {
                                                   .build();
         appender.start();
         configuration.addAppender(appender);
+        // Only root and the loggers whose additivity is off: every other logger passes its events
+        // up to its parent, whose copy would write them again (PF-261). No level and no filter:
+        // a logger's own have been applied by the time its appenders are called, and log4j checks
+        // no ancestor's level on an event passed up, so a level here drops a more verbose child's.
         for (final LoggerConfig loggerConfig : configuration.getLoggers().values()) {
-            loggerConfig.addAppender(appender, loggerConfig.getLevel(), loggerConfig.getFilter());
+            if (!loggerConfig.isAdditive()) {
+                loggerConfig.addAppender(appender, null, null);
+            }
         }
         configuration.getRootLogger().addAppender(appender, null, null);
     }
